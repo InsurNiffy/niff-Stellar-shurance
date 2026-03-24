@@ -38,25 +38,32 @@ pub fn get_token(env: &Env) -> Address {
 }
 
 /// Returns the next policy_id for `holder` and increments the counter.
+/// Uses checked_add to panic on overflow rather than wrap silently.
 /// Used by feat/policy-lifecycle.
 #[allow(dead_code)]
 pub fn next_policy_id(env: &Env, holder: &Address) -> u32 {
     let key = DataKey::PolicyCounter(holder.clone());
-    let next: u32 = env.storage().persistent().get(&key).unwrap_or(0) + 1;
+    let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+    let next = current
+        .checked_add(1)
+        .unwrap_or_else(|| panic!("policy_id overflow"));
     env.storage().persistent().set(&key, &next);
     next
 }
 
 /// Returns the next global claim_id and increments the counter.
+/// Uses checked_add to panic on overflow rather than wrap silently.
 /// Used by feat/claim-voting.
 #[allow(dead_code)]
 pub fn next_claim_id(env: &Env) -> u64 {
-    let next: u64 = env
+    let current: u64 = env
         .storage()
         .instance()
         .get(&DataKey::ClaimCounter)
-        .unwrap_or(0u64)
-        + 1;
+        .unwrap_or(0u64);
+    let next = current
+        .checked_add(1)
+        .unwrap_or_else(|| panic!("claim_id overflow"));
     env.storage().instance().set(&DataKey::ClaimCounter, &next);
     next
 }

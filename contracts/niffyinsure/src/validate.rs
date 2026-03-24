@@ -18,7 +18,8 @@ pub enum Error {
     ImageUrlTooLong,
     ReasonTooLong,
     ClaimAlreadyTerminal,
-    DuplicateVote,
+    /// Arithmetic overflow detected in a checked operation.
+    Overflow,
 }
 
 // ── Policy validators ─────────────────────────────────────────────────────────
