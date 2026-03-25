@@ -11,6 +11,8 @@ pub enum DataKey {
     Claim(u64),
     /// (claim_id, voter_address) → VoteOption
     Vote(u64, Address),
+    /// (claim_id, voter_address, appeal_count) → VoteOption for phase-specific voting
+    VotePhase(u64, Address, u32),
     /// Vec<Address> of all current active policyholders (voters)
     Voters,
     /// Global monotonic claim id counter

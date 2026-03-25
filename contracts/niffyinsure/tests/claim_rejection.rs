@@ -4,10 +4,7 @@ use niffyinsure::{
     types::{ClaimStatus, Policy, PolicyType, RegionTier, VoteOption},
     NiffyInsureClient,
 };
-use soroban_sdk::{
-    testutils::Address as _,
-    vec as svec, Address, Env, String, Vec,
-};
+use soroban_sdk::{testutils::Address as _, vec as svec, Address, Env, String, Vec};
 
 fn create_test_policy(_env: &Env, holder: &Address, policy_id: u32) -> Policy {
     Policy {

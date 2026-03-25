@@ -15,15 +15,20 @@
 //   - Rejected claims remain visible on-chain for auditability
 //   - Admin overrides (if implemented) must be documented in governance docs
 
+#![allow(deprecated)]
+
 use crate::{
     storage::{self, DataKey},
-    types::{Claim, ClaimError, ClaimStatus, Policy, VoteOption, DETAILS_MAX_LEN, IMAGE_URLS_MAX, IMAGE_URL_MAX_LEN},
+    types::{
+        Claim, ClaimError, ClaimStatus, Policy, VoteOption, DETAILS_MAX_LEN, IMAGE_URLS_MAX,
+        IMAGE_URL_MAX_LEN,
+    },
 };
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Maximum rejected claims before policy is automatically deactivated.
 /// This threshold must be aligned with legal review and product specifications.
-/// 
+///
 /// GOVERNANCE RISK: This constant is hardcoded; changing it requires contract upgrade.
 /// Consider making this configurable per-policy-type in future iterations.
 pub const MAX_REJECTED_CLAIMS_BEFORE_DEACTIVATION: u32 = 3;
@@ -72,6 +77,27 @@ pub struct ClaimRejected {
     pub claim_id: u64,
     pub policy_id: u32,
     pub claimant: Address,
+}
+
+/// Emitted when an appeal is opened on a rejected claim.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AppealOpened {
+    pub claim_id: u64,
+    pub policy_id: u32,
+    pub claimant: Address,
+    pub appeal_number: u32,
+    pub additional_evidence: String,
+}
+
+/// Emitted when an appeal is closed (either approved or finally rejected).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AppealClosed {
+    pub claim_id: u64,
+    pub policy_id: u32,
+    pub claimant: Address,
+    pub final_status: ClaimStatus,
 }
 
 /// Emitted when a policy receives a strike due to claim rejection.
@@ -159,6 +185,7 @@ pub fn file_claim(
 
     // Create claim
     let claim_id = storage::next_claim_id(env);
+    let current_ledger = env.ledger().sequence();
     let claim = Claim {
         claim_id,
         policy_id,
@@ -169,6 +196,10 @@ pub fn file_claim(
         status: ClaimStatus::Processing,
         approve_votes: 0,
         reject_votes: 0,
+        filed_at_ledger: current_ledger,
+        rejected_at_ledger: None,
+        appeal_count: 0,
+        appeal_opened_at_ledger: None,
     };
 
     env.storage()
@@ -194,13 +225,15 @@ pub fn file_claim(
 /// Casts a vote on a claim.
 ///
 /// Validation:
-///   - Claim must exist and be in Processing state
+///   - Claim must exist and be in an active voting state (Processing or AppealOpen)
 ///   - Voter must have an active policy (one-policy-one-vote)
-///   - Voter cannot vote twice on the same claim
+///   - Voter cannot vote twice on the same claim phase
 ///
 /// State transitions:
 ///   - Processing → Approved: if approve_votes reaches majority
 ///   - Processing → Rejected: if reject_votes reaches majority
+///   - AppealOpen → Approved: if approve_votes reaches majority
+///   - AppealOpen → RejectedFinal: if reject_votes reaches majority
 ///
 /// Rejection consequences:
 ///   - Increments policy.rejected_claims_count
@@ -212,6 +245,11 @@ pub fn file_claim(
 ///   - Emits ClaimApproved event
 ///
 /// CRITICAL: Rejection path never transfers payout tokens.
+///
+/// APPEAL VOTING RULES:
+///   - Votes reset when appeal is opened (fresh voting round)
+///   - Voters can vote again even if they voted in the initial round
+///   - Vote storage key includes claim phase to prevent double-voting within same phase
 #[allow(dead_code)]
 pub fn vote_on_claim(
     env: &Env,
@@ -229,8 +267,8 @@ pub fn vote_on_claim(
         .get(&claim_key)
         .ok_or(ClaimError::ClaimNotFound)?;
 
-    // Validate claim is in Processing state
-    if claim.status.is_terminal() {
+    // Validate claim is in an active voting state
+    if !claim.status.is_voting_active() {
         return Err(ClaimError::ClaimAlreadyFinalized);
     }
 
@@ -241,8 +279,9 @@ pub fn vote_on_claim(
         return Err(ClaimError::VoterHasNoPolicies);
     }
 
-    // Check if voter already voted
-    let vote_key = DataKey::Vote(claim_id, voter.clone());
+    // Check if voter already voted in this phase
+    // Vote key includes appeal_count to allow re-voting in appeal phase
+    let vote_key = DataKey::VotePhase(claim_id, voter.clone(), claim.appeal_count);
     if env.storage().persistent().has(&vote_key) {
         return Err(ClaimError::AlreadyVoted);
     }
@@ -368,10 +407,7 @@ fn finalize_rejection(env: &Env, claim: &mut Claim) -> Result<(), ClaimError> {
     // Check if deactivation threshold reached
     if policy.rejected_claims_count >= MAX_REJECTED_CLAIMS_BEFORE_DEACTIVATION {
         policy.is_active = false;
-        let reason = String::from_str(
-            env,
-            "deactivated: excessive rejected claims",
-        );
+        let reason = String::from_str(env, "deactivated: excessive rejected claims");
         policy.deactivation_reason = Some(reason.clone());
 
         // Emit deactivation event

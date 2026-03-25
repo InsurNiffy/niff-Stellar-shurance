@@ -21,6 +21,18 @@ pub const REASON_MAX_LEN: u32 = 128;
 /// finalize_claim may be called to settle the outcome.
 pub const VOTE_WINDOW_LEDGERS: u32 = 120_960;
 
+/// Maximum number of appeals allowed per claim.
+/// Prevents infinite ping-pong of voting rounds.
+pub const MAX_APPEALS_PER_CLAIM: u32 = 1;
+
+/// Appeal window in ledgers (~3 days at 5 s/ledger ≈ 51_840 ledgers).
+/// Claimant must open appeal within this window after rejection.
+pub const APPEAL_WINDOW_LEDGERS: u32 = 51_840;
+
+/// Appeal voting window in ledgers (~5 days at 5 s/ledger ≈ 86_400 ledgers).
+/// Shorter than initial vote to expedite resolution.
+pub const APPEAL_VOTE_WINDOW_LEDGERS: u32 = 86_400;
+
 // ── policy_id assignment ─────────────────────────────────────────────────────
 //
 // policy_id is a u32 scoped per holder: the contract increments a per-holder
@@ -48,6 +60,11 @@ pub enum ClaimError {
     ClaimAlreadyFinalized = 9,
     VoterHasNoPolicies = 10,
     AlreadyVoted = 11,
+    AppealNotAllowed = 12,
+    AppealWindowExpired = 13,
+    MaxAppealsReached = 14,
+    NotClaimant = 15,
+    AppealNotInProgress = 16,
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -72,34 +89,52 @@ pub enum RegionTier {
     High,   // urban / high-risk zone
 }
 
-/// Claim lifecycle state machine.
+/// Claim lifecycle state machine with appeals support.
 ///
 /// ```text
 /// [filed] → Processing
 ///               │
 ///        ┌──────┴──────┐
 ///        ▼             ▼
-///    Approved       Rejected
+///    Approved       Rejected ──┐
+///                      │       │ (appeal window)
+///                      ▼       │
+///                 AppealOpen ◄─┘
+///                      │
+///               ┌──────┴──────┐
+///               ▼             ▼
+///          Approved    RejectedFinal
 /// ```
 ///
 /// Transitions:
-///   Processing → Approved  : majority Approve votes reached
-///   Processing → Rejected  : majority Reject votes reached OR policy deactivated
+///   Processing → Approved       : majority Approve votes reached
+///   Processing → Rejected       : majority Reject votes reached
+///   Rejected → AppealOpen       : claimant opens appeal within window
+///   Rejected → RejectedFinal    : appeal window expires without appeal
+///   AppealOpen → Approved       : majority Approve votes on appeal
+///   AppealOpen → RejectedFinal  : majority Reject votes on appeal
 ///
-/// Terminal states (Approved / Rejected) are immutable; no re-open path exists
-/// on-chain.  Off-chain dispute resolution must open a new claim.
+/// Terminal states (Approved / RejectedFinal) are immutable.
+/// Appeals are capped at MAX_APPEALS_PER_CLAIM to prevent infinite loops.
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum ClaimStatus {
     Processing,
     Approved,
     Rejected,
+    AppealOpen,
+    RejectedFinal,
 }
 
 impl ClaimStatus {
-    /// Returns true only for the two terminal states.
+    /// Returns true only for the terminal states.
     pub fn is_terminal(&self) -> bool {
-        matches!(self, ClaimStatus::Approved | ClaimStatus::Rejected)
+        matches!(self, ClaimStatus::Approved | ClaimStatus::RejectedFinal)
+    }
+
+    /// Returns true if the claim is in an active voting phase.
+    pub fn is_voting_active(&self) -> bool {
+        matches!(self, ClaimStatus::Processing | ClaimStatus::AppealOpen)
     }
 }
 
@@ -155,17 +190,21 @@ pub struct Policy {
 
 /// On-chain claim record.
 ///
-/// | Field         | Authoritative | Notes |
-/// |---------------|---------------|-------|
-/// | claim_id      | on-chain      | global monotonic u64 from ClaimCounter |
-/// | policy_id     | on-chain      | references Policy(holder, policy_id) |
-/// | claimant      | on-chain      | must equal policy.holder |
-/// | amount        | on-chain      | stroops; 0 < amount ≤ policy.coverage |
-/// | details       | on-chain      | ≤ DETAILS_MAX_LEN bytes |
-/// | image_urls    | on-chain      | ≤ IMAGE_URLS_MAX items, each ≤ IMAGE_URL_MAX_LEN |
-/// | status        | on-chain      | ClaimStatus state machine |
-/// | approve_votes | on-chain      | running tally |
-/// | reject_votes  | on-chain      | running tally |
+/// | Field                  | Authoritative | Notes |
+/// |------------------------|---------------|-------|
+/// | claim_id               | on-chain      | global monotonic u64 from ClaimCounter |
+/// | policy_id              | on-chain      | references Policy(holder, policy_id) |
+/// | claimant               | on-chain      | must equal policy.holder |
+/// | amount                 | on-chain      | stroops; 0 < amount ≤ policy.coverage |
+/// | details                | on-chain      | ≤ DETAILS_MAX_LEN bytes |
+/// | image_urls             | on-chain      | ≤ IMAGE_URLS_MAX items, each ≤ IMAGE_URL_MAX_LEN |
+/// | status                 | on-chain      | ClaimStatus state machine |
+/// | approve_votes          | on-chain      | running tally |
+/// | reject_votes           | on-chain      | running tally |
+/// | filed_at_ledger        | on-chain      | ledger when claim was filed |
+/// | rejected_at_ledger     | on-chain      | ledger when claim was rejected (for appeal window) |
+/// | appeal_count           | on-chain      | number of appeals opened (capped at MAX_APPEALS_PER_CLAIM) |
+/// | appeal_opened_at_ledger| on-chain      | ledger when current appeal was opened |
 #[contracttype]
 #[derive(Clone)]
 pub struct Claim {
@@ -181,6 +220,14 @@ pub struct Claim {
     pub status: ClaimStatus,
     pub approve_votes: u32,
     pub reject_votes: u32,
+    /// Ledger sequence when claim was filed.
+    pub filed_at_ledger: u32,
+    /// Ledger sequence when claim was rejected (used for appeal window).
+    pub rejected_at_ledger: Option<u32>,
+    /// Number of appeals opened for this claim.
+    pub appeal_count: u32,
+    /// Ledger sequence when current appeal was opened.
+    pub appeal_opened_at_ledger: Option<u32>,
 }
 
 /// Premium quote line item for UX display.

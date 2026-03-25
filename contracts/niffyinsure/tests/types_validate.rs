@@ -36,6 +36,10 @@ fn dummy_claim(env: &Env, amount: i128, status: ClaimStatus) -> Claim {
         status,
         approve_votes: 0,
         reject_votes: 0,
+        filed_at_ledger: 100,
+        rejected_at_ledger: None,
+        appeal_count: 0,
+        appeal_opened_at_ledger: None,
     }
 }
 
@@ -209,10 +213,25 @@ fn approved_claim_is_terminal() {
 }
 
 #[test]
-fn rejected_claim_is_terminal() {
+fn rejected_claim_can_appeal() {
     let env = Env::default();
     let c = dummy_claim(&env, 1_000_000, ClaimStatus::Rejected);
+    // Rejected claims are not terminal - they can transition to AppealOpen
+    assert_eq!(check_claim_open(&c), Ok(()));
+}
+
+#[test]
+fn rejected_final_claim_is_terminal() {
+    let env = Env::default();
+    let c = dummy_claim(&env, 1_000_000, ClaimStatus::RejectedFinal);
     assert_eq!(check_claim_open(&c), Err(Error::ClaimAlreadyTerminal));
+}
+
+#[test]
+fn appeal_open_claim_is_open() {
+    let env = Env::default();
+    let c = dummy_claim(&env, 1_000_000, ClaimStatus::AppealOpen);
+    assert_eq!(check_claim_open(&c), Ok(()));
 }
 
 // ── Enum coherence ────────────────────────────────────────────────────────────
@@ -226,5 +245,7 @@ fn vote_option_variants_distinct() {
 fn claim_status_terminal_flags() {
     assert!(!ClaimStatus::Processing.is_terminal());
     assert!(ClaimStatus::Approved.is_terminal());
-    assert!(ClaimStatus::Rejected.is_terminal());
+    assert!(!ClaimStatus::Rejected.is_terminal());
+    assert!(!ClaimStatus::AppealOpen.is_terminal());
+    assert!(ClaimStatus::RejectedFinal.is_terminal());
 }

@@ -130,6 +130,20 @@
                     },
                     {
                       "key": {
+                        "symbol": "appeal_count"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "appeal_opened_at_ledger"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "approve_votes"
                       },
                       "val": {
@@ -162,6 +176,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "filed_at_ledger"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "image_urls"
                       },
                       "val": {
@@ -183,6 +205,12 @@
                       "val": {
                         "u32": 0
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "rejected_at_ledger"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -594,13 +622,16 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "Vote"
+                  "symbol": "VotePhase"
                 },
                 {
                   "u64": "1"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                },
+                {
+                  "u32": 0
                 }
               ]
             },
@@ -617,13 +648,16 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "Vote"
+                      "symbol": "VotePhase"
                     },
                     {
                       "u64": "1"
                     },
                     {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                    },
+                    {
+                      "u32": 0
                     }
                   ]
                 },
