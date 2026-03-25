@@ -9,18 +9,83 @@ mod token;
 pub mod types;
 pub mod validate;
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, Address, Env};
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum InitError {
+    /// Contract has already been initialized; reinitialization is forbidden.
+    AlreadyInitialized = 1,
+}
+
+/// Genesis event emitted once on successful initialization.
+///
+/// NestJS listener example:
+/// ```ts
+/// if (event.type === "ContractInitialized") {
+///   const { version, ledger, admin } = event.data;
+/// }
+/// ```
+#[contractevent]
+pub struct ContractInitialized {
+    pub version: u32,
+    pub ledger: u32,
+    pub admin: Address,
+}
 
 #[contract]
 pub struct NiffyInsure;
 
 #[contractimpl]
 impl NiffyInsure {
-    /// One-time initialisation: store admin and token contract address.
-    /// Must be called immediately after deployment.
-    pub fn initialize(env: Env, admin: Address, token: Address) {
+    /// One-time initialization: store admin, token, zero counters, emit genesis event.
+    ///
+    /// # Security
+    /// - `admin` must authorize this call (`require_auth`).
+    /// - A persistent `Initialized` flag is set atomically; any subsequent call
+    ///   returns `AlreadyInitialized` before touching any state.
+    /// - `admin` may be a multisig address distinct from the transaction invoker;
+    ///   Soroban auth handles both cases transparently.
+    ///
+    /// # Genesis event
+    /// Topics : `["contract_initialized", admin]`
+    /// Data   : `(version: u32, ledger: u32)`
+    ///
+    /// NestJS listener example:
+    /// ```ts
+    /// if (event.topic[0] === "contract_initialized") {
+    ///   const [version, ledger] = scValToNative(event.value);
+    /// }
+    /// ```
+    pub fn initialize(env: Env, admin: Address, token: Address) -> Result<(), InitError> {
+        if storage::is_initialized(&env) {
+            return Err(InitError::AlreadyInitialized);
+        }
+
+        // Admin must authorize — supports both EOA and multisig.
+        admin.require_auth();
+
+        // Persist state atomically before emitting the event.
         storage::set_admin(&env, &admin);
         storage::set_token(&env, &token);
+        // Counters default to 0 via unwrap_or — no explicit write needed.
+        storage::set_initialized(&env);
+
+        // Genesis event — parseable by NestJS without custom hacks.
+        ContractInitialized {
+            version: storage::CONTRACT_VERSION,
+            ledger: env.ledger().sequence(),
+            admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Returns the stored admin address.
+    pub fn get_admin(env: Env) -> Address {
+        storage::get_admin(&env)
     }
 
     /// Pure quote path: reads config and computes premium only.
@@ -70,7 +135,7 @@ impl NiffyInsure {
     }
 
     // ── Policy domain ────────────────────────────────────────────────────
-    // generate_premium, initiate_policy, renew_policy, terminate_policy
+    // initiate_policy, renew_policy, terminate_policy
     // implemented in policy.rs — issue: feat/policy-lifecycle
 
     // ── Claim domain ─────────────────────────────────────────────────────

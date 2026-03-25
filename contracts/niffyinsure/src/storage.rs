@@ -1,9 +1,14 @@
 use soroban_sdk::{contracttype, Address, Env};
 
+/// Semantic version emitted in the genesis event.
+pub const CONTRACT_VERSION: u32 = 1;
+
 #[contracttype]
 pub enum DataKey {
     Admin,
     Token,
+    /// Reinitialization guard — set to true after first initialize().
+    Initialized,
     /// (holder, policy_id) — policy_id is per-holder u32
     Policy(Address, u32),
     /// Per-holder policy counter; next policy_id = counter + 1
@@ -15,6 +20,18 @@ pub enum DataKey {
     Voters,
     /// Global monotonic claim id counter
     ClaimCounter,
+}
+
+/// Returns true if the contract has already been initialized.
+pub fn is_initialized(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get::<_, bool>(&DataKey::Initialized)
+        .unwrap_or(false)
+}
+
+pub fn set_initialized(env: &Env) {
+    env.storage().instance().set(&DataKey::Initialized, &true);
 }
 
 pub fn set_admin(env: &Env, admin: &Address) {
