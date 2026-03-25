@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contracttype, Address, Map, String, Vec};
 
 // ── Field size limits (enforced in mutating entrypoints) ─────────────────────
 //
@@ -10,11 +10,13 @@ use soroban_sdk::{contracttype, Address, String, Vec};
 //   IMAGE_URL_MAX_LEN = 128 bytes → IPFS CIDv1 base32 ≤ 62 chars; URL wrapper ≤ 128
 //   IMAGE_URLS_MAX   = 5          → caps Vec<String> at 5 × 128 = 640 bytes per claim
 //   REASON_MAX_LEN   = 128 bytes  → termination reason string
+//   SAFETY_SCORE_MAX = 100        → bounded integer used in premium discount math
 
 pub const DETAILS_MAX_LEN: u32 = 256;
 pub const IMAGE_URL_MAX_LEN: u32 = 128;
 pub const IMAGE_URLS_MAX: u32 = 5;
 pub const REASON_MAX_LEN: u32 = 128;
+pub const SAFETY_SCORE_MAX: u32 = 100;
 
 // ── policy_id assignment ─────────────────────────────────────────────────────
 //
@@ -27,133 +29,148 @@ pub const REASON_MAX_LEN: u32 = 128;
 
 // ── Enums ────────────────────────────────────────────────────────────────────
 
-/// Coverage category.  Categorical enum prevents unbounded string storage and
-/// aligns with backend DTO `PolicyType` discriminated union.
+/// Coverage category retained for policy lifecycle work already scoped in the
+/// repository.
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PolicyType {
     Auto,
     Health,
     Property,
 }
 
-/// Geographic risk tier.  Replaces a free-form region string; maps 1-to-1 with
-/// the premium multiplier table in `premium.rs`.
+/// Geographic risk tier used by the premium multiplier table.
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RegionTier {
-    Low,    // rural / low-risk zone
-    Medium, // suburban
-    High,   // urban / high-risk zone
+    Low,
+    Medium,
+    High,
+}
+
+/// Underwriting age buckets.  A categorical enum keeps risk math deterministic
+/// and avoids ambiguous edge handling from raw ages in the contract.
+#[contracttype]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum AgeBand {
+    Young,
+    Adult,
+    Senior,
+}
+
+/// Coverage level selected for premium calculation.
+#[contracttype]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CoverageType {
+    Basic,
+    Standard,
+    Premium,
 }
 
 /// Claim lifecycle state machine.
-///
-/// ```text
-/// [filed] → Processing
-///               │
-///        ┌──────┴──────┐
-///        ▼             ▼
-///    Approved       Rejected
-/// ```
-///
-/// Transitions:
-///   Processing → Approved  : majority Approve votes reached
-///   Processing → Rejected  : majority Reject votes reached OR policy deactivated
-///
-/// Terminal states (Approved / Rejected) are immutable; no re-open path exists
-/// on-chain.  Off-chain dispute resolution must open a new claim.
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ClaimStatus {
-    Processing,
+    Pending,
     Approved,
+    Paid,
     Rejected,
 }
 
 impl ClaimStatus {
-    /// Returns true only for the two terminal states.
     pub fn is_terminal(&self) -> bool {
-        matches!(self, ClaimStatus::Approved | ClaimStatus::Rejected)
+        matches!(self, ClaimStatus::Paid | ClaimStatus::Rejected)
     }
 }
 
 /// Ballot option cast by a policyholder during claim voting.
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum VoteOption {
     Approve,
     Reject,
 }
 
+// ── Premium engine structs ───────────────────────────────────────────────────
+
+/// Risk input accepted by the premium engine.
+///
+/// `safety_score` is bounded to 0..=100 at contract entry and represents the
+/// percentage of the configured maximum safety discount that may be earned.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiskInput {
+    pub region: RegionTier,
+    pub age_band: AgeBand,
+    pub coverage: CoverageType,
+    pub safety_score: u32,
+}
+
+/// Admin-configurable multiplier table.
+///
+/// All multiplier values use 4 decimal places of fixed precision:
+/// `1.2500x == 12_500`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiplierTable {
+    pub region: Map<RegionTier, i128>,
+    pub age: Map<AgeBand, i128>,
+    pub coverage: Map<CoverageType, i128>,
+    /// Maximum discount, scaled by 4 decimals, earned when `safety_score=100`.
+    pub safety_discount: i128,
+    pub version: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PremiumTableUpdated {
+    pub version: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimProcessed {
+    pub claim_id: u64,
+    pub recipient: Address,
+    pub amount: i128,
+    pub asset: Address,
+}
+
 // ── Core structs ─────────────────────────────────────────────────────────────
 
-/// On-chain policy record.
-///
-/// | Field          | Authoritative | Notes |
-/// |----------------|---------------|-------|
-/// | holder         | on-chain      | Soroban Address; used as storage key component |
-/// | policy_id      | on-chain      | per-holder u32 counter; see note above |
-/// | policy_type    | on-chain      | categorical enum |
-/// | region         | on-chain      | risk tier enum |
-/// | premium        | on-chain      | stroops; computed by premium.rs at bind time |
-/// | coverage       | on-chain      | stroops; max payout for this policy |
-/// | is_active      | on-chain      | false after termination or expiry |
-/// | start_ledger   | on-chain      | ledger sequence at activation |
-/// | end_ledger     | on-chain      | ledger sequence at expiry; must be > start_ledger |
 #[contracttype]
 #[derive(Clone)]
 pub struct Policy {
-    /// Policyholder address; component of the storage key.
     pub holder: Address,
-    /// Per-holder monotonic identifier (starts at 1).
     pub policy_id: u32,
     pub policy_type: PolicyType,
     pub region: RegionTier,
-    /// Annual premium in stroops paid at activation / renewal.
     pub premium: i128,
-    /// Maximum claim payout in stroops; must be > 0.
     pub coverage: i128,
     pub is_active: bool,
-    /// Ledger sequence when the policy became active.
     pub start_ledger: u32,
-    /// Ledger sequence when the policy expires; end_ledger > start_ledger.
     pub end_ledger: u32,
 }
 
-/// On-chain claim record.
-///
-/// | Field         | Authoritative | Notes |
-/// |---------------|---------------|-------|
-/// | claim_id      | on-chain      | global monotonic u64 from ClaimCounter |
-/// | policy_id     | on-chain      | references Policy(holder, policy_id) |
-/// | claimant      | on-chain      | must equal policy.holder |
-/// | amount        | on-chain      | stroops; 0 < amount ≤ policy.coverage |
-/// | details       | on-chain      | ≤ DETAILS_MAX_LEN bytes |
-/// | image_urls    | on-chain      | ≤ IMAGE_URLS_MAX items, each ≤ IMAGE_URL_MAX_LEN |
-/// | status        | on-chain      | ClaimStatus state machine |
-/// | approve_votes | on-chain      | running tally |
-/// | reject_votes  | on-chain      | running tally |
 #[contracttype]
 #[derive(Clone)]
 pub struct Claim {
     pub claim_id: u64,
     pub policy_id: u32,
     pub claimant: Address,
-    /// Requested payout in stroops.
     pub amount: i128,
-    /// Human-readable description; max DETAILS_MAX_LEN bytes.
+    pub asset: Address,
     pub details: String,
-    /// IPFS URLs for supporting images; max IMAGE_URLS_MAX items.
     pub image_urls: Vec<String>,
     pub status: ClaimStatus,
     pub approve_votes: u32,
     pub reject_votes: u32,
+    pub paid_at: Option<u64>,
 }
 
 /// Premium quote line item for UX display.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PremiumQuoteLineItem {
     pub component: String,
     pub factor: i128,
@@ -161,13 +178,11 @@ pub struct PremiumQuoteLineItem {
 }
 
 /// Structured quote response returned by `generate_premium`.
-///
-/// Field names and ordering are kept stable for SDK bindings consumed by
-/// backend simulation services.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PremiumQuote {
     pub total_premium: i128,
     pub line_items: Option<Vec<PremiumQuoteLineItem>>,
     pub valid_until_ledger: u32,
+    pub config_version: u32,
 }

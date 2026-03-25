@@ -1,56 +1,4 @@
-//! # Storage module — single source of truth for all Soroban persistence.
-//!
-//! ## Keyspace diagram
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────────────────┐
-//! │  INSTANCE storage  (lives as long as the contract instance)             │
-//! │  Bumped on every mutating call via bump_instance().                     │
-//! │                                                                         │
-//! │  DataKey::Admin          → Address   (contract administrator)           │
-//! │  DataKey::Token          → Address   (SEP-41 token contract)            │
-//! │  DataKey::Paused         → bool      (circuit-breaker flag)             │
-//! │  DataKey::ClaimCounter   → u64       (global monotonic claim id)        │
-//! │  DataKey::Voters         → Vec<Address> (active policyholder set)       │
-//! └─────────────────────────────────────────────────────────────────────────┘
-//!
-//! ┌─────────────────────────────────────────────────────────────────────────┐
-//! │  PERSISTENT storage  (survives eviction; must be bumped periodically)   │
-//! │                                                                         │
-//! │  DataKey::PolicyCounter(holder: Address)                                │
-//! │      → u32   next policy_id for this holder (starts at 1)              │
-//! │                                                                         │
-//! │  DataKey::Policy(holder: Address, policy_id: u32)                       │
-//! │      → Policy   full policy record                                      │
-//! │                                                                         │
-//! │  DataKey::Claim(claim_id: u64)                                          │
-//! │      → Claim   full claim record                                        │
-//! │                                                                         │
-//! │  DataKey::Vote(claim_id: u64, voter: Address)                           │
-//! │      → VoteOption   ballot cast by voter on claim                       │
-//! └─────────────────────────────────────────────────────────────────────────┘
-//!
-//! ## Storage tier rationale
-//!
-//! | Key                  | Tier       | Justification                              |
-//! |----------------------|------------|--------------------------------------------|
-//! | Admin / Token        | Instance   | Accessed on every call; eviction = DoS     |
-//! | Paused               | Instance   | Circuit-breaker must always be readable    |
-//! | ClaimCounter         | Instance   | Monotonic; must never be lost              |
-//! | Voters               | Instance   | Iterated on every vote tally               |
-//! | PolicyCounter        | Persistent | Per-holder; infrequently accessed          |
-//! | Policy               | Persistent | Long-lived; bumped on write                |
-//! | Claim                | Persistent | Long-lived; bumped on write                |
-//! | Vote                 | Persistent | Long-lived; bumped on write                |
-//!
-//! Temporary storage is intentionally NOT used: all data here is long-lived
-//! and must survive beyond a single transaction or ledger close window.
-//!
-//! ## Rules for callers
-//!
-//! - Domain modules (policy.rs, claim.rs, token.rs) MUST NOT construct
-//!   DataKey values or call env.storage() directly.
-//! - All reads/writes go through the typed helpers in this module.
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 use crate::types::{Claim, Policy, VoteOption};
 use soroban_sdk::{contracttype, Address, Env, Vec};
@@ -79,22 +27,26 @@ pub enum DataKey {
     Admin,
     /// SEP-41 token contract used for premium payments and claim payouts.
     Token,
-    /// Circuit-breaker: when true, all mutating entrypoints are blocked.
-    Paused,
-    /// Global monotonic claim id counter; incremented by `next_claim_id`.
-    ClaimCounter,
-    /// Ordered list of all active policyholder addresses eligible to vote.
-    Voters,
-
-    // ── Persistent tier ──────────────────────────────────────────────────
-    /// Per-holder policy id counter; value = last assigned policy_id.
+    PremiumTable,
+    AllowedAsset(Address),
+    /// (holder, policy_id) — policy_id is per-holder u32
+    Policy(Address, u32),
+    /// Per-holder policy counter; next policy_id = counter + 1
     PolicyCounter(Address),
     /// Full policy record keyed by (holder, per-holder policy_id).
     Policy(Address, u32),
     /// Full claim record keyed by global claim_id.
     Claim(u64),
-    /// Ballot cast by `voter` on `claim_id`; absence = not yet voted.
+    /// (claim_id, voter_address) → VoteOption; immutable after first write
     Vote(u64, Address),
+    /// Vec<Address> of all current active policyholders (voters)
+    Voters,
+    /// Global monotonic claim id counter
+    ClaimCounter,
+    /// Contract pause flag (bool). Missing ≡ not paused.
+    Paused,
+    /// Per-holder active policy count; used for weighted voting.
+    ActivePolicyCount(Address),
 }
 
 // ── Instance bump ─────────────────────────────────────────────────────────────
@@ -113,7 +65,7 @@ pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
 }
 
-/// Panics if admin was never set (contract not initialised).
+#[allow(dead_code)]
 pub fn get_admin(env: &Env) -> Address {
     env.storage()
         .instance()
@@ -127,7 +79,7 @@ pub fn set_token(env: &Env, token: &Address) {
     env.storage().instance().set(&DataKey::Token, token);
 }
 
-/// Panics if token was never set (contract not initialised).
+#[allow(dead_code)]
 pub fn get_token(env: &Env) -> Address {
     env.storage()
         .instance()
@@ -135,33 +87,58 @@ pub fn get_token(env: &Env) -> Address {
         .expect("contract not initialised: token missing")
 }
 
-// ── Pause flag ────────────────────────────────────────────────────────────────
-
-pub fn set_paused(env: &Env, paused: bool) {
-    env.storage().instance().set(&DataKey::Paused, &paused);
+pub fn set_multiplier_table(env: &Env, table: &MultiplierTable) {
+    env.storage().instance().set(&DataKey::PremiumTable, table);
 }
 
-/// Returns false if the key has never been written (default = not paused).
-pub fn is_paused(env: &Env) -> bool {
+pub fn get_multiplier_table(env: &Env) -> MultiplierTable {
+    env.storage().instance().get(&DataKey::PremiumTable).unwrap()
+}
+
+pub fn set_allowed_asset(env: &Env, asset: &Address, allowed: bool) {
     env.storage()
         .instance()
-        .get(&DataKey::Paused)
+        .set(&DataKey::AllowedAsset(asset.clone()), &allowed);
+}
+
+pub fn is_allowed_asset(env: &Env, asset: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::AllowedAsset(asset.clone()))
         .unwrap_or(false)
 }
 
-// ── Claim counter (instance) ──────────────────────────────────────────────────
-
-/// Returns the current claim counter value (0 if no claims filed yet).
-pub fn get_claim_counter(env: &Env) -> u64 {
+pub fn set_claim(env: &Env, claim: &crate::types::Claim) {
     env.storage()
-        .instance()
-        .get(&DataKey::ClaimCounter)
-        .unwrap_or(0u64)
+        .persistent()
+        .set(&DataKey::Claim(claim.claim_id), claim);
 }
 
-/// Increments the global claim counter and returns the new (next) claim_id.
+pub fn get_claim(env: &Env, claim_id: u64) -> Option<crate::types::Claim> {
+    env.storage().persistent().get(&DataKey::Claim(claim_id))
+}
+
+#[allow(dead_code)]
+pub fn next_policy_id(env: &Env, holder: &Address) -> u32 {
+    let key = DataKey::PolicyCounter(holder.clone());
+    let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+    let next = current
+        .checked_add(1)
+        .unwrap_or_else(|| panic!("policy_id overflow"));
+    env.storage().persistent().set(&key, &next);
+    next
+}
+
+#[allow(dead_code)]
 pub fn next_claim_id(env: &Env) -> u64 {
-    let next: u64 = get_claim_counter(env) + 1;
+    let current: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ClaimCounter)
+        .unwrap_or(0u64);
+    let next = current
+        .checked_add(1)
+        .unwrap_or_else(|| panic!("claim_id overflow"));
     env.storage().instance().set(&DataKey::ClaimCounter, &next);
     next
 }
@@ -233,60 +210,80 @@ pub fn has_policy(env: &Env, holder: &Address, policy_id: u32) -> bool {
         .has(&DataKey::Policy(holder.clone(), policy_id))
 }
 
-/// Returns `None` if the policy does not exist.
-pub fn get_policy(env: &Env, holder: &Address, policy_id: u32) -> Option<Policy> {
+// ── Pause flag ───────────────────────────────────────────────────────────────
+
+pub fn set_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::Paused, &paused);
+}
+
+pub fn is_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::Paused)
+        .unwrap_or(false)
+}
+
+// ── Policy persistence ───────────────────────────────────────────────────────
+
+pub fn set_policy(env: &Env, holder: &Address, policy_id: u32, policy: &crate::types::Policy) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Policy(holder.clone(), policy_id), policy);
+}
+
+pub fn get_policy(env: &Env, holder: &Address, policy_id: u32) -> Option<crate::types::Policy> {
     env.storage()
         .persistent()
         .get(&DataKey::Policy(holder.clone(), policy_id))
 }
 
-/// Panics with a clear message if the policy does not exist.
-pub fn get_policy_or_panic(env: &Env, holder: &Address, policy_id: u32) -> Policy {
-    get_policy(env, holder, policy_id)
-        .expect("policy not found: (holder, policy_id) does not exist")
-}
+// ── Voter registry ───────────────────────────────────────────────────────────
+//
+// Vote-weight semantics: **one-policy-one-vote**.
+// Each active policy grants exactly one vote.  A holder with N active policies
+// has N votes in claim governance.  `ActivePolicyCount(holder)` tracks this.
+// `Voters` is a deduplicated Vec<Address> of holders with ≥1 active policy;
+// it is used for quorum denominator calculation.  `vote_on_claim` multiplies
+// each ballot by the holder's `ActivePolicyCount` at vote time.
 
-pub fn set_policy(env: &Env, policy: &Policy) {
-    let key = DataKey::Policy(policy.holder.clone(), policy.policy_id);
-    env.storage().persistent().set(&key, policy);
+pub fn get_voters(env: &Env) -> Vec<Address> {
     env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .instance()
+        .get(&DataKey::Voters)
+        .unwrap_or_else(|| Vec::new(env))
 }
 
-// ── Claim (persistent) ────────────────────────────────────────────────────────
-
-/// Returns `None` if the claim does not exist.
-pub fn get_claim(env: &Env, claim_id: u64) -> Option<Claim> {
-    env.storage().persistent().get(&DataKey::Claim(claim_id))
+pub fn set_voters(env: &Env, voters: &Vec<Address>) {
+    env.storage().instance().set(&DataKey::Voters, voters);
 }
 
-/// Panics with a clear message if the claim does not exist.
-pub fn get_claim_or_panic(env: &Env, claim_id: u64) -> Claim {
-    get_claim(env, claim_id).expect("claim not found: claim_id does not exist")
+/// Add `holder` to the voter set (if not already present) and increment their
+/// active-policy count by 1.
+pub fn add_voter(env: &Env, holder: &Address) {
+    let mut voters = get_voters(env);
+    // Check membership — linear scan is acceptable for DAO-scale voter sets.
+    let mut found = false;
+    for v in voters.iter() {
+        if v == *holder {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        voters.push_back(holder.clone());
+    }
+    set_voters(env, &voters);
+
+    // Increment active policy count.
+    let key = DataKey::ActivePolicyCount(holder.clone());
+    let count: u32 = env.storage().instance().get(&key).unwrap_or(0);
+    env.storage().instance().set(&key, &(count + 1));
 }
 
-pub fn set_claim(env: &Env, claim: &Claim) {
-    let key = DataKey::Claim(claim.claim_id);
-    env.storage().persistent().set(&key, claim);
+/// Returns the number of active policies for `holder` (vote weight).
+pub fn get_active_policy_count(env: &Env, holder: &Address) -> u32 {
     env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
-}
-
-// ── Vote (persistent) ─────────────────────────────────────────────────────────
-
-/// Returns `None` if `voter` has not yet voted on `claim_id`.
-pub fn get_vote(env: &Env, claim_id: u64, voter: &Address) -> Option<VoteOption> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Vote(claim_id, voter.clone()))
-}
-
-pub fn set_vote(env: &Env, claim_id: u64, voter: &Address, vote: &VoteOption) {
-    let key = DataKey::Vote(claim_id, voter.clone());
-    env.storage().persistent().set(&key, vote);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .instance()
+        .get(&DataKey::ActivePolicyCount(holder.clone()))
+        .unwrap_or(0)
 }

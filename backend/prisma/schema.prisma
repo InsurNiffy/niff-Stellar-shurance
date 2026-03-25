@@ -1,0 +1,96 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Claim {
+  id                Int       @id @default(autoincrement())
+  policyId          String
+  creatorAddress    String
+  amount            String
+  description       String?
+  evidenceHash      String?
+  status            ClaimStatus @default(PENDING)
+  isFinalized       Boolean   @default(false)
+  createdAtLedger   Int
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  updatedAtLedger   Int       @default(0)
+
+  // Relations
+  policy            Policy    @relation(fields: [policyId], references: [id])
+  votes             Vote[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([policyId])
+  @@map("claims")
+}
+
+model Vote {
+  id            Int       @id @default(autoincrement())
+  claimId       Int
+  voterAddress  String
+  vote          VoteType
+  votingPower   String    @default("1")
+  txHash        String?
+  votedAtLedger Int
+  createdAt     DateTime  @default(now())
+
+  // Relations
+  claim         Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId, voterAddress])
+  @@index([voterAddress])
+  @@index([claimId])
+  @@map("votes")
+}
+
+model Policy {
+  id                    String   @id
+  name                  String
+  description           String?
+  coverageAmount        String
+  premium               String
+  durationDays          Int
+  requiredVotes         Int      @default(5)
+  votingPeriodLedgers   Int      @default(720) // ~1 hour at 5 sec/ledger
+  votingDeadlineLedger  Int
+  votingDeadlineTime    DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  claims                Claim[]
+
+  @@map("policies")
+}
+
+model IndexerState {
+  id              Int      @id @default(autoincrement())
+  lastLedger      Int
+  lastCursor      String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("indexer_state")
+}
+
+enum ClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum VoteType {
+  YES
+  NO
+}
+
+

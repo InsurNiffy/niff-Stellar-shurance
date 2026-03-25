@@ -1,27 +1,47 @@
-use soroban_sdk::{Env, String, Vec};
+use soroban_sdk::{contracterror, Env, String, Vec};
 
 use crate::types::{
-    Claim, Policy, DETAILS_MAX_LEN, IMAGE_URLS_MAX, IMAGE_URL_MAX_LEN, REASON_MAX_LEN,
+    Claim, MultiplierTable, Policy, RiskInput, SAFETY_SCORE_MAX, DETAILS_MAX_LEN, IMAGE_URLS_MAX,
+    IMAGE_URL_MAX_LEN, REASON_MAX_LEN,
 };
 
-#[derive(Debug, PartialEq)]
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
 pub enum Error {
-    ZeroCoverage,
-    ZeroPremium,
-    InvalidLedgerWindow, // end_ledger <= start_ledger
-    PolicyExpired,       // current_ledger >= end_ledger
-    PolicyInactive,
-    ClaimAmountZero,
-    ClaimExceedsCoverage,
-    DetailsTooLong,
-    TooManyImageUrls,
-    ImageUrlTooLong,
-    ReasonTooLong,
-    ClaimAlreadyTerminal,
-    DuplicateVote,
+    ZeroCoverage = 1,
+    ZeroPremium = 2,
+    InvalidLedgerWindow = 3,
+    PolicyExpired = 4,
+    PolicyInactive = 5,
+    ClaimAmountZero = 6,
+    ClaimExceedsCoverage = 7,
+    DetailsTooLong = 8,
+    TooManyImageUrls = 9,
+    ImageUrlTooLong = 10,
+    ReasonTooLong = 11,
+    ClaimAlreadyTerminal = 12,
+    DuplicateVote = 13,
+    InvalidBaseAmount = 14,
+    SafetyScoreOutOfRange = 15,
+    InvalidConfigVersion = 16,
+    MissingRegionMultiplier = 17,
+    MissingAgeMultiplier = 18,
+    MissingCoverageMultiplier = 19,
+    RegionMultiplierOutOfBounds = 20,
+    AgeMultiplierOutOfBounds = 21,
+    CoverageMultiplierOutOfBounds = 22,
+    SafetyDiscountOutOfBounds = 23,
+    Overflow = 24,
+    DivideByZero = 25,
+    InvalidQuoteTtl = 26,
+    NegativePremiumNotSupported = 27,
+    ClaimNotFound = 28,
+    InvalidAsset = 29,
+    InsufficientTreasury = 30,
+    AlreadyPaid = 31,
+    ClaimNotApproved = 32,
 }
-
-// ── Policy validators ─────────────────────────────────────────────────────────
 
 pub fn check_policy(policy: &Policy) -> Result<(), Error> {
     if policy.coverage <= 0 {
@@ -45,8 +65,6 @@ pub fn check_policy_active(policy: &Policy, current_ledger: u32) -> Result<(), E
     }
     Ok(())
 }
-
-// ── Claim validators ──────────────────────────────────────────────────────────
 
 pub fn check_claim_fields(
     env: &Env,
@@ -72,7 +90,7 @@ pub fn check_claim_fields(
             return Err(Error::ImageUrlTooLong);
         }
     }
-    let _ = env; // env available for future auth checks
+    let _ = env;
     Ok(())
 }
 
@@ -83,11 +101,29 @@ pub fn check_reason(reason: &String) -> Result<(), Error> {
     Ok(())
 }
 
-// ── Vote / status validators ──────────────────────────────────────────────────
-
 pub fn check_claim_open(claim: &Claim) -> Result<(), Error> {
-    if claim.status.is_terminal() {
+    if claim.status != crate::types::ClaimStatus::Pending {
         return Err(Error::ClaimAlreadyTerminal);
+    }
+    Ok(())
+}
+
+pub fn check_risk_input(input: &RiskInput) -> Result<(), Error> {
+    if input.safety_score > SAFETY_SCORE_MAX {
+        return Err(Error::SafetyScoreOutOfRange);
+    }
+    Ok(())
+}
+
+pub fn check_multiplier_table_shape(table: &MultiplierTable) -> Result<(), Error> {
+    if table.region.len() != 3u32 {
+        return Err(Error::MissingRegionMultiplier);
+    }
+    if table.age.len() != 3u32 {
+        return Err(Error::MissingAgeMultiplier);
+    }
+    if table.coverage.len() != 3u32 {
+        return Err(Error::MissingCoverageMultiplier);
     }
     Ok(())
 }
