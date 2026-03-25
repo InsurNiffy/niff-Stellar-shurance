@@ -250,3 +250,153 @@ pub struct PremiumQuote {
     pub line_items: Option<Vec<PremiumQuoteLineItem>>,
     pub valid_until_ledger: u32,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ORACLE / PARAMETRIC TRIGGER STUBS
+//
+// ⚠️  LEGAL / COMPLIANCE REVIEW GATE: This module contains non-active scaffolding
+// for parametric insurance automation.  Do NOT activate in production without:
+//   • Completed regulatory classification review (parametric vs indemnity)
+//   • Legal review of smart contract-triggered payouts
+//   • Game-theoretic analysis of oracle incentivization
+//   • Cryptographic design review for signature verification
+//
+// Compilation guarded by `#[cfg(feature = "experimental")]`.  Default builds
+// are cryptographically unable to process oracle triggers (stub panics ensure
+// this at compile time).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Placeholder enum for oracle data source types.
+///
+/// Once a cryptographic design is finalized, this will define trusted
+/// attestation sources (e.g., weather APIs, flight trackers, price feeds).
+///
+/// CRYPTOGRAPHIC DESIGN NOTE:
+/// Any signature verification scheme must be reviewed before activation.
+/// Known concerns to resolve:
+///   - Replay attack prevention (nonce management)
+///   - Oracle key rotation mechanism
+///   - Sybil resistance (how to prevent fake oracles)
+///   - Collusion detection
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone, PartialEq, Debug)]
+pub enum OracleSource {
+    /// Stub: no trusted source defined yet.
+    Undefined,
+    // Future variants (examples only — NOT implemented):
+    // WeatherStation(Address),
+    // FlightTracker(Address),
+    // PriceFeed { asset: String, threshold: i128 },
+    // MultiSigOracle(Vec<Address>),
+}
+
+/// Placeholder enum for trigger event types.
+///
+/// These represent conditions under which parametric claims may auto-trigger.
+/// Each variant should have associated validation rules defined in
+/// `DESIGN-ORACLE.md` before implementation.
+///
+/// GAME-THEORETIC REQUIREMENTS (to be documented):
+///   - How are oracles incentivized to report truthfully?
+///   - What slash conditions exist for malicious reports?
+///   - How is consensus achieved for ambiguous events (e.g., "storm damage")?
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone, PartialEq, Debug)]
+pub enum TriggerEventType {
+    /// Stub: no trigger type defined yet.
+    Undefined,
+    // Future variants (examples only — NOT implemented):
+    // WeatherEvent { event_code: u32, threshold_value: i128 },
+    // FlightCancellation { flight_id: String },
+    // PriceDeviation { asset: String, deviation_bps: u32 },
+    // Custom { namespace: String, predicate: Vec<u8> },
+}
+
+/// On-chain oracle trigger record.
+///
+/// This struct represents a signed attestation from an oracle source
+/// indicating that a trigger condition has been met for a policy.
+///
+/// SECURITY INVARIANT (enforced by design):
+///   In default (non-experimental) builds, no code path exists to accept
+///   or process these records.  Experimental builds MUST complete crypto
+///   review before any signature verification logic is activated.
+///
+/// DATA INTEGRITY NOTE:
+///   The `signature` field is RESERVED for future cryptographic verification.
+///   Currently it MUST be empty.  Parsing untrusted signatures without a
+///   complete crypto design review is FORBIDDEN.
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone)]
+pub struct OracleTrigger {
+    /// Policy this trigger applies to.
+    pub policy_id: u32,
+    /// Type of trigger event.
+    pub event_type: TriggerEventType,
+    /// Oracle source that attested this event.
+    pub source: OracleSource,
+    /// Event-specific payload (schema depends on event_type).
+    /// Must be validated against event_type schema before use.
+    pub payload: Vec<u8>,
+    /// Unix timestamp when the oracle attested this event.
+    pub timestamp: u64,
+    /// Ledger sequence when this trigger was recorded.
+    pub trigger_ledger: u32,
+    /// Reserved for future Ed25519/EdDSA signature verification.
+    ///
+    /// CRITICAL SECURITY NOTE:
+    /// This field MUST be empty in all current builds.  Signature
+    /// verification is NOT implemented.  Any non-empty signature
+    /// should be treated as INVALID until crypto review completes.
+    ///
+    /// DO NOT PARSE: This field may contain arbitrary data that could
+    /// trigger parsing vulnerabilities if interpreted without validation.
+    pub signature: Vec<u8>,
+}
+
+/// Status of an oracle trigger in the resolution pipeline.
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone, PartialEq, Debug)]
+pub enum TriggerStatus {
+    /// Trigger recorded but not yet validated.
+    Pending,
+    /// Trigger passed all validation checks.
+    Validated,
+    /// Trigger rejected (invalid signature, replayed, etc.).
+    Rejected,
+    /// Trigger executed (payout initiated).
+    Executed,
+    /// Trigger expired (TTL exceeded).
+    Expired,
+}
+
+/// Stub struct representing a resolved oracle-based claim.
+///
+/// This is a placeholder for the future parametric claim flow where
+/// oracle attestations auto-generate claims without manual filing.
+///
+/// CLAIM GENERATION NOTE:
+///   Automatic claim generation via oracle triggers requires:
+///     1. Cryptographic signature verification (TBD algorithm)
+///     2. Replay protection (nonce + TTL validation)
+///     3. Threshold quorum for multi-oracle sources
+///     4. Legal classification of auto-triggered payouts
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone)]
+pub struct ParametricClaim {
+    /// Original claim_id from the standard claims system.
+    pub claim_id: u64,
+    /// Trigger that caused this claim.
+    pub trigger_id: u64,
+    /// Amount determined by the parametric schedule.
+    pub amount: i128,
+    /// Status of the parametric resolution.
+    pub status: TriggerStatus,
+    /// Block height when resolution occurred.
+    pub resolved_ledger: u32,
+}
