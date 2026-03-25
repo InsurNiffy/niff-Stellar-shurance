@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
+import { SorobanService } from './soroban.service';
 
 @Module({
-  // controllers: [RpcController],
-  // providers: [RpcService],
-  // exports: [RpcService],
+  providers: [SorobanService],
+  exports: [SorobanService],
 })
 export class RpcModule {}
 
