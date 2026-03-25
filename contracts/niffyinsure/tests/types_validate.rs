@@ -20,6 +20,8 @@ fn dummy_policy(env: &Env, start: u32, end: u32, coverage: i128, active: bool) -
         is_active: active,
         start_ledger: start,
         end_ledger: end,
+        rejected_claims_count: 0,
+        deactivation_reason: None,
     }
 }
 

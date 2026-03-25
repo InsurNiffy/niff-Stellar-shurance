@@ -4,12 +4,12 @@ mod claim;
 mod policy;
 #[allow(dead_code)] // used by policy.rs once feat/policy-lifecycle lands
 mod premium;
-mod storage;
+pub mod storage;
 mod token;
 pub mod types;
 pub mod validate;
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 #[contract]
 pub struct NiffyInsure;
@@ -74,8 +74,61 @@ impl NiffyInsure {
     // implemented in policy.rs — issue: feat/policy-lifecycle
 
     // ── Claim domain ─────────────────────────────────────────────────────
-    // file_claim, vote_on_claim
-    // implemented in claim.rs — issue: feat/claim-voting
+
+    /// Files a new claim against an active policy.
+    ///
+    /// Returns claim_id on success.
+    ///
+    /// Validation:
+    ///   - Policy must exist and be active
+    ///   - Claimant must be the policy holder
+    ///   - Amount must be > 0 and ≤ policy.coverage
+    ///   - Details must be ≤ DETAILS_MAX_LEN bytes
+    ///   - image_urls must have ≤ IMAGE_URLS_MAX items, each ≤ IMAGE_URL_MAX_LEN bytes
+    pub fn file_claim(
+        env: Env,
+        claimant: Address,
+        policy_id: u32,
+        amount: i128,
+        details: String,
+        image_urls: Vec<String>,
+    ) -> Result<u64, types::ClaimError> {
+        claim::file_claim(&env, claimant, policy_id, amount, details, image_urls)
+    }
+
+    /// Casts a vote on a claim.
+    ///
+    /// Validation:
+    ///   - Claim must exist and be in Processing state
+    ///   - Voter must have an active policy
+    ///   - Voter cannot vote twice on the same claim
+    ///
+    /// State transitions:
+    ///   - Processing → Approved: if approve_votes reaches majority
+    ///   - Processing → Rejected: if reject_votes reaches majority
+    ///
+    /// Rejection consequences:
+    ///   - Increments policy.rejected_claims_count
+    ///   - Deactivates policy if strikes exceed threshold
+    ///   - Emits PolicyStrikeIncremented and PolicyDeactivated events
+    pub fn vote_on_claim(
+        env: Env,
+        voter: Address,
+        claim_id: u64,
+        vote: types::VoteOption,
+    ) -> Result<(), types::ClaimError> {
+        claim::vote_on_claim(&env, voter, claim_id, vote)
+    }
+
+    /// Returns a claim by ID (read-only helper for testing and indexers).
+    pub fn get_claim(env: Env, claim_id: u64) -> Option<types::Claim> {
+        claim::get_claim(&env, claim_id)
+    }
+
+    /// Returns a policy by holder and policy_id (read-only helper).
+    pub fn get_policy(env: Env, holder: Address, policy_id: u32) -> Option<types::Policy> {
+        claim::get_policy(&env, &holder, policy_id)
+    }
 
     // ── Admin / treasury ─────────────────────────────────────────────────
     // drain

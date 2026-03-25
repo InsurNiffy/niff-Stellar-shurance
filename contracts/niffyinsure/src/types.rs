@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
 // ── Field size limits (enforced in mutating entrypoints) ─────────────────────
 //
@@ -24,6 +24,26 @@ pub const REASON_MAX_LEN: u32 = 128;
 // (holder, policy_id).  A single holder may hold multiple active policies
 // simultaneously; each active policy grants exactly one vote in claim
 // governance (one-policy-one-vote, not one-holder-one-vote).
+
+// ── Error types ──────────────────────────────────────────────────────────────
+
+/// Claim operation errors.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ClaimError {
+    PolicyNotFound = 1,
+    PolicyNotActive = 2,
+    InvalidAmount = 3,
+    AmountExceedsCoverage = 4,
+    DetailsExceedMaxLength = 5,
+    TooManyImageUrls = 6,
+    ImageUrlExceedsMaxLength = 7,
+    ClaimNotFound = 8,
+    ClaimAlreadyFinalized = 9,
+    VoterHasNoPolicies = 10,
+    AlreadyVoted = 11,
+}
 
 // ── Enums ────────────────────────────────────────────────────────────────────
 
@@ -90,17 +110,19 @@ pub enum VoteOption {
 
 /// On-chain policy record.
 ///
-/// | Field          | Authoritative | Notes |
-/// |----------------|---------------|-------|
-/// | holder         | on-chain      | Soroban Address; used as storage key component |
-/// | policy_id      | on-chain      | per-holder u32 counter; see note above |
-/// | policy_type    | on-chain      | categorical enum |
-/// | region         | on-chain      | risk tier enum |
-/// | premium        | on-chain      | stroops; computed by premium.rs at bind time |
-/// | coverage       | on-chain      | stroops; max payout for this policy |
-/// | is_active      | on-chain      | false after termination or expiry |
-/// | start_ledger   | on-chain      | ledger sequence at activation |
-/// | end_ledger     | on-chain      | ledger sequence at expiry; must be > start_ledger |
+/// | Field                  | Authoritative | Notes |
+/// |------------------------|---------------|-------|
+/// | holder                 | on-chain      | Soroban Address; used as storage key component |
+/// | policy_id              | on-chain      | per-holder u32 counter; see note above |
+/// | policy_type            | on-chain      | categorical enum |
+/// | region                 | on-chain      | risk tier enum |
+/// | premium                | on-chain      | stroops; computed by premium.rs at bind time |
+/// | coverage               | on-chain      | stroops; max payout for this policy |
+/// | is_active              | on-chain      | false after termination or expiry |
+/// | start_ledger           | on-chain      | ledger sequence at activation |
+/// | end_ledger             | on-chain      | ledger sequence at expiry; must be > start_ledger |
+/// | rejected_claims_count  | on-chain      | strike counter; incremented on claim rejection |
+/// | deactivation_reason    | on-chain      | optional reason string if deactivated due to strikes |
 #[contracttype]
 #[derive(Clone)]
 pub struct Policy {
@@ -119,6 +141,11 @@ pub struct Policy {
     pub start_ledger: u32,
     /// Ledger sequence when the policy expires; end_ledger > start_ledger.
     pub end_ledger: u32,
+    /// Number of rejected claims; used for strike-based deactivation.
+    pub rejected_claims_count: u32,
+    /// Reason for deactivation if policy was deactivated due to strikes.
+    /// Max REASON_MAX_LEN bytes; None if policy is active or expired naturally.
+    pub deactivation_reason: Option<String>,
 }
 
 /// On-chain claim record.
