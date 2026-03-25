@@ -36,6 +36,11 @@ pub enum Error {
     DivideByZero = 25,
     InvalidQuoteTtl = 26,
     NegativePremiumNotSupported = 27,
+    ClaimNotFound = 28,
+    InvalidAsset = 29,
+    InsufficientTreasury = 30,
+    AlreadyPaid = 31,
+    ClaimNotApproved = 32,
 }
 
 pub fn check_policy(policy: &Policy) -> Result<(), Error> {
@@ -97,7 +102,7 @@ pub fn check_reason(reason: &String) -> Result<(), Error> {
 }
 
 pub fn check_claim_open(claim: &Claim) -> Result<(), Error> {
-    if claim.status.is_terminal() {
+    if claim.status != crate::types::ClaimStatus::Pending {
         return Err(Error::ClaimAlreadyTerminal);
     }
     Ok(())

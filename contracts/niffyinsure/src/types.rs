@@ -71,14 +71,15 @@ pub enum CoverageType {
 #[contracttype]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ClaimStatus {
-    Processing,
+    Pending,
     Approved,
+    Paid,
     Rejected,
 }
 
 impl ClaimStatus {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, ClaimStatus::Approved | ClaimStatus::Rejected)
+        matches!(self, ClaimStatus::Paid | ClaimStatus::Rejected)
     }
 }
 
@@ -126,6 +127,15 @@ pub struct PremiumTableUpdated {
     pub version: u32,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimProcessed {
+    pub claim_id: u64,
+    pub recipient: Address,
+    pub amount: i128,
+    pub asset: Address,
+}
+
 // ── Core structs ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -149,11 +159,13 @@ pub struct Claim {
     pub policy_id: u32,
     pub claimant: Address,
     pub amount: i128,
+    pub asset: Address,
     pub details: String,
     pub image_urls: Vec<String>,
     pub status: ClaimStatus,
     pub approve_votes: u32,
     pub reject_votes: u32,
+    pub paid_at: Option<u64>,
 }
 
 /// Premium quote line item for UX display.

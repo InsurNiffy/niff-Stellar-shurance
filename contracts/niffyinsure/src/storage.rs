@@ -6,6 +6,7 @@ pub enum DataKey {
     Admin,
     Token,
     PremiumTable,
+    AllowedAsset(Address),
     /// (holder, policy_id) — policy_id is per-holder u32
     Policy(Address, u32),
     /// Per-holder policy counter; next policy_id = counter + 1
@@ -43,6 +44,29 @@ pub fn set_multiplier_table(env: &Env, table: &MultiplierTable) {
 
 pub fn get_multiplier_table(env: &Env) -> MultiplierTable {
     env.storage().instance().get(&DataKey::PremiumTable).unwrap()
+}
+
+pub fn set_allowed_asset(env: &Env, asset: &Address, allowed: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AllowedAsset(asset.clone()), &allowed);
+}
+
+pub fn is_allowed_asset(env: &Env, asset: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::AllowedAsset(asset.clone()))
+        .unwrap_or(false)
+}
+
+pub fn set_claim(env: &Env, claim: &crate::types::Claim) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Claim(claim.claim_id), claim);
+}
+
+pub fn get_claim(env: &Env, claim_id: u64) -> Option<crate::types::Claim> {
+    env.storage().persistent().get(&DataKey::Claim(claim_id))
 }
 
 #[allow(dead_code)]

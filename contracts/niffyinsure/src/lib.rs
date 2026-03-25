@@ -21,6 +21,7 @@ impl NiffyInsure {
         storage::set_admin(&env, &admin);
         storage::set_token(&env, &token);
         storage::set_multiplier_table(&env, &premium::default_multiplier_table(&env));
+        storage::set_allowed_asset(&env, &token, true);
     }
 
     /// Pure quote path: reads config and computes premium only.
@@ -62,7 +63,12 @@ impl NiffyInsure {
             24 => validate::Error::Overflow,
             25 => validate::Error::DivideByZero,
             26 => validate::Error::InvalidQuoteTtl,
-            _ => validate::Error::NegativePremiumNotSupported,
+            27 => validate::Error::NegativePremiumNotSupported,
+            28 => validate::Error::ClaimNotFound,
+            29 => validate::Error::InvalidAsset,
+            30 => validate::Error::InsufficientTreasury,
+            31 => validate::Error::AlreadyPaid,
+            _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
     }
@@ -78,6 +84,30 @@ impl NiffyInsure {
 
     pub fn get_multiplier_table(env: Env) -> types::MultiplierTable {
         storage::get_multiplier_table(&env)
+    }
+
+    pub fn set_allowed_asset(
+        env: Env,
+        asset: Address,
+        allowed: bool,
+    ) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        claim::set_allowed_asset(&env, &asset, allowed);
+    }
+
+    pub fn is_allowed_asset(env: Env, asset: Address) -> bool {
+        claim::is_allowed_asset(&env, &asset)
+    }
+
+    pub fn process_claim(env: Env, claim_id: u64) -> Result<(), validate::Error> {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        claim::process_claim(&env, claim_id)
+    }
+
+    pub fn get_claim(env: Env, claim_id: u64) -> Result<types::Claim, validate::Error> {
+        claim::get_claim(&env, claim_id)
     }
 
     pub fn get_claim_counter(env: Env) -> u64 {
