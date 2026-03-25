@@ -1,5 +1,5 @@
 [workspace]
-members = ["contracts/niffyinsure"]
+members = ["contracts/niffyinsure", "contracts/premium_calculator"]
 resolver = "2"
 
 [profile.release]

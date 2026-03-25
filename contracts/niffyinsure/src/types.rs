@@ -1,173 +1,326 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contracttype, Address, Map, String, Vec};
 
-// ── Field size limits (enforced in mutating entrypoints) ─────────────────────
-//
-// These constants are the single source of truth referenced by both the
-// contract entrypoints and the NestJS DTO validators / Next.js form limits.
-//
-// Storage griefing analysis:
-//   DETAILS_MAX_LEN  = 256 bytes  → ~1 ledger entry, negligible rent
-//   IMAGE_URL_MAX_LEN = 128 bytes → IPFS CIDv1 base32 ≤ 62 chars; URL wrapper ≤ 128
-//   IMAGE_URLS_MAX   = 5          → caps Vec<String> at 5 × 128 = 640 bytes per claim
-//   REASON_MAX_LEN   = 128 bytes  → termination reason string
-
+// ── Field size limits ─────────────────────────────────────────────────────────
 pub const DETAILS_MAX_LEN: u32 = 256;
 pub const IMAGE_URL_MAX_LEN: u32 = 128;
 pub const IMAGE_URLS_MAX: u32 = 5;
 pub const REASON_MAX_LEN: u32 = 128;
+pub const SAFETY_SCORE_MAX: u32 = 100;
 
-// ── policy_id assignment ─────────────────────────────────────────────────────
+// ── Ledger window constants (re-exported from ledger.rs for ABI visibility) ───
 //
-// policy_id is a u32 scoped per holder: the contract increments a per-holder
-// counter stored at DataKey::PolicyCounter(holder).  This means two holders
-// can each have policy_id = 1 without collision; the canonical key is always
-// (holder, policy_id).  A single holder may hold multiple active policies
-// simultaneously; each active policy grants exactly one vote in claim
-// governance (one-policy-one-vote, not one-holder-one-vote).
+// These are the canonical values used by on-chain checks.  The frontend and
+// backend MUST import from here (or the generated contract spec) rather than
+// hard-coding their own values.
+//
+// Conversion: 1 ledger ≈ 5 s on Stellar Mainnet (Protocol 20+).
+// See: https://developers.stellar.org/docs/learn/fundamentals/stellar-consensus-protocol
+pub use crate::ledger::{
+    LEDGERS_PER_DAY, LEDGERS_PER_HOUR, LEDGERS_PER_MIN, LEDGERS_PER_WEEK,
+    POLICY_DURATION_LEDGERS, QUOTE_TTL_LEDGERS, RATE_LIMIT_WINDOW_LEDGERS,
+    RENEWAL_WINDOW_LEDGERS, SECS_PER_LEDGER, VOTE_WINDOW_LEDGERS,
+};
 
-// ── Enums ────────────────────────────────────────────────────────────────────
+// ── Enums ─────────────────────────────────────────────────────────────────────
 
-/// Coverage category.  Categorical enum prevents unbounded string storage and
-/// aligns with backend DTO `PolicyType` discriminated union.
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PolicyType {
     Auto,
     Health,
     Property,
 }
 
-/// Geographic risk tier.  Replaces a free-form region string; maps 1-to-1 with
-/// the premium multiplier table in `premium.rs`.
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RegionTier {
-    Low,    // rural / low-risk zone
-    Medium, // suburban
-    High,   // urban / high-risk zone
+    Low,
+    Medium,
+    High,
+}
+
+#[contracttype]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum AgeBand {
+    Young,
+    Adult,
+    Senior,
+}
+
+#[contracttype]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CoverageType {
+    Basic,
+    Standard,
+    Premium,
 }
 
 /// Claim lifecycle state machine.
 ///
-/// ```text
-/// [filed] → Processing
-///               │
-///        ┌──────┴──────┐
-///        ▼             ▼
-///    Approved       Rejected
-/// ```
-///
 /// Transitions:
-///   Processing → Approved  : majority Approve votes reached
-///   Processing → Rejected  : majority Reject votes reached OR policy deactivated
-///
-/// Terminal states (Approved / Rejected) are immutable; no re-open path exists
-/// on-chain.  Off-chain dispute resolution must open a new claim.
+///   Processing → Approved (majority approve vote or deadline plurality)
+///   Processing → Rejected (majority reject vote or deadline plurality/tie)
+///   Approved   → Paid     (admin calls process_claim)
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ClaimStatus {
     Processing,
+    Pending,
     Approved,
+    Paid,
     Rejected,
 }
 
 impl ClaimStatus {
-    /// Returns true only for the two terminal states.
     pub fn is_terminal(&self) -> bool {
-        matches!(self, ClaimStatus::Approved | ClaimStatus::Rejected)
+        matches!(self, ClaimStatus::Approved | ClaimStatus::Paid | ClaimStatus::Rejected)
     }
 }
 
-/// Ballot option cast by a policyholder during claim voting.
 #[contracttype]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum VoteOption {
     Approve,
     Reject,
 }
 
-// ── Core structs ─────────────────────────────────────────────────────────────
+// ── Premium engine structs ────────────────────────────────────────────────────
 
-/// On-chain policy record.
-///
-/// | Field          | Authoritative | Notes |
-/// |----------------|---------------|-------|
-/// | holder         | on-chain      | Soroban Address; used as storage key component |
-/// | policy_id      | on-chain      | per-holder u32 counter; see note above |
-/// | policy_type    | on-chain      | categorical enum |
-/// | region         | on-chain      | risk tier enum |
-/// | premium        | on-chain      | stroops; computed by premium.rs at bind time |
-/// | coverage       | on-chain      | stroops; max payout for this policy |
-/// | is_active      | on-chain      | false after termination or expiry |
-/// | start_ledger   | on-chain      | ledger sequence at activation |
-/// | end_ledger     | on-chain      | ledger sequence at expiry; must be > start_ledger |
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiskInput {
+    pub region: RegionTier,
+    pub age_band: AgeBand,
+    pub coverage: CoverageType,
+    pub safety_score: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiplierTable {
+    pub region: Map<RegionTier, i128>,
+    pub age: Map<AgeBand, i128>,
+    pub coverage: Map<CoverageType, i128>,
+    pub safety_discount: i128,
+    pub version: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PremiumTableUpdated {
+    pub version: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimProcessed {
+    pub claim_id: u64,
+    pub recipient: Address,
+    pub amount: i128,
+}
+
+// ── Core structs ──────────────────────────────────────────────────────────────
+
 #[contracttype]
 #[derive(Clone)]
 pub struct Policy {
-    /// Policyholder address; component of the storage key.
     pub holder: Address,
-    /// Per-holder monotonic identifier (starts at 1).
     pub policy_id: u32,
     pub policy_type: PolicyType,
     pub region: RegionTier,
-    /// Annual premium in stroops paid at activation / renewal.
     pub premium: i128,
-    /// Maximum claim payout in stroops; must be > 0.
     pub coverage: i128,
     pub is_active: bool,
-    /// Ledger sequence when the policy became active.
     pub start_ledger: u32,
-    /// Ledger sequence when the policy expires; end_ledger > start_ledger.
     pub end_ledger: u32,
+    /// SEP-41 asset contract used for this policy's premium payment and claim payout.
+    /// Must be allowlisted at the time of policy initiation.
+    pub asset: Address,
 }
 
 /// On-chain claim record.
 ///
-/// | Field         | Authoritative | Notes |
-/// |---------------|---------------|-------|
-/// | claim_id      | on-chain      | global monotonic u64 from ClaimCounter |
-/// | policy_id     | on-chain      | references Policy(holder, policy_id) |
-/// | claimant      | on-chain      | must equal policy.holder |
-/// | amount        | on-chain      | stroops; 0 < amount ≤ policy.coverage |
-/// | details       | on-chain      | ≤ DETAILS_MAX_LEN bytes |
-/// | image_urls    | on-chain      | ≤ IMAGE_URLS_MAX items, each ≤ IMAGE_URL_MAX_LEN |
-/// | status        | on-chain      | ClaimStatus state machine |
-/// | approve_votes | on-chain      | running tally |
-/// | reject_votes  | on-chain      | running tally |
+/// `filed_at` is the ledger sequence at which the claim was filed.  It anchors
+/// the voting deadline: votes are accepted while `now < filed_at + VOTE_WINDOW_LEDGERS`.
 #[contracttype]
 #[derive(Clone)]
 pub struct Claim {
     pub claim_id: u64,
     pub policy_id: u32,
     pub claimant: Address,
-    /// Requested payout in stroops.
     pub amount: i128,
-    /// Human-readable description; max DETAILS_MAX_LEN bytes.
     pub details: String,
-    /// IPFS URLs for supporting images; max IMAGE_URLS_MAX items.
     pub image_urls: Vec<String>,
     pub status: ClaimStatus,
     pub approve_votes: u32,
     pub reject_votes: u32,
+    /// Ledger sequence at which this claim was filed (voting window anchor).
+    pub filed_at: u32,
 }
 
-/// Premium quote line item for UX display.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PremiumQuoteLineItem {
     pub component: String,
     pub factor: i128,
     pub amount: i128,
 }
 
-/// Structured quote response returned by `generate_premium`.
-///
-/// Field names and ordering are kept stable for SDK bindings consumed by
-/// backend simulation services.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PremiumQuote {
     pub total_premium: i128,
     pub line_items: Option<Vec<PremiumQuoteLineItem>>,
     pub valid_until_ledger: u32,
+    pub config_version: u32,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ORACLE / PARAMETRIC TRIGGER STUBS
+//
+// ⚠️  LEGAL / COMPLIANCE REVIEW GATE: This module contains non-active scaffolding
+// for parametric insurance automation.  Do NOT activate in production without:
+//   • Completed regulatory classification review (parametric vs indemnity)
+//   • Legal review of smart contract-triggered payouts
+//   • Game-theoretic analysis of oracle incentivization
+//   • Cryptographic design review for signature verification
+//
+// Compilation guarded by `#[cfg(feature = "experimental")]`.  Default builds
+// are cryptographically unable to process oracle triggers (stub panics ensure
+// this at compile time).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Placeholder enum for oracle data source types.
+///
+/// Once a cryptographic design is finalized, this will define trusted
+/// attestation sources (e.g., weather APIs, flight trackers, price feeds).
+///
+/// CRYPTOGRAPHIC DESIGN NOTE:
+/// Any signature verification scheme must be reviewed before activation.
+/// Known concerns to resolve:
+///   - Replay attack prevention (nonce management)
+///   - Oracle key rotation mechanism
+///   - Sybil resistance (how to prevent fake oracles)
+///   - Collusion detection
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone, PartialEq, Debug)]
+pub enum OracleSource {
+    /// Stub: no trusted source defined yet.
+    Undefined,
+    // Future variants (examples only — NOT implemented):
+    // WeatherStation(Address),
+    // FlightTracker(Address),
+    // PriceFeed { asset: String, threshold: i128 },
+    // MultiSigOracle(Vec<Address>),
+}
+
+/// Placeholder enum for trigger event types.
+///
+/// These represent conditions under which parametric claims may auto-trigger.
+/// Each variant should have associated validation rules defined in
+/// `DESIGN-ORACLE.md` before implementation.
+///
+/// GAME-THEORETIC REQUIREMENTS (to be documented):
+///   - How are oracles incentivized to report truthfully?
+///   - What slash conditions exist for malicious reports?
+///   - How is consensus achieved for ambiguous events (e.g., "storm damage")?
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone, PartialEq, Debug)]
+pub enum TriggerEventType {
+    /// Stub: no trigger type defined yet.
+    Undefined,
+    // Future variants (examples only — NOT implemented):
+    // WeatherEvent { event_code: u32, threshold_value: i128 },
+    // FlightCancellation { flight_id: String },
+    // PriceDeviation { asset: String, deviation_bps: u32 },
+    // Custom { namespace: String, predicate: Vec<u8> },
+}
+
+/// On-chain oracle trigger record.
+///
+/// This struct represents a signed attestation from an oracle source
+/// indicating that a trigger condition has been met for a policy.
+///
+/// SECURITY INVARIANT (enforced by design):
+///   In default (non-experimental) builds, no code path exists to accept
+///   or process these records.  Experimental builds MUST complete crypto
+///   review before any signature verification logic is activated.
+///
+/// DATA INTEGRITY NOTE:
+///   The `signature` field is RESERVED for future cryptographic verification.
+///   Currently it MUST be empty.  Parsing untrusted signatures without a
+///   complete crypto design review is FORBIDDEN.
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone)]
+pub struct OracleTrigger {
+    /// Policy this trigger applies to.
+    pub policy_id: u32,
+    /// Type of trigger event.
+    pub event_type: TriggerEventType,
+    /// Oracle source that attested this event.
+    pub source: OracleSource,
+    /// Event-specific payload (schema depends on event_type).
+    /// Must be validated against event_type schema before use.
+    pub payload: Vec<u8>,
+    /// Unix timestamp when the oracle attested this event.
+    pub timestamp: u64,
+    /// Ledger sequence when this trigger was recorded.
+    pub trigger_ledger: u32,
+    /// Reserved for future Ed25519/EdDSA signature verification.
+    ///
+    /// CRITICAL SECURITY NOTE:
+    /// This field MUST be empty in all current builds.  Signature
+    /// verification is NOT implemented.  Any non-empty signature
+    /// should be treated as INVALID until crypto review completes.
+    ///
+    /// DO NOT PARSE: This field may contain arbitrary data that could
+    /// trigger parsing vulnerabilities if interpreted without validation.
+    pub signature: Vec<u8>,
+}
+
+/// Status of an oracle trigger in the resolution pipeline.
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone, PartialEq, Debug)]
+pub enum TriggerStatus {
+    /// Trigger recorded but not yet validated.
+    Pending,
+    /// Trigger passed all validation checks.
+    Validated,
+    /// Trigger rejected (invalid signature, replayed, etc.).
+    Rejected,
+    /// Trigger executed (payout initiated).
+    Executed,
+    /// Trigger expired (TTL exceeded).
+    Expired,
+}
+
+/// Stub struct representing a resolved oracle-based claim.
+///
+/// This is a placeholder for the future parametric claim flow where
+/// oracle attestations auto-generate claims without manual filing.
+///
+/// CLAIM GENERATION NOTE:
+///   Automatic claim generation via oracle triggers requires:
+///     1. Cryptographic signature verification (TBD algorithm)
+///     2. Replay protection (nonce + TTL validation)
+///     3. Threshold quorum for multi-oracle sources
+///     4. Legal classification of auto-triggered payouts
+#[cfg(feature = "experimental")]
+#[contracttype]
+#[derive(Clone)]
+pub struct ParametricClaim {
+    /// Original claim_id from the standard claims system.
+    pub claim_id: u64,
+    /// Trigger that caused this claim.
+    pub trigger_id: u64,
+    /// Amount determined by the parametric schedule.
+    pub amount: i128,
+    /// Status of the parametric resolution.
+    pub status: TriggerStatus,
+    /// Block height when resolution occurred.
+    pub resolved_ledger: u32,
 }

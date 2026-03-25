@@ -2,8 +2,8 @@
 
 use niffyinsure::{
     types::{
-        Claim, ClaimStatus, Policy, PolicyType, RegionTier, VoteOption, DETAILS_MAX_LEN,
-        IMAGE_URLS_MAX, IMAGE_URL_MAX_LEN,
+        Claim, ClaimStatus, Policy, PolicyType, RegionTier, TerminationReason, VoteOption,
+        DETAILS_MAX_LEN, IMAGE_URLS_MAX, IMAGE_URL_MAX_LEN,
     },
     validate::{check_claim_fields, check_claim_open, check_policy, check_policy_active, Error},
 };
@@ -20,6 +20,9 @@ fn dummy_policy(env: &Env, start: u32, end: u32, coverage: i128, active: bool) -
         is_active: active,
         start_ledger: start,
         end_ledger: end,
+        terminated_at_ledger: 0,
+        termination_reason: TerminationReason::None,
+        terminated_by_admin: false,
     }
 }
 
@@ -29,11 +32,13 @@ fn dummy_claim(env: &Env, amount: i128, status: ClaimStatus) -> Claim {
         policy_id: 1,
         claimant: Address::generate(env),
         amount,
+        asset: Address::generate(env),
         details: String::from_str(env, "fire damage"),
         image_urls: vec![env],
         status,
         approve_votes: 0,
         reject_votes: 0,
+        paid_at: None,
     }
 }
 
@@ -195,7 +200,7 @@ fn image_url_over_max_len_rejected() {
 #[test]
 fn processing_claim_is_open() {
     let env = Env::default();
-    let c = dummy_claim(&env, 1_000_000, ClaimStatus::Processing);
+    let c = dummy_claim(&env, 1_000_000, ClaimStatus::Pending);
     assert_eq!(check_claim_open(&c), Ok(()));
 }
 
@@ -203,6 +208,13 @@ fn processing_claim_is_open() {
 fn approved_claim_is_terminal() {
     let env = Env::default();
     let c = dummy_claim(&env, 1_000_000, ClaimStatus::Approved);
+    assert_eq!(check_claim_open(&c), Err(Error::ClaimAlreadyTerminal));
+}
+
+#[test]
+fn paid_claim_is_terminal() {
+    let env = Env::default();
+    let c = dummy_claim(&env, 1_000_000, ClaimStatus::Paid);
     assert_eq!(check_claim_open(&c), Err(Error::ClaimAlreadyTerminal));
 }
 
@@ -222,7 +234,8 @@ fn vote_option_variants_distinct() {
 
 #[test]
 fn claim_status_terminal_flags() {
-    assert!(!ClaimStatus::Processing.is_terminal());
-    assert!(ClaimStatus::Approved.is_terminal());
+    assert!(!ClaimStatus::Pending.is_terminal());
+    assert!(!ClaimStatus::Approved.is_terminal());
+    assert!(ClaimStatus::Paid.is_terminal());
     assert!(ClaimStatus::Rejected.is_terminal());
 }

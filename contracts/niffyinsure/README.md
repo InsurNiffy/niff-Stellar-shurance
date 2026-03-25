@@ -69,11 +69,12 @@ Record the contract ID and the SHA-256 from `make sha` in your release notes so 
 
 ```
 src/
-  lib.rs       # contract entry, initialize
-  types.rs     # Policy, Claim, VoteOption, ClaimStatus
-  storage.rs   # DataKey, typed read/write helpers
-  premium.rs   # compute_premium (risk factors → stroops)
-  policy.rs    # generate_premium, initiate, renew, terminate
-  claim.rs     # file_claim, vote_on_claim
-  token.rs     # token transfer wrapper
+  lib.rs              # contract entry, initialize
+  types.rs            # Policy, Claim, TerminationReason, …
+  storage.rs          # DataKey, policies, voters, open-claim counts
+  premium.rs          # compute_premium (risk factors → stroops)
+  policy.rs           # generate_premium (quote)
+  policy_lifecycle.rs # initiate_policy, terminate, admin terminate
+  claim.rs            # file_claim, vote_on_claim (planned)
+  token.rs            # token transfer wrapper
 ```

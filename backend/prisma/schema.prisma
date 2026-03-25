@@ -1,0 +1,150 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Claim {
+  id                Int       @id // claimId from contract
+  policyId          String    // holderAddress:policyId
+  creatorAddress    String
+  amount            String
+  asset             String?
+  description       String?
+  imageUrls         String[]  @default([])
+  status            ClaimStatus @default(PENDING)
+  isFinalized       Boolean   @default(false)
+  approveVotes      Int       @default(0)
+  rejectVotes       Int       @default(0)
+  paidAt            DateTime?
+  createdAtLedger   Int
+  updatedAtLedger   Int       @default(0)
+  txHash            String?
+  eventIndex        Int?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  policy            Policy    @relation(fields: [policyId], references: [id])
+  votes             Vote[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([policyId])
+  @@map("claims")
+}
+
+model Vote {
+  id            Int       @id @default(autoincrement())
+  claimId       Int
+  voterAddress  String
+  vote          VoteType
+  votingPower   Int       @default(1)
+  txHash        String?
+  eventIndex    Int?
+  votedAtLedger Int
+  createdAt     DateTime  @default(now())
+
+  // Relations
+  claim         Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId, voterAddress])
+  @@index([voterAddress])
+  @@index([claimId])
+  @@map("votes")
+}
+
+model Policy {
+  id                    String   @id // holderAddress:policyId
+  policyId              Int
+  holderAddress         String
+  policyType            String
+  region                String
+  coverageAmount        String
+  premium               String
+  isActive              Boolean  @default(true)
+  startLedger           Int
+  endLedger             Int
+  /// SEP-41 asset contract ID bound to this policy for premium and payout.
+  /// Null for legacy policies created before multi-asset support.
+  assetContractId       String?
+  txHash                String?
+  eventIndex            Int?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  claims                Claim[]
+
+  @@unique([holderAddress, policyId])
+  @@index([holderAddress])
+  @@index([isActive])
+  @@map("policies")
+}
+
+model IndexerState {
+  id              Int      @id @default(autoincrement())
+  lastLedger      Int
+  lastCursor      String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("indexer_state")
+}
+
+model RawEvent {
+  id              Int      @id @default(autoincrement())
+  txHash          String
+  eventIndex      Int
+  contractId      String
+  ledger          Int
+  ledgerClosedAt  DateTime
+  topic1          String?
+  topic2          String?
+  topic3          String?
+  topic4          String?
+  data            Json
+  createdAt       DateTime @default(now())
+
+  @@unique([txHash, eventIndex])
+  @@index([contractId])
+  @@index([ledger])
+  @@map("raw_events")
+}
+
+enum ClaimStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+}
+
+enum VoteType {
+  APPROVE
+  REJECT
+}
+
+/// Off-chain metadata for allowlisted SEP-41 asset contracts.
+/// Populated by the indexer when it observes AssetAdded events.
+/// Used by the frontend and API to display correct symbol/decimals.
+model AllowedAsset {
+  /// SEP-41 contract address (Stellar strkey format).
+  contractId    String   @id
+  /// Token symbol, e.g. "USDC", "XLM". Populated off-chain.
+  symbol        String?
+  /// Decimal places, e.g. 7 for XLM/USDC on Stellar.
+  decimals      Int      @default(7)
+  /// Whether this asset is currently on the allowlist.
+  isAllowed     Boolean  @default(true)
+  /// Ledger at which the asset was added to the allowlist.
+  addedAtLedger Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("allowed_assets")
+}

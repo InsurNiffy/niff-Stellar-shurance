@@ -61,6 +61,185 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "AllowedAsset"
+                            },
+                            {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": true
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "PremiumTable"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "map": [
+                            {
+                              "key": {
+                                "symbol": "age"
+                              },
+                              "val": {
+                                "map": [
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Adult"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "10000"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Senior"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "11500"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Young"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "12500"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "coverage"
+                              },
+                              "val": {
+                                "map": [
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Basic"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "9000"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Premium"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "13000"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Standard"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "10000"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "region"
+                              },
+                              "val": {
+                                "map": [
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "High"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "13500"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Low"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "8500"
+                                    }
+                                  },
+                                  {
+                                    "key": {
+                                      "vec": [
+                                        {
+                                          "symbol": "Medium"
+                                        }
+                                      ]
+                                    },
+                                    "val": {
+                                      "i128": "10000"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "safety_discount"
+                              },
+                              "val": {
+                                "i128": "2000"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "version"
+                              },
+                              "val": {
+                                "u32": 1
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "Token"
                             }
                           ]
