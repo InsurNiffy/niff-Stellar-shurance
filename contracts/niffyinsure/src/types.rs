@@ -16,6 +16,11 @@ pub const IMAGE_URL_MAX_LEN: u32 = 128;
 pub const IMAGE_URLS_MAX: u32 = 5;
 pub const REASON_MAX_LEN: u32 = 128;
 
+/// Voting window in ledgers (~7 days at 5 s/ledger ≈ 120_960 ledgers).
+/// After this many ledgers from claim filing the vote is closed and
+/// finalize_claim may be called to settle the outcome.
+pub const VOTE_WINDOW_LEDGERS: u32 = 120_960;
+
 // ── policy_id assignment ─────────────────────────────────────────────────────
 //
 // policy_id is a u32 scoped per holder: the contract increments a per-holder

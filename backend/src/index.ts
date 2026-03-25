@@ -3,6 +3,12 @@ import { checkRedisHealth, closeRedisClient } from "./redis/client";
 import { collectRedisMetrics } from "./redis/metrics";
 
 const app = express();
+
+// Webhook routes MUST be mounted before express.json() so the raw-body
+// capture middleware in webhook.routes.ts can read the raw bytes for HMAC.
+app.use("/webhooks", webhookRoutes);
+
+// JSON body parsing for all other routes
 app.use(express.json());
 
 /** Basic liveness probe — always returns 200 */

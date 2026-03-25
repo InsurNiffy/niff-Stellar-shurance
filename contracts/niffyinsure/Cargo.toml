@@ -8,9 +8,13 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Enables test-only contract entrypoints (test_seed_policy, test_remove_voter).
+# Never enable in production WASM builds.
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk = { version = "=23.5.3", features = [] }
 
 [dev-dependencies]
 soroban-sdk = { version = "=23.5.3", features = ["testutils"] }
-
