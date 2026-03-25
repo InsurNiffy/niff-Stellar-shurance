@@ -2,17 +2,13 @@
 
 mod claim;
 mod policy;
-<<<<<<< feat/claim-payout-14
-pub mod premium;
-=======
 mod premium;
->>>>>>> main
 mod storage;
 mod token;
 pub mod types;
 pub mod validate;
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 #[contract]
 pub struct NiffyInsure;
@@ -125,8 +121,14 @@ impl NiffyInsure {
     pub fn has_policy(env: Env, holder: Address, policy_id: u32) -> bool {
         storage::has_policy(&env, &holder, policy_id)
     }
-<<<<<<< feat/claim-payout-14
-=======
+
+    pub fn is_paused(env: Env) -> bool {
+        storage::is_paused(&env)
+    }
+
+    pub fn get_voters(env: Env) -> Vec<Address> {
+        storage::get_voters(&env)
+    }
 
     // ── Policy domain ────────────────────────────────────────────────────
 
@@ -181,12 +183,7 @@ impl NiffyInsure {
         storage::is_paused(&env)
     }
 
-    // ── Claim domain ─────────────────────────────────────────────────────
-    // file_claim, vote_on_claim
-    // implemented in claim.rs — issue: feat/claim-voting
-
     // ── Admin / treasury ─────────────────────────────────────────────────
-    // drain
+    // drain, set_paused
     // implemented in token.rs — issue: feat/admin
->>>>>>> main
 }
