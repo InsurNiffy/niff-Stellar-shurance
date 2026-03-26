@@ -156,6 +156,41 @@ model FeatureFlag {
   @@map("feature_flags")
 }
 
+/// Deduplication table for wasm drift alerts — one row per (contract, actual-hash) pair.
+/// Prevents repeated webhook spam for the same unresolved drift.
+model WasmDriftAlert {
+  id            String   @id @default(uuid())
+  dedupKey      String   @unique /// "<contractName>:<actualHash>"
+  contractName  String
+  contractId    String
+  expectedHash  String
+  actualHash    String
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([contractName])
+  @@map("wasm_drift_alerts")
+}
+
+/// Tracks staff-initiated privacy requests (GDPR/CCPA-style) for off-chain data.
+/// On-chain and IPFS data is immutable and cannot be erased — see runbook.
+model PrivacyRequest {
+  id                    String    @id @default(uuid())
+  subjectWalletAddress  String
+  requestType           String    /// "ANONYMIZE" | "DELETE"
+  requestedBy           String    /// staff actor (wallet address or email)
+  status                String    @default("IN_PROGRESS") /// "IN_PROGRESS" | "COMPLETED" | "FAILED"
+  rowsAffected          Int       @default(0)
+  notes                 String?
+  errorMessage          String?
+  completedAt           DateTime?
+  createdAt             DateTime  @default(now())
+
+  @@index([subjectWalletAddress])
+  @@index([status])
+  @@map("privacy_requests")
+}
+
 /// Off-chain metadata for allowlisted SEP-41 asset contracts.
 /// Populated by the indexer when it observes AssetAdded events.
 /// Used by the frontend and API to display correct symbol/decimals.

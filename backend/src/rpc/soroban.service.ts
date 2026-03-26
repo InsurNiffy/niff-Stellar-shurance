@@ -313,6 +313,117 @@ export class SorobanService {
   }
 
   /**
+   * Build unsigned file_claim transaction.
+   * Signature: file_claim(holder, policy_id, amount, details, image_urls)
+   */
+  async buildFileClaimTransaction(args: {
+    holder: string;
+    policyId: number;
+    amount: bigint;
+    details: string;
+    imageUrls: string[];
+  }): Promise<BuildTransactionResult> {
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, args.holder);
+    const ledgerInfo = await server.getLatestLedger();
+
+    const scArgs = [
+      new Address(args.holder).toScVal(),
+      nativeToScVal(args.policyId, { type: 'u32' }),
+      nativeToScVal(args.amount, { type: 'i128' }),
+      nativeToScVal(args.details, { type: 'string' }),
+      xdr.ScVal.scvVec(
+        args.imageUrls.map((url) => nativeToScVal(url, { type: 'string' })),
+      ),
+    ];
+
+    const contract = new Contract(this.contractId);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(contract.call('file_claim', ...scArgs))
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+
+    if (Api.isSimulationError(simulation)) {
+      const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+      this.mapSimulationError(err.error);
+    }
+
+    const successSim =
+      simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+    const assembled = assembleTransaction(tx, successSim);
+    const unsignedXdr = assembled.build().toEnvelope().toXDR('base64');
+
+    const baseFee = BigInt(BASE_FEE);
+    const resourceFee = BigInt(successSim.minResourceFee ?? '0');
+    const totalFee = baseFee + resourceFee;
+
+    const authRequirements: AuthRequirement[] = [];
+    for (const authEntry of successSim.result?.auth ?? []) {
+      const credentials = authEntry.credentials();
+      if (
+        credentials.switch().value ===
+        xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
+      ) {
+        const addrObj = credentials.address().address();
+        const stellarAddr = Address.fromScAddress(addrObj);
+        const isContract =
+          addrObj.switch().value ===
+          xdr.ScAddressType.scAddressTypeContract().value;
+        authRequirements.push({ address: stellarAddr.toString(), isContract });
+      }
+    }
+
+    if (!authRequirements.some((r) => r.address === args.holder)) {
+      authRequirements.unshift({ address: args.holder, isContract: false });
+    }
+
+    return {
+      unsignedXdr,
+      minResourceFee: successSim.minResourceFee ?? '0',
+      baseFee: BASE_FEE.toString(),
+      totalEstimatedFee: totalFee.toString(),
+      totalEstimatedFeeXlm: SorobanService.stroopsToXlm(totalFee),
+      authRequirements,
+      memoConvention:
+        'NiffyInsure does not use memos for protocol correlation. ' +
+        'Claim details are embedded in the contract call.',
+      currentLedger: ledgerInfo.sequence,
+    };
+  }
+
+  /**
+   * Submit a signed transaction to the Soroban RPC.
+   * Expects base64-encoded XDR (envelope).
+   */
+  async submitTransaction(transactionXdr: string): Promise<SorobanRpc.Api.SendTransactionResponse> {
+    const server = this.makeServer();
+    const tx = TransactionBuilder.fromEnvelope(transactionXdr, this.networkPassphrase);
+    
+    try {
+      const response = await server.sendTransaction(tx);
+      if (response.status === 'ERROR') {
+        throw new BadRequestException({
+          code: 'TRANSACTION_REJECTED',
+          message: 'The transaction was rejected by the network.',
+          details: response.errorResultXdr,
+        });
+      }
+      return response;
+    } catch (err) {
+      this.logger.error('Transaction submission error', err);
+      throw new ServiceUnavailableException({
+        code: 'SUBMISSION_FAILED',
+        message: 'Failed to submit transaction to the network.',
+      });
+    }
+  }
+
+  /**
    * Fetch events for the configured contract ID within a ledger range.
    */
   async getEvents(startLedger: number, limit = 50): Promise<SorobanRpc.Api.GetEventsResponse> {

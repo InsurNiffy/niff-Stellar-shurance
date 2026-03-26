@@ -1,0 +1,11 @@
+{
+  "contracts": [
+    {
+      "name": "niffyinsure",
+      "contractId": "${CONTRACT_ID}",
+      "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
+      "deployedAt": "2025-01-01T00:00:00Z",
+      "notes": "Replace CONTRACT_ID and NIFFYINSURE_EXPECTED_WASM_HASH with real values before first deploy. Run `sha256sum niffyinsure.wasm` after each release build and update this file."
+    }
+  ]
+}

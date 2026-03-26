@@ -12,6 +12,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminRoleGuard } from './guards/admin-role.guard';
@@ -20,6 +21,13 @@ import { AuditService } from './audit.service';
 import { ReindexDto } from './dto/reindex.dto';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { FeatureFlagDto } from './dto/feature-flag.dto';
+import { PrivacyService, PrivacyRequestType } from '../maintenance/privacy.service';
+
+class PrivacyRequestDto {
+  @IsString() subjectWalletAddress!: string;
+  @IsEnum(['ANONYMIZE', 'DELETE']) requestType!: PrivacyRequestType;
+  @IsOptional() @IsString() notes?: string;
+}
 
 @ApiTags('admin')
 @ApiBearerAuth('JWT-auth')
@@ -29,6 +37,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly auditService: AuditService,
+    private readonly privacyService: PrivacyService,
   ) {}
 
   /**
@@ -90,6 +99,28 @@ export class AdminController {
    * officer and are subject to applicable insurance-regulation obligations.
    * The audit row created here serves as the immutable record of that action.
    */
+  /** POST /admin/privacy/requests — execute anonymization or deletion for a subject. */
+  @Post('privacy/requests')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Submit a privacy request (anonymize or delete off-chain data)' })
+  async submitPrivacyRequest(@Body() dto: PrivacyRequestDto, @Req() req: Request) {
+    const actor = (req.user as any)?.walletAddress ?? 'unknown';
+    return this.privacyService.handleRequest({
+      subjectWalletAddress: dto.subjectWalletAddress,
+      requestType: dto.requestType,
+      requestedBy: actor,
+      ipAddress: req.ip,
+      notes: dto.notes,
+    });
+  }
+
+  /** GET /admin/privacy/requests — list all privacy requests. */
+  @Get('privacy/requests')
+  @ApiOperation({ summary: 'List privacy requests' })
+  async listPrivacyRequests(@Query('page') page = 1, @Query('limit') limit = 20) {
+    return this.privacyService.listRequests(Number(page), Number(limit));
+  }
+
   @Patch('feature-flags/:key')
   @ApiOperation({ summary: 'Set a feature flag value' })
   async setFeatureFlag(

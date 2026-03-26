@@ -6,6 +6,10 @@ import {
   UseGuards,
   ParseIntPipe,
   DefaultValuePipe,
+  Post,
+  HttpCode,
+  HttpStatus,
+  Body,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,6 +20,8 @@ import {
 } from '@nestjs/swagger';
 import { ClaimsService } from './claims.service';
 import { ClaimsListResponseDto, ClaimDetailResponseDto } from './dto/claim.dto';
+import { BuildClaimTransactionDto } from './dto/build-claim-transaction.dto';
+import { SubmitTransactionDto } from './dto/submit-transaction.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
 
@@ -61,5 +67,28 @@ export class ClaimsController {
   @ApiResponse({ status: 404, description: 'Claim not found' })
   async getClaim(@Param('id', ParseIntPipe) id: number): Promise<ClaimDetailResponseDto> {
     return this.claimsService.getClaimById(id);
+  }
+
+  @Post('build-transaction')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Build unsigned file_claim transaction' })
+  @ApiResponse({ status: 200, description: 'Unsigned transaction XDR + fee estimates' })
+  async buildTransaction(@Body() dto: BuildClaimTransactionDto) {
+    return this.claimsService.buildTransaction({
+      holder: dto.holder,
+      policyId: dto.policyId,
+      amount: BigInt(dto.amount),
+      details: dto.details,
+      imageUrls: dto.imageUrls,
+    });
+  }
+
+  @Post('submit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit signed claim transaction' })
+  @ApiResponse({ status: 200, description: 'Transaction submitted' })
+  async submitTransaction(@Body() dto: SubmitTransactionDto) {
+    return this.claimsService.submitTransaction(dto.transactionXdr);
   }
 }
