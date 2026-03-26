@@ -43,5 +43,11 @@ export const validationSchema = Joi.object({
     .valid('error', 'warn', 'log', 'verbose', 'debug'),
   // Cache
   CACHE_TTL_SECONDS: Joi.number().default(60).description('Cache TTL in seconds'),
+  // CAPTCHA (Turnstile or hCaptcha)
+  CAPTCHA_PROVIDER: Joi.string().valid('turnstile', 'hcaptcha').default('turnstile'),
+  CAPTCHA_SECRET_KEY: Joi.string().allow('').default('dev-skip').description('Server-side CAPTCHA secret'),
+  CAPTCHA_SITE_KEY: Joi.string().allow('').description('Client-side CAPTCHA site key (exposed to frontend)'),
+  // Support
+  IP_HASH_SALT: Joi.string().allow('').default('niff-salt').description('Salt for IP hashing'),
 });
 

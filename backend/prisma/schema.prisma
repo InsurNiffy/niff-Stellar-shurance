@@ -175,3 +175,36 @@ model AllowedAsset {
 
   @@map("allowed_assets")
 }
+
+/// Support ticket submitted via the /support contact form.
+model SupportTicket {
+  id        String   @id @default(uuid())
+  email     String
+  subject   String
+  message   String
+  /// One-way hash of submitter IP for spam detection (no raw IP stored).
+  ipHash    String?
+  status    TicketStatus @default(OPEN)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+/// Privacy-safe FAQ expansion counters.
+model FaqStat {
+  faqId      String   @id
+  expansions Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  @@map("faq_stats")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
