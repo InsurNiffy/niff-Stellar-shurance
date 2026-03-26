@@ -473,6 +473,7 @@ pub fn set_sweep_cap(env: &Env, cap: Option<i128>) {
 /// Get configured sweep cap (None if not set).
 pub fn get_sweep_cap(env: &Env) -> Option<i128> {
     env.storage().instance().get(&DataKey::SweepCap)
+}
 // ── Appeal vote (persistent) ──────────────────────────────────────────────────
 
 pub fn set_appeal_vote(env: &Env, claim_id: u64, voter: &Address, vote: &VoteOption) {
