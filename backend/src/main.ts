@@ -15,7 +15,28 @@ async function bootstrap() {
   
   // Security
   app.use(helmet());
-  
+
+  // CORS — admin UI gets its own restricted origin list
+  const configService = app.get(ConfigService);
+  const adminOrigins = (configService.get<string>('ADMIN_CORS_ORIGINS') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const publicOrigins = (configService.get<string>('CORS_ORIGINS') ?? '*')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  app.enableCors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // same-origin / server-to-server
+      const isAdmin = origin ? adminOrigins.some((o) => o === origin) : false;
+      const isPublic = publicOrigins.includes('*') || publicOrigins.includes(origin ?? '');
+      cb(null, isAdmin || isPublic);
+    },
+    credentials: true,
+  });
+
   // Middleware
   app.use(LoggerMiddleware);
   
@@ -42,7 +63,6 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);
 
-  const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT') || 3000;
   
   await app.listen(port, '0.0.0.0');

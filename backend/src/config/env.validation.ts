@@ -34,6 +34,9 @@ export const validationSchema = Joi.object({
   // Auth
   JWT_SECRET: Joi.string().min(32).required(),
   ADMIN_TOKEN: Joi.string().required(),
+  // CORS
+  CORS_ORIGINS: Joi.string().default('*').description('Comma-separated public CORS origins'),
+  ADMIN_CORS_ORIGINS: Joi.string().allow('').default('').description('Comma-separated admin UI CORS origins'),
   // Logging
   LOG_LEVEL: Joi.string()
     .default('info')

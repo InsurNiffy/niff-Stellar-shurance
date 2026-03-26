@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "analyze": "ANALYZE=true next build",
     "lint": "next lint",
     "test": "jest --passWithNoTests"
   },
@@ -26,6 +27,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "^15.2.3",
     "@types/node": "^22.19.15",
     "@types/react": "^19",
     "autoprefixer": "^10.4.27",

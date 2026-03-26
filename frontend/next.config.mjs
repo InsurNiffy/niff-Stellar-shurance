@@ -1,12 +1,25 @@
+import bundleAnalyzer from '@next/bundle-analyzer'
+
+const withBundleAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === 'true',
+})
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
     optimizeCss: true,
-    optimizePackageImports: ['lucide-react'],
+    optimizePackageImports: [
+      'lucide-react',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-select',
+      '@radix-ui/react-toast',
+    ],
   },
   images: {
+    formats: ['image/avif', 'image/webp'],
+    deviceSizes: [640, 750, 828, 1080, 1200],
+    minimumCacheTTL: 60,
     domains: ['localhost'],
-    formats: ['image/webp', 'image/avif'],
   },
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production',
@@ -16,4 +29,4 @@ const nextConfig = {
   swcMinify: true,
 }
 
-export default nextConfig;
+export default withBundleAnalyzer(nextConfig)
