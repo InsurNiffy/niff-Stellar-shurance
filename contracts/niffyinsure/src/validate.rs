@@ -92,12 +92,11 @@ pub fn check_claim_open(claim: &Claim) -> Result<(), Error> {
     Ok(())
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // ORACLE / PARAMETRIC TRIGGER VALIDATION
 //
-// ⚠️  LEGAL / COMPLIANCE REVIEW GATE: These validators are non-functional
-// stubs for future oracle-triggered parametric insurance.  Do NOT activate
+// ⚠️  LEGAL / COMPLIANCE REVIEW GATE: These validators are gated behind the
+// `experimental` feature.  Default builds expose panic stubs.  Do NOT activate
 // in production without:
 //   • Completed regulatory classification review (parametric vs indemnity)
 //   • Legal review of smart contract-triggered payouts
@@ -113,7 +112,10 @@ pub fn check_claim_open(claim: &Claim) -> Result<(), Error> {
 //     - Collusion detection
 // ═════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "experimental")]
+/// Oracle-specific error codes.
+///
+/// Defined unconditionally so that panic stubs in default builds and
+/// test code can reference the type without the `experimental` feature.
 #[derive(Debug, PartialEq)]
 pub enum OracleError {
     /// Oracle triggers globally disabled.
@@ -150,23 +152,20 @@ pub enum OracleError {
 
 /// Validates that an oracle trigger is safe to process.
 ///
-/// This function MUST be called before accepting any oracle trigger.
-/// It performs non-cryptographic validation only.
+/// Performs non-cryptographic validation only.
 ///
 /// ⚠️  CRYPTOGRAPHIC VALIDATION (signature verification) IS NOT IMPLEMENTED.
-/// This stub validates structural properties only.  Signature verification
-/// must be designed and audited before triggers can be accepted from oracles.
-///
-/// CRITICAL: Do NOT parse untrusted signatures without a complete crypto
-/// design review.  See DESIGN-ORACLE.md for requirements.
+/// Signature verification must be designed and audited before triggers can
+/// be accepted from oracles.
 #[cfg(feature = "experimental")]
 pub fn check_oracle_trigger(
     env: &Env,
-    trigger: &OracleTrigger,
+    trigger: &crate::types::OracleTrigger,
     current_ledger: u32,
     max_trigger_age_ledgers: u32,
 ) -> Result<(), OracleError> {
     use crate::storage;
+    use crate::types::{OracleSource, TriggerEventType};
 
     // 1. Check that oracle triggers are globally enabled
     if !storage::is_oracle_enabled(env) {
@@ -178,57 +177,42 @@ pub fn check_oracle_trigger(
         return Err(OracleError::TriggerLedgerExpired);
     }
 
-    // 3. Check that signature is empty (crypto not implemented yet)
+    // 3. Reject non-empty signatures until crypto review is complete
     //
     // ⚠️  SECURITY CRITICAL: This check ensures we cannot accidentally
     // accept signed data before crypto review is complete.
-    //
-    // CRYPTOGRAPHIC DESIGN NOTE:
-    // When implementing signature verification, replace this check with
-    // actual Ed25519/EdDSA verification against the oracle's public key.
-    // The signature field will be non-empty and must be verified before
-    // accepting the trigger.
     if !trigger.signature.is_empty() {
-        // Log warning in production: non-empty signature received before
-        // crypto design review.  Reject to maintain safety invariant.
         return Err(OracleError::SignatureNotImplemented);
     }
 
-    // 4. Check payload is non-empty (for defined event types)
+    // 4. Check payload is non-empty for defined event types
     if trigger.payload.is_empty() && !matches!(trigger.event_type, TriggerEventType::Undefined) {
         return Err(OracleError::EmptyPayload);
     }
 
     // 5. Check event type is defined
     if matches!(trigger.event_type, TriggerEventType::Undefined) {
-        // Undefined event types should only exist in pre-configuration phase
-        // After configuration, this should return an error
         return Err(OracleError::InvalidPayloadEncoding);
     }
 
     // 6. Check source is defined
-    use crate::types::OracleSource;
     if matches!(trigger.source, OracleSource::Undefined) {
         return Err(OracleError::SourceNotWhitelisted);
     }
 
-    // TODO (post-crypto-review): Implement the following checks:
-    // - Oracle key rotation verification
-    // - Nonce/replay protection validation
-    // - Multi-oracle quorum verification (if applicable)
-    // - Game-theoretic incentive alignment checks
+    // TODO (post-crypto-review): nonce/replay protection, multi-oracle quorum
 
     Ok(())
 }
 
 /// Validates trigger status transitions.
-///
-/// Ensures triggers can only move through valid state transitions.
 #[cfg(feature = "experimental")]
 pub fn check_trigger_status_transition(
-    current: TriggerStatus,
-    next: TriggerStatus,
+    current: crate::types::TriggerStatus,
+    next: crate::types::TriggerStatus,
 ) -> Result<(), OracleError> {
+    use crate::types::TriggerStatus;
+
     match (&current, &next) {
         // Valid transitions
         (TriggerStatus::Pending, TriggerStatus::Validated) => Ok(()),
@@ -247,25 +231,9 @@ pub fn check_trigger_status_transition(
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// STUB VALIDATORS FOR DEFAULT (NON-EXPERIMENTAL) BUILDS
-//
-// These functions ensure that default builds CANNOT validate oracle triggers.
-// If called in a non-experimental build, they will panic at runtime.
-// This is intentional for production safety.
-// ═════════════════════════════════════════════════════════════════════════════
+// ── Panic stubs for default (non-experimental) builds ─────────────────────
 
-#[cfg(not(feature = "experimental"))]
-#[derive(Debug, PartialEq)]
-pub enum OracleError {
-    OracleDisabled,
-}
-
-/// Stub: Panics in default builds to prevent oracle trigger validation.
-///
-/// ⚠️  DO NOT REMOVE THIS FUNCTION.  It ensures production safety by
-/// creating a compile-time and runtime guarantee that oracle triggers
-/// cannot be validated without the experimental feature flag.
+/// Stub: panics in default builds to prevent oracle trigger validation.
 #[cfg(not(feature = "experimental"))]
 #[allow(dead_code)]
 pub fn check_oracle_trigger(
@@ -281,7 +249,7 @@ pub fn check_oracle_trigger(
     )
 }
 
-/// Stub: Panics in default builds.
+/// Stub: panics in default builds.
 #[cfg(not(feature = "experimental"))]
 #[allow(dead_code)]
 pub fn check_trigger_status_transition(
@@ -294,24 +262,3 @@ pub fn check_trigger_status_transition(
          See DESIGN-ORACLE.md for activation requirements."
     )
 }
-
-pub fn check_risk_input(input: &RiskInput) -> Result<(), Error> {
-    if input.safety_score > SAFETY_SCORE_MAX {
-        return Err(Error::SafetyScoreOutOfRange);
-    }
-    Ok(())
-}
-
-pub fn check_multiplier_table_shape(table: &MultiplierTable) -> Result<(), Error> {
-    if table.region.len() != 3u32 {
-        return Err(Error::MissingRegionMultiplier);
-    }
-    if table.age.len() != 3u32 {
-        return Err(Error::MissingAgeMultiplier);
-    }
-    if table.coverage.len() != 3u32 {
-        return Err(Error::MissingCoverageMultiplier);
-    }
-    Ok(())
-}
-

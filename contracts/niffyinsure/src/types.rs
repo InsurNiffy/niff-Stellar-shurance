@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
+use soroban_sdk::{contracterror, contracttype, Address, Bytes, String, Vec};
 
 // ── Field size limits (enforced in mutating entrypoints) ─────────────────────
 //
@@ -252,18 +252,18 @@ pub struct PremiumQuote {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ORACLE / PARAMETRIC TRIGGER STUBS
+// ORACLE / PARAMETRIC TRIGGER TYPES
 //
-// ⚠️  LEGAL / COMPLIANCE REVIEW GATE: This module contains non-active scaffolding
-// for parametric insurance automation.  Do NOT activate in production without:
+// ⚠️  LEGAL / COMPLIANCE REVIEW GATE: These types are scaffolding for future
+// parametric insurance automation.  Do NOT activate logic in production without:
 //   • Completed regulatory classification review (parametric vs indemnity)
 //   • Legal review of smart contract-triggered payouts
 //   • Game-theoretic analysis of oracle incentivization
 //   • Cryptographic design review for signature verification
 //
-// Compilation guarded by `#[cfg(feature = "experimental")]`.  Default builds
-// are cryptographically unable to process oracle triggers (stub panics ensure
-// this at compile time).
+// Types are always compiled so that panic-stub functions in storage.rs and
+// validate.rs can reference them in default (non-experimental) builds.
+// Oracle logic is gated behind the `experimental` feature flag.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Placeholder enum for oracle data source types.
@@ -278,7 +278,6 @@ pub struct PremiumQuote {
 ///   - Oracle key rotation mechanism
 ///   - Sybil resistance (how to prevent fake oracles)
 ///   - Collusion detection
-#[cfg(feature = "experimental")]
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum OracleSource {
@@ -301,7 +300,6 @@ pub enum OracleSource {
 ///   - How are oracles incentivized to report truthfully?
 ///   - What slash conditions exist for malicious reports?
 ///   - How is consensus achieved for ambiguous events (e.g., "storm damage")?
-#[cfg(feature = "experimental")]
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum TriggerEventType {
@@ -328,7 +326,6 @@ pub enum TriggerEventType {
 ///   The `signature` field is RESERVED for future cryptographic verification.
 ///   Currently it MUST be empty.  Parsing untrusted signatures without a
 ///   complete crypto design review is FORBIDDEN.
-#[cfg(feature = "experimental")]
 #[contracttype]
 #[derive(Clone)]
 pub struct OracleTrigger {
@@ -340,7 +337,7 @@ pub struct OracleTrigger {
     pub source: OracleSource,
     /// Event-specific payload (schema depends on event_type).
     /// Must be validated against event_type schema before use.
-    pub payload: Vec<u8>,
+    pub payload: Bytes,
     /// Unix timestamp when the oracle attested this event.
     pub timestamp: u64,
     /// Ledger sequence when this trigger was recorded.
@@ -354,11 +351,10 @@ pub struct OracleTrigger {
     ///
     /// DO NOT PARSE: This field may contain arbitrary data that could
     /// trigger parsing vulnerabilities if interpreted without validation.
-    pub signature: Vec<u8>,
+    pub signature: Bytes,
 }
 
 /// Status of an oracle trigger in the resolution pipeline.
-#[cfg(feature = "experimental")]
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum TriggerStatus {
@@ -385,7 +381,6 @@ pub enum TriggerStatus {
 ///     2. Replay protection (nonce + TTL validation)
 ///     3. Threshold quorum for multi-oracle sources
 ///     4. Legal classification of auto-triggered payouts
-#[cfg(feature = "experimental")]
 #[contracttype]
 #[derive(Clone)]
 pub struct ParametricClaim {

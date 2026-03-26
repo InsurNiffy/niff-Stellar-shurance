@@ -20,7 +20,7 @@
 
 #![cfg(feature = "experimental")]
 
-use soroban_sdk::{Env, Vec};
+use soroban_sdk::{Bytes, Env};
 
 use crate::storage;
 use crate::types::{OracleSource, OracleTrigger, TriggerStatus};
@@ -52,9 +52,9 @@ pub fn submit_trigger(
     policy_id: u32,
     event_type: crate::types::TriggerEventType,
     source: OracleSource,
-    payload: Vec<u8>,
+    payload: Bytes,
     timestamp: u64,
-    signature: Vec<u8>,
+    signature: Bytes,
 ) -> Result<u64, OracleError> {
     // 1. Validate payload size to prevent storage griefing
     if payload.len() > MAX_TRIGGER_PAYLOAD_SIZE {
@@ -74,7 +74,12 @@ pub fn submit_trigger(
     };
 
     // 3. Validate the trigger (non-cryptographic checks only)
-    check_oracle_trigger(env, &trigger, current_ledger, DEFAULT_TRIGGER_MAX_LEDGER_AGE)?;
+    check_oracle_trigger(
+        env,
+        &trigger,
+        current_ledger,
+        DEFAULT_TRIGGER_MAX_LEDGER_AGE,
+    )?;
 
     // 4. Generate trigger ID and store
     let trigger_id = storage::next_trigger_id(env);
@@ -101,16 +106,21 @@ pub fn validate_trigger(
     _validator: &soroban_sdk::Address,
 ) -> Result<(), OracleError> {
     // 1. Get the trigger
-    let trigger = storage::get_oracle_trigger(env, trigger_id)
-        .ok_or(OracleError::PolicyNotFound)?;
+    let trigger =
+        storage::get_oracle_trigger(env, trigger_id).ok_or(OracleError::PolicyNotFound)?;
 
     // 2. Check current status
-    let current_status = storage::get_trigger_status(env, trigger_id)
-        .unwrap_or(TriggerStatus::Pending);
+    let current_status =
+        storage::get_trigger_status(env, trigger_id).unwrap_or(TriggerStatus::Pending);
 
     // 3. Perform full validation
     let current_ledger = env.ledger().sequence();
-    check_oracle_trigger(env, &trigger, current_ledger, DEFAULT_TRIGGER_MAX_LEDGER_AGE)?;
+    check_oracle_trigger(
+        env,
+        &trigger,
+        current_ledger,
+        DEFAULT_TRIGGER_MAX_LEDGER_AGE,
+    )?;
 
     // TODO: Add policy existence and coverage validation
     // This requires accessing the policy storage, which is defined elsewhere.
@@ -141,12 +151,12 @@ pub fn execute_trigger(
     _executor: &soroban_sdk::Address,
 ) -> Result<TriggerStatus, OracleError> {
     // 1. Get the trigger
-    let trigger = storage::get_oracle_trigger(env, trigger_id)
-        .ok_or(OracleError::PolicyNotFound)?;
+    let trigger =
+        storage::get_oracle_trigger(env, trigger_id).ok_or(OracleError::PolicyNotFound)?;
 
     // 2. Check current status
-    let current_status = storage::get_trigger_status(env, trigger_id)
-        .ok_or(OracleError::TriggerAlreadyProcessed)?;
+    let current_status =
+        storage::get_trigger_status(env, trigger_id).ok_or(OracleError::TriggerAlreadyProcessed)?;
 
     // 3. Only validated triggers can be executed
     if !matches!(current_status, TriggerStatus::Validated) {

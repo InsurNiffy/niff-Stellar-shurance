@@ -18,7 +18,7 @@
 
 use niffyinsure::types::{OracleSource, TriggerStatus};
 use niffyinsure::validate::OracleError;
-use soroban_sdk::{testutils::Address as _, vec::Vec as SdkVec, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // DEFAULT BUILD TESTS (feature = std without "experimental")
@@ -75,10 +75,10 @@ mod default_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
             trigger_ledger: 0,
-            signature: SdkVec::new(&env),
+            signature: Bytes::new(&env),
         };
         niffyinsure::storage::set_oracle_trigger(&env, 1, &trigger);
     }
@@ -108,10 +108,10 @@ mod default_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
             trigger_ledger: 0,
-            signature: SdkVec::new(&env),
+            signature: Bytes::new(&env),
         };
         let _ = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
     }
@@ -204,10 +204,10 @@ mod experimental_build_tests {
             policy_id: 42,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 1234567890,
             trigger_ledger: 1000,
-            signature: SdkVec::new(&env),
+            signature: Bytes::new(&env),
         };
 
         // Store trigger
@@ -235,14 +235,17 @@ mod experimental_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
             trigger_ledger: 1000,
-            signature: SdkVec::new(&env),
+            signature: Bytes::new(&env),
         };
 
         let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
-        assert_eq!(result, Err(niffyinsure::validate::OracleError::OracleDisabled));
+        assert_eq!(
+            result,
+            Err(niffyinsure::validate::OracleError::OracleDisabled)
+        );
     }
 
     /// Test that check_oracle_trigger rejects expired triggers.
@@ -258,15 +261,18 @@ mod experimental_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
-            trigger_ledger: 100,    // Old ledger
-            signature: SdkVec::new(&env),
+            trigger_ledger: 100, // Old ledger
+            signature: Bytes::new(&env),
         };
 
         // Current ledger is much later than trigger ledger
         let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 10000, 100);
-        assert_eq!(result, Err(niffyinsure::validate::OracleError::TriggerLedgerExpired));
+        assert_eq!(
+            result,
+            Err(niffyinsure::validate::OracleError::TriggerLedgerExpired)
+        );
     }
 
     /// Test that check_oracle_trigger rejects non-empty signatures (crypto not implemented).
@@ -282,19 +288,22 @@ mod experimental_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
             trigger_ledger: 1000,
             signature: {
                 // Non-empty signature should be rejected until crypto is implemented
-                let mut v = SdkVec::new(&env);
-                v.push_back(0xDEADBEEF);
+                let mut v = Bytes::new(&env);
+                v.push_back(0xDE_u8);
                 v
             },
         };
 
         let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
-        assert_eq!(result, Err(niffyinsure::validate::OracleError::SignatureNotImplemented));
+        assert_eq!(
+            result,
+            Err(niffyinsure::validate::OracleError::SignatureNotImplemented)
+        );
     }
 
     /// Test that check_trigger_status_transition allows valid transitions.
@@ -304,31 +313,36 @@ mod experimental_build_tests {
         assert!(niffyinsure::validate::check_trigger_status_transition(
             TriggerStatus::Pending,
             TriggerStatus::Validated
-        ).is_ok());
+        )
+        .is_ok());
 
         // Pending -> Rejected (valid)
         assert!(niffyinsure::validate::check_trigger_status_transition(
             TriggerStatus::Pending,
             TriggerStatus::Rejected
-        ).is_ok());
+        )
+        .is_ok());
 
         // Pending -> Expired (valid)
         assert!(niffyinsure::validate::check_trigger_status_transition(
             TriggerStatus::Pending,
             TriggerStatus::Expired
-        ).is_ok());
+        )
+        .is_ok());
 
         // Validated -> Executed (valid)
         assert!(niffyinsure::validate::check_trigger_status_transition(
             TriggerStatus::Validated,
             TriggerStatus::Executed
-        ).is_ok());
+        )
+        .is_ok());
 
         // Same state is idempotent (valid)
         assert!(niffyinsure::validate::check_trigger_status_transition(
             TriggerStatus::Pending,
             TriggerStatus::Pending
-        ).is_ok());
+        )
+        .is_ok());
     }
 
     /// Test that check_trigger_status_transition rejects invalid transitions.
@@ -392,15 +406,18 @@ mod experimental_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
             trigger_ledger: 1000,
-            signature: SdkVec::new(&env),
+            signature: Bytes::new(&env),
         };
 
         // This should fail because source is Undefined, not because payload is empty
         let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
-        assert_eq!(result, Err(niffyinsure::validate::OracleError::SourceNotWhitelisted));
+        assert_eq!(
+            result,
+            Err(niffyinsure::validate::OracleError::SourceNotWhitelisted)
+        );
     }
 }
 

@@ -12,6 +12,9 @@ crate-type = ["cdylib", "rlib"]
 # Enables test-only contract entrypoints (test_seed_policy, test_remove_voter).
 # Never enable in production WASM builds.
 testutils = ["soroban-sdk/testutils"]
+# Enables experimental oracle / parametric trigger infrastructure.
+# Requires full review cycle before production activation (see DESIGN-ORACLE.md).
+experimental = []
 
 [dependencies]
 soroban-sdk = { version = "=23.5.3", features = [] }
