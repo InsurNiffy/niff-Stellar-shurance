@@ -70,9 +70,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/site.webmanifest" />
       </head>
-      <body className="font-sans">
-        {children}
-        <Toaster />
+      <body className="font-sans antialiased">
+        <ThemeProvider defaultTheme="system" storageKey="niffyinsur-theme">
+          {children}
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );
