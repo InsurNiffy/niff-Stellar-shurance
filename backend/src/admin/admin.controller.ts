@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -21,7 +22,9 @@ import { AuditService } from './audit.service';
 import { ReindexDto } from './dto/reindex.dto';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { FeatureFlagDto } from './dto/feature-flag.dto';
+import { SetRateLimitDto, EnableOverrideDto } from './dto/rate-limit.dto';
 import { PrivacyService, PrivacyRequestType } from '../maintenance/privacy.service';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 
 class PrivacyRequestDto {
   @IsString() subjectWalletAddress!: string;
@@ -44,6 +47,7 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly auditService: AuditService,
     private readonly privacyService: PrivacyService,
+    private readonly rateLimitService: RateLimitService,
   ) {}
 
   /**
@@ -143,5 +147,87 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return flag;
+  }
+
+  /**
+   * POST /admin/rate-limits/:policyId
+   *
+   * Set custom rate limit for a policy.
+   * Writes an immutable audit row with actor and full payload.
+   */
+  @Post('rate-limits/:policyId')
+  @ApiOperation({ summary: 'Set custom rate limit for a policy' })
+  async setRateLimit(
+    @Param('policyId') policyId: string,
+    @Body() dto: SetRateLimitDto,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.rateLimitService.setLimit(policyId, dto.limit, actor);
+    await this.auditService.write({
+      actor,
+      action: 'rate_limit_set',
+      payload: { policyId, limit: dto.limit },
+      ipAddress: req.ip,
+    });
+    return { policyId, limit: dto.limit, status: 'updated' };
+  }
+
+  /**
+   * GET /admin/rate-limits/:policyId
+   *
+   * Get rate limit status for a policy.
+   */
+  @Get('rate-limits/:policyId')
+  @ApiOperation({ summary: 'Get rate limit status for a policy' })
+  async getRateLimitStatus(@Param('policyId') policyId: string) {
+    return this.rateLimitService.getCounterState(policyId);
+  }
+
+  /**
+   * POST /admin/rate-limits/:policyId/override
+   *
+   * Enable manual override for a policy during catastrophic events.
+   * Writes an immutable audit row with actor and full payload.
+   */
+  @Post('rate-limits/:policyId/override')
+  @ApiOperation({ summary: 'Enable manual override for a policy' })
+  async enableOverride(
+    @Param('policyId') policyId: string,
+    @Body() dto: EnableOverrideDto,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.rateLimitService.enableOverride(policyId, actor, dto.reason);
+    await this.auditService.write({
+      actor,
+      action: 'rate_limit_override_enabled',
+      payload: { policyId, reason: dto.reason },
+      ipAddress: req.ip,
+    });
+    return { policyId, overrideActive: true };
+  }
+
+  /**
+   * DELETE /admin/rate-limits/:policyId/override
+   *
+   * Disable manual override for a policy.
+   * Writes an immutable audit row with actor and full payload.
+   */
+  @Delete('rate-limits/:policyId/override')
+  @ApiOperation({ summary: 'Disable manual override for a policy' })
+  async disableOverride(
+    @Param('policyId') policyId: string,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.rateLimitService.disableOverride(policyId, actor);
+    await this.auditService.write({
+      actor,
+      action: 'rate_limit_override_disabled',
+      payload: { policyId },
+      ipAddress: req.ip,
+    });
+    return { policyId, overrideActive: false };
   }
 }

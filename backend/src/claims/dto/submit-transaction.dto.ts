@@ -9,4 +9,12 @@ export class SubmitTransactionDto {
   @IsString()
   @IsNotEmpty()
   transactionXdr: string;
+
+  @ApiProperty({
+    description: 'Policy ID for rate limiting (format: holderAddress:policyId)',
+    example: 'GABC...123:1',
+  })
+  @IsString()
+  @IsNotEmpty()
+  policyId: string;
 }
