@@ -34,6 +34,9 @@ pub fn file_claim(
     details: &String,
     image_urls: &Vec<String>,
 ) -> Result<u64, Error> {
+    // Check pause: claims are blocked if claims_paused is true
+    storage::assert_claims_not_paused(env);
+    
     let policy = storage::get_policy(env, holder, policy_id).ok_or(Error::ClaimNotFound)?;
 
     // Policy active window check using ledger helper.
@@ -96,6 +99,9 @@ pub fn vote_on_claim(
     claim_id: u64,
     vote: &VoteOption,
 ) -> Result<ClaimStatus, Error> {
+    // Check pause: voting is blocked if claims_paused is true
+    storage::assert_claims_not_paused(env);
+    
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
     if claim.status.is_terminal() {
@@ -159,6 +165,9 @@ pub fn vote_on_claim(
 /// Window check: `now >= filed_at + VOTE_WINDOW_LEDGERS` (via `ledger::is_vote_deadline_passed`).
 /// Plurality wins; tie resolves to Rejected.
 pub fn finalize_claim(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
+    // Check pause: finalization is blocked if claims_paused is true
+    storage::assert_claims_not_paused(env);
+    
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
     if claim.status.is_terminal() {

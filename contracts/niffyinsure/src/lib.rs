@@ -1,7 +1,10 @@
 ﻿#![no_std]
 
+mod calculator;
 mod claim;
+mod ledger;
 mod policy;
+mod policy_lifecycle;
 mod premium;
 mod storage;
 mod token;
@@ -176,24 +179,89 @@ impl NiffyInsure {
         storage::get_active_policy_count(&env, &holder)
     }
 
-    // ── Admin / pause ────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════════
+    // PAUSE SYSTEM
+    //
+    // Granular pause flags for operational flexibility:
+    //   - bind_paused: blocks new policy initiation/renewal
+    //   - claims_paused: blocks filing claims and voting
+    //
+    // Admin-only toggles with optional reason codes.
+    // Read-only methods continue to work for transparency.
+    // ═════════════════════════════════════════════════════════════════════════════
 
-    pub fn pause(env: Env, admin: Address) {
+    /// Pause the contract with optional reason code.
+    /// Reason codes: 0=maintenance, 1=vulnerability, 2=key_compromise, 3=other
+    /// Emits PauseToggled event with admin, paused=true, and reason code.
+    pub fn pause(env: Env, admin: Address, reason_code: u32) {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         assert!(admin == stored_admin, "only admin can pause");
         storage::set_paused(&env, true);
+        
+        // Emit PauseToggled event for monitoring
+        env.events().publish(
+            (symbol_short!("p_toggle"),),
+            (admin, true, reason_code),
+        );
     }
 
-    pub fn unpause(env: Env, admin: Address) {
+    /// Unpause the contract with optional reason code.
+    /// Reason codes: 0=resolved, 1=manual, 2=other
+    /// Emits PauseToggled event with admin, paused=false, and reason code.
+    pub fn unpause(env: Env, admin: Address, reason_code: u32) {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         assert!(admin == stored_admin, "only admin can unpause");
         storage::set_paused(&env, false);
+        
+        // Emit PauseToggled event for monitoring
+        env.events().publish(
+            (symbol_short!("p_toggle"),),
+            (admin, false, reason_code),
+        );
     }
 
+    /// Granular pause: pause only policy binding (initiate/renew).
+    pub fn pause_bind(env: Env, admin: Address, reason_code: u32) {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        assert!(admin == stored_admin, "only admin can pause");
+        
+        let mut flags = storage::get_pause_flags(&env);
+        flags.bind_paused = true;
+        storage::set_pause_flags(&env, &flags);
+        
+        env.events().publish(
+            (symbol_short!("p_toggle"),),
+            (admin, true, reason_code),
+        );
+    }
+
+    /// Granular pause: pause only claims (file/vote/finalize).
+    pub fn pause_claims(env: Env, admin: Address, reason_code: u32) {
+        admin.require_auth();
+        let stored_admin = storage::get_admin(&env);
+        assert!(admin == stored_admin, "only admin can pause");
+        
+        let mut flags = storage::get_pause_flags(&env);
+        flags.claims_paused = true;
+        storage::set_pause_flags(&env, &flags);
+        
+        env.events().publish(
+            (symbol_short!("p_toggle"),),
+            (admin, true, reason_code),
+        );
+    }
+
+    /// Get current pause state (legacy - true if ANY pause flag is set).
     pub fn is_paused(env: Env) -> bool {
         storage::is_paused(&env)
+    }
+
+    /// Get detailed pause flags (bind_paused, claims_paused).
+    pub fn get_pause_flags(env: Env) -> storage::PauseFlags {
+        storage::get_pause_flags(&env)
     }
 
     // ── Test-only helpers ─────────────────────────────────────────────────
@@ -231,6 +299,3 @@ impl NiffyInsure {
         storage::remove_voter(&env, &holder);
     }
 }
-
-// Re-export error type so tests can reference it without the module path.
-pub use claim::ContractError;

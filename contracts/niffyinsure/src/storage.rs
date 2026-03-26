@@ -148,17 +148,87 @@ pub fn is_allowed_asset(env: &Env, asset: &Address) -> bool {
         .unwrap_or(false)
 }
 
-// ── Pause flag ────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// PAUSE SYSTEM
+//
+// Granular pause flags for operational flexibility:
+//   - bind_paused: blocks new policy initiation/renewal
+//   - claims_paused: blocks filing claims and voting
+//
+// Read-only methods continue to work for transparency.
+// Admin-triggered payouts (process_claim) continue during pause to avoid trapping funds.
+// ═════════════════════════════════════════════════════════════════════════════
 
-pub fn set_paused(env: &Env, paused: bool) {
-    env.storage().instance().set(&DataKey::Paused, &paused);
+/// Pause flags: separate controls for binding new policies vs filing claims.
+/// Both false by default (unpaused state).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PauseFlags {
+    pub bind_paused: bool,
+    pub claims_paused: bool,
 }
 
+impl Default for PauseFlags {
+    fn default() -> Self {
+        Self {
+            bind_paused: false,
+            claims_paused: false,
+        }
+    }
+}
+
+/// Central assertion: panics if ANY pause flag is set.
+/// Use for entrypoints that should be blocked by any pause.
+pub fn assert_not_paused(env: &Env) {
+    if is_paused(env) {
+        panic!("protocol paused for maintenance");
+    }
+}
+
+/// Assertion for policy binding operations (initiate/renew policy).
+/// Only blocks if bind_paused is true.
+pub fn assert_bind_not_paused(env: &Env) {
+    let flags = get_pause_flags(env);
+    if flags.bind_paused {
+        panic!("protocol paused for maintenance: policy binding disabled");
+    }
+}
+
+/// Assertion for claim operations (file claim, vote, finalize).
+/// Only blocks if claims_paused is true.
+pub fn assert_claims_not_paused(env: &Env) {
+    let flags = get_pause_flags(env);
+    if flags.claims_paused {
+        panic!("protocol paused for maintenance: claims disabled");
+    }
+}
+
+/// Get current pause state (legacy compatibility - returns true if ANY flag is set).
 pub fn is_paused(env: &Env) -> bool {
+    let flags = get_pause_flags(env);
+    flags.bind_paused || flags.claims_paused
+}
+
+/// Get detailed pause flags.
+pub fn get_pause_flags(env: &Env) -> PauseFlags {
     env.storage()
         .instance()
         .get(&DataKey::Paused)
-        .unwrap_or(false)
+        .unwrap_or_default()
+}
+
+/// Set full pause state (legacy compatibility - sets both flags).
+pub fn set_paused(env: &Env, paused: bool) {
+    let flags = PauseFlags {
+        bind_paused: paused,
+        claims_paused: paused,
+    };
+    env.storage().instance().set(&DataKey::Paused, &flags);
+}
+
+/// Set granular pause flags.
+pub fn set_pause_flags(env: &Env, flags: &PauseFlags) {
+    env.storage().instance().set(&DataKey::Paused, flags);
 }
 
 // ── Claim counter (instance) ──────────────────────────────────────────────────

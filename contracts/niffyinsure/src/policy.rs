@@ -188,9 +188,8 @@ pub fn initiate_policy(
     base_amount: i128,
     asset: Address,
 ) -> Result<Policy, PolicyError> {
-    if storage::is_paused(env) {
-        return Err(PolicyError::ContractPaused);
-    }
+    // Check granular pause: policy binding should be blocked if bind_paused
+    storage::assert_bind_not_paused(env);
 
     // Asset allowlist check — before auth so callers get a clear error.
     if !storage::is_allowed_asset(env, &asset) {

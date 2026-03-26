@@ -84,6 +84,19 @@ pub enum VoteOption {
     Reject,
 }
 
+/// Reason for policy termination.
+#[contracttype]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum TerminationReason {
+    None,
+    VoluntaryCancellation,
+    LapsedNonPayment,
+    UnderwritingVoid,
+    FraudOrMisrepresentation,
+    RegulatoryAction,
+    AdminOverride,
+}
+
 // ── Premium engine structs ────────────────────────────────────────────────────
 
 #[contracttype]
@@ -136,6 +149,10 @@ pub struct Policy {
     /// SEP-41 asset contract used for this policy's premium payment and claim payout.
     /// Must be allowlisted at the time of policy initiation.
     pub asset: Address,
+    // Termination fields
+    pub terminated_at_ledger: u32,
+    pub termination_reason: TerminationReason,
+    pub terminated_by_admin: bool,
 }
 
 /// On-chain claim record.
