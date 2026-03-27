@@ -83,14 +83,14 @@ export class IndexerService {
   async processNextBatch() {
     const state = await this.getState();
     const latestLedger = await this.soroban.getLatestLedger();
-    
+
     if (state.lastLedger >= latestLedger) {
       return { processed: 0, lag: 0 };
     }
 
     const startLedger = state.lastLedger + 1;
     this.logger.debug(`Fetching events starting from ledger ${startLedger}`);
-    
+
     const response = await this.soroban.getEvents(startLedger, this.BATCH_SIZE);
     const events = response.events || [];
 
@@ -106,21 +106,16 @@ export class IndexerService {
       processedCount++;
     }
 
-    const maxLedger = Math.max(...events.map(e => e.ledger));
+    const maxLedger = Math.max(...events.map((e: any) => e.ledger));
     await this.updateState(maxLedger);
 
-    return { 
-      processed: processedCount, 
-      lag: latestLedger - maxLedger 
-    };
+    return { processed: processedCount, lag: latestLedger - maxLedger };
   }
 
   private async getState() {
     let state = await this.prisma.indexerState.findFirst();
     if (!state) {
-      state = await this.prisma.indexerState.create({
-        data: { lastLedger: 0 },
-      });
+      state = await this.prisma.indexerState.create({ data: { lastLedger: 0 } });
     }
     return state;
   }
@@ -146,10 +141,12 @@ export class IndexerService {
     const dataNative = scValToNative(event.value) as EventPayload;
     const contractId = event.contractId?.toString() ?? '';
 
+    const parsed = parseEvent(topics, dataNative, event.ledger, txHash);
+
     await this.prisma.$transaction(async (tx) => {
-      // Save raw event
+      // Idempotent raw-event store — unique constraint on (txHash, eventIndex).
       await tx.rawEvent.upsert({
-        where: { txHash_eventIndex: { txHash, eventIndex } },
+        where: { txHash_eventIndex: { txHash, eventIndex: index } },
         create: {
           txHash,
           eventIndex,
@@ -226,6 +223,11 @@ export class IndexerService {
     const claimId = getNumberValue(data.claim_id);
     const id = `${getStringValue(data.claimant)}:${getNumberValue(data.policy_id)}`;
 
+  private async handleClaimFiled(tx: any, data: ClaimFiledEvent, ids: unknown[], event: any) {
+    // ids[0] = claim_id (u64), ids[1] = holder (Address)
+    const claimId = Number(ids[0]);
+    const holder = String(ids[1]);
+    const policyDbId = `${holder}:${data.policy_id}`;
     await tx.claim.upsert({
       where: { id: claimId },
       create: {
@@ -279,8 +281,23 @@ export class IndexerService {
         vote: option === 'Approve' ? 'APPROVE' : 'REJECT',
       }
     });
+    await tx.claim.update({
+      where: { id: claimId },
+      data: { approveVotes: data.approve_votes, rejectVotes: data.reject_votes },
+    });
+  }
 
-    // We can also trigger a background task to recalculate total votes if needed
+  private async handleClaimFinalized(tx: any, data: ClaimFinalizedEvent, ids: unknown[]) {
+    const claimId = Number(ids[0]);
+    await tx.claim.update({
+      where: { id: claimId },
+      data: {
+        status: data.status === 'Approved' ? 'APPROVED' : 'REJECTED',
+        approveVotes: data.approve_votes,
+        rejectVotes: data.reject_votes,
+        updatedAtLedger: data.at_ledger,
+      },
+    });
   }
 
   private async handleClaimProcessed(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {

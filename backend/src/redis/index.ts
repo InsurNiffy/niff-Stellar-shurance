@@ -19,5 +19,8 @@ export {
   setNonce,
   consumeNonce,
   incrementRateLimit,
+  setIdempotencyEntry,
+  getIdempotencyEntry,
+  type IdempotencyEntry,
 } from "./cache";
 export { collectRedisMetrics } from "./metrics";

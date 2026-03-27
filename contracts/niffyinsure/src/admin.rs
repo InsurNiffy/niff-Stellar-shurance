@@ -11,7 +11,7 @@
 /// See SECURITY.md for the full threat matrix and multisig setup guidance.
 use soroban_sdk::{contracterror, contractevent, panic_with_error, Address, Env};
 
-use crate::storage;
+use crate::{events, storage};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
@@ -118,7 +118,6 @@ pub fn require_admin(env: &Env) -> Address {
 }
 
 /// Propose a new admin (step 1 of two-step rotation). Current admin must authorize.
-/// Emits: ("admin", "proposed") → (old_admin, new_admin)
 pub fn propose_admin(env: &Env, new_admin: Address) {
     let current = require_admin(env);
     storage::set_pending_admin(env, &new_admin);
@@ -131,7 +130,6 @@ pub fn propose_admin(env: &Env, new_admin: Address) {
 
 /// Accept a pending admin proposal. The *pending* admin must authorize.
 /// `pending` is read from storage — cannot be spoofed via parameter.
-/// Emits: ("admin", "accepted") → (old_admin, new_admin)
 pub fn accept_admin(env: &Env) {
     let pending = storage::get_pending_admin(env)
         .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdmin));
@@ -147,7 +145,6 @@ pub fn accept_admin(env: &Env) {
 }
 
 /// Cancel a pending admin proposal. Current admin must authorize.
-/// Emits: ("admin", "cancelled") → (current_admin, cancelled_pending)
 pub fn cancel_admin(env: &Env) {
     let current = require_admin(env);
     let pending = storage::get_pending_admin(env)
@@ -161,7 +158,6 @@ pub fn cancel_admin(env: &Env) {
 }
 
 /// Update the treasury token contract address. Admin must authorize.
-/// Emits: ("admin", "token") → (old_token, new_token)
 pub fn set_token(env: &Env, new_token: Address) {
     let _admin = require_admin(env);
     let old_token = storage::get_token(env);
@@ -187,7 +183,6 @@ pub fn set_treasury(env: &Env, new_treasury: Address) {
 }
 
 /// Pause the contract. Admin must authorize.
-/// Emits: ("admin", "paused") → (admin)
 pub fn pause(env: &Env) {
     let admin = require_admin(env);
     storage::set_paused(env, true);
@@ -195,7 +190,6 @@ pub fn pause(env: &Env) {
 }
 
 /// Unpause the contract. Admin must authorize.
-/// Emits: ("admin", "unpaused") → (admin)
 pub fn unpause(env: &Env) {
     let admin = require_admin(env);
     storage::set_paused(env, false);
@@ -204,7 +198,6 @@ pub fn unpause(env: &Env) {
 
 /// Drain `amount` stroops from the contract treasury to `recipient`.
 /// Admin must authorize. Amount must be > 0.
-/// Emits: ("admin", "drained") → (admin, recipient, amount)
 pub fn drain(env: &Env, recipient: Address, amount: i128) {
     let admin = require_admin(env);
     if amount <= 0 {

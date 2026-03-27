@@ -1,0 +1,142 @@
+{
+  "_meta": {
+    "description": "Golden XDR argument vectors for critical Soroban contract invocations. These are the exact ScVal encodings the backend must produce before signing. Any change to argument order, type, or encoding MUST be intentional and accompanied by a contract semver bump and a PR updating this file.",
+    "contractSemver": "0.1.0",
+    "generatedBy": "scripts/refresh-vectors.ts",
+    "note": "Never commit real private keys or mainnet account addresses here. Use placeholder G-addresses only."
+  },
+  "vectors": [
+    {
+      "id": "initiate_policy__basic",
+      "function": "initiate_policy",
+      "description": "Standard Auto/Low/Adult/Basic policy initiation",
+      "args": [
+        { "pos": 0, "name": "holder",        "scvType": "scvAddress",  "encoding": "AAAAEgAAAAEAAAAA" },
+        { "pos": 1, "name": "policy_type",   "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAABEhddG8=" },
+        { "pos": 2, "name": "region",        "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAABExvdw==" },
+        { "pos": 3, "name": "age_band",      "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAABUFkdWx0" },
+        { "pos": 4, "name": "coverage_type", "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAABUJhc2lj" },
+        { "pos": 5, "name": "safety_score",  "scvType": "scvU32",      "encoding": "AAAAB3UAAABK" },
+        { "pos": 6, "name": "base_amount",   "scvType": "scvI128",     "encoding": "AAAACQAAAAAAAAAAAAAAAO5rKAA=" },
+        { "pos": 7, "name": "asset",         "scvType": "scvAddress",  "encoding": "AAAAEgAAAAIAAAAA" }
+      ],
+      "argCount": 8,
+      "inputs": {
+        "holder":        "GDVOEGATQV4FGUJKDEBEYT5NAPWJ55MEMJVLC5TU7Y74WD73PPAS4TYW",
+        "policy_type":   "Auto",
+        "region":        "Low",
+        "age_band":      "Adult",
+        "coverage_type": "Basic",
+        "safety_score":  74,
+        "base_amount":   "1000000000",
+        "asset":         "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+      }
+    },
+    {
+      "id": "initiate_policy__high_risk",
+      "function": "initiate_policy",
+      "description": "Health/High/Senior/Premium — exercises all non-default enum variants",
+      "args": [
+        { "pos": 0, "name": "holder",        "scvType": "scvAddress",  "encoding": "AAAAEgAAAAEAAAAA" },
+        { "pos": 1, "name": "policy_type",   "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAABkhlYWx0aA==" },
+        { "pos": 2, "name": "region",        "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAABEhpZ2g=" },
+        { "pos": 3, "name": "age_band",      "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAABlNlbmlvcg==" },
+        { "pos": 4, "name": "coverage_type", "scvType": "scvVec",      "encoding": "AAAAEQAAAAEAAAAPAAAACFByZW1pdW0=" },
+        { "pos": 5, "name": "safety_score",  "scvType": "scvU32",      "encoding": "AAAAB3UAAAAB" },
+        { "pos": 6, "name": "base_amount",   "scvType": "scvI128",     "encoding": "AAAACQAAAAAAAAAAAAAABN+AAAA=" },
+        { "pos": 7, "name": "asset",         "scvType": "scvAddress",  "encoding": "AAAAEgAAAAIAAAAA" }
+      ],
+      "argCount": 8,
+      "inputs": {
+        "holder":        "GDVOEGATQV4FGUJKDEBEYT5NAPWJ55MEMJVLC5TU7Y74WD73PPAS4TYW",
+        "policy_type":   "Health",
+        "region":        "High",
+        "age_band":      "Senior",
+        "coverage_type": "Premium",
+        "safety_score":  1,
+        "base_amount":   "5000000000",
+        "asset":         "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+      }
+    },
+    {
+      "id": "file_claim__standard",
+      "function": "file_claim",
+      "description": "Standard claim filing with one image URL",
+      "args": [
+        { "pos": 0, "name": "holder",     "scvType": "scvAddress", "encoding": "AAAAEgAAAAEAAAAA" },
+        { "pos": 1, "name": "policy_id",  "scvType": "scvU32",     "encoding": "AAAAB3UAAAAA" },
+        { "pos": 2, "name": "amount",     "scvType": "scvI128",    "encoding": "AAAACQAAAAAAAAAAAAAAAO5rKAA=" },
+        { "pos": 3, "name": "details",    "scvType": "scvString",  "encoding": "AAAADgAAAAxWZWhpY2xlIGRhbWFnZQ==" },
+        { "pos": 4, "name": "image_urls", "scvType": "scvVec",     "encoding": "AAAAEQAAAAEAAAAOAAAAKGlwZnM6Ly9RbVhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWA==" }
+      ],
+      "argCount": 5,
+      "inputs": {
+        "holder":     "GDVOEGATQV4FGUJKDEBEYT5NAPWJ55MEMJVLC5TU7Y74WD73PPAS4TYW",
+        "policy_id":  0,
+        "amount":     "1000000000",
+        "details":    "Vehicle damage",
+        "image_urls": ["ipfs://QmXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"]
+      }
+    },
+    {
+      "id": "vote_on_claim__approve",
+      "function": "vote_on_claim",
+      "description": "Voter casts Approve on claim 0",
+      "args": [
+        { "pos": 0, "name": "voter",    "scvType": "scvAddress", "encoding": "AAAAEgAAAAEAAAAA" },
+        { "pos": 1, "name": "claim_id", "scvType": "scvU64",     "encoding": "AAAACAAAAAAAAAAA" },
+        { "pos": 2, "name": "vote",     "scvType": "scvVec",     "encoding": "AAAAEQAAAAEAAAAPAAAABkFwcHJvdmU=" }
+      ],
+      "argCount": 3,
+      "inputs": {
+        "voter":    "GDVOEGATQV4FGUJKDEBEYT5NAPWJ55MEMJVLC5TU7Y74WD73PPAS4TYW",
+        "claim_id": "0",
+        "vote":     "Approve"
+      }
+    },
+    {
+      "id": "generate_premium__property_medium",
+      "function": "generate_premium",
+      "description": "Pure quote — Property/Medium/Young/Standard",
+      "args": [
+        { "pos": 0, "name": "input",            "scvType": "scvMap",  "encoding": "AAAADQAAAAQAAAAPAAAACWN..." },
+        { "pos": 1, "name": "base_amount",      "scvType": "scvI128", "encoding": "AAAACQAAAAAAAAAAAAAAAO5rKAA=" },
+        { "pos": 2, "name": "include_breakdown","scvType": "scvBool", "encoding": "AAAAAAAAAAE=" }
+      ],
+      "argCount": 3,
+      "inputs": {
+        "input": {
+          "region":        "Medium",
+          "age_band":      "Young",
+          "coverage":      "1000000000",
+          "safety_score":  50
+        },
+        "base_amount":       "1000000000",
+        "include_breakdown": true
+      }
+    }
+  ],
+  "negativeVectors": [
+    {
+      "id": "initiate_policy__wrong_arg_count",
+      "description": "Builder must reject calls with fewer than 8 args",
+      "function": "initiate_policy",
+      "expectError": "ARG_COUNT_MISMATCH",
+      "badArgCount": 7
+    },
+    {
+      "id": "initiate_policy__enum_wrong_type",
+      "description": "policy_type encoded as scvSymbol instead of scvVec([scvSymbol]) must fail",
+      "function": "initiate_policy",
+      "expectError": "ENCODING_MISMATCH",
+      "badArg": { "pos": 1, "scvType": "scvSymbol", "encoding": "AAAADwAAAARBdXRv" }
+    },
+    {
+      "id": "file_claim__amount_zero",
+      "description": "amount=0 must be rejected before building the transaction",
+      "function": "file_claim",
+      "expectError": "INVALID_AMOUNT",
+      "badArg": { "pos": 2, "scvType": "scvI128", "encoding": "AAAACQAAAAAAAAAAAAAAAAAAAAA=" }
+    }
+  ]
+}

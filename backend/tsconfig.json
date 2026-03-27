@@ -10,6 +10,7 @@
     "skipLibCheck": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
+    "resolveJsonModule": true,
     "types": ["jest", "node", "multer"]
   },
   "include": ["src", "test"],

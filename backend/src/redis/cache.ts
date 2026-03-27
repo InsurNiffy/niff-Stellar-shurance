@@ -145,3 +145,43 @@ export async function incrementRateLimit(identifier: string): Promise<number> {
     return 0;
   }
 }
+
+// ── Idempotency (FAIL OPEN) ───────────────────────────────────────────────────
+//
+// Idempotency keys map a hashed (method + path + key + subject) to a cached
+// response envelope { status, body, version }.  If Redis is unavailable the
+// request is processed normally (fail open) — a duplicate may go through, but
+// the service remains available.  This is documented behaviour; clients must
+// treat Redis unavailability as a best-effort guarantee.
+
+export interface IdempotencyEntry {
+  status: number;
+  body: unknown;
+  /** Schema version — bump when response shape changes to invalidate old entries. */
+  version: number;
+}
+
+/**
+ * Store an idempotency response.  TTL is always set (bounded Redis growth).
+ * Silently swallows Redis errors (fail open).
+ */
+export async function setIdempotencyEntry(
+  key: string,
+  entry: IdempotencyEntry,
+  ttlSeconds: number,
+): Promise<void> {
+  await cacheSet(`idempotency:${key}`, entry, ttlSeconds);
+}
+
+/**
+ * Retrieve a cached idempotency response.
+ * Returns null on cache miss, Redis error, or version mismatch.
+ */
+export async function getIdempotencyEntry(
+  key: string,
+  currentVersion: number,
+): Promise<IdempotencyEntry | null> {
+  const entry = await cacheGet<IdempotencyEntry>(`idempotency:${key}`);
+  if (!entry || entry.version !== currentVersion) return null;
+  return entry;
+}

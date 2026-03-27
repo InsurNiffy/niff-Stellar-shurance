@@ -5,7 +5,7 @@ import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
 import helmet from "helmet";
 import { ConfigService } from "@nestjs/config";
-import { LoggerMiddleware } from "./common/middleware/logger.middleware";
+import { RequestContextMiddleware } from "./common/middleware/request-context.middleware";
 import type { Request, Response, NextFunction } from "express";
 
 export function parseOrigins(raw: string): string[] {
@@ -67,14 +67,15 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Authorization", "Content-Type", "X-Requested-With"],
+    allowedHeaders: ["Authorization", "Content-Type", "X-Requested-With", "Idempotency-Key"],
     maxAge: 86400,
     preflightContinue: false,
     optionsSuccessStatus: 204,
   });
 
   // Middleware
-  app.use(LoggerMiddleware);
+  const requestCtx = app.get(RequestContextMiddleware);
+  app.use(requestCtx.use.bind(requestCtx));
 
   // Validation
   app.useGlobalPipes(

@@ -12,8 +12,42 @@ permissions:
   contents: read
 
 jobs:
-  quality-build:
-    name: Quality & Build
+  # ── Soroban ABI golden-vector drift guard ────────────────────────────────
+  golden-vectors:
+    name: Soroban ABI golden vectors
+    runs-on: ubuntu-latest
+    # Run whenever contracts or backend builder code changes
+    if: |
+      github.event_name == 'push' ||
+      contains(toJson(github.event.pull_request.changed_files), 'contracts/') ||
+      contains(toJson(github.event.pull_request.changed_files), 'backend/src/soroban/') ||
+      contains(toJson(github.event.pull_request.changed_files), 'backend/src/tx/')
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install
+
+      - name: Run golden-vector encoding tests
+        run: npx jest --testPathPattern="golden-vectors" --no-coverage
+
+      - name: Verify vectors are up-to-date (no uncommitted drift)
+        run: |
+          npx ts-node ../scripts/refresh-vectors.ts
+          if ! git diff --exit-code backend/src/soroban/golden-vectors.json; then
+            echo "::error::golden-vectors.json is stale. Run 'npm run refresh-vectors' locally, review the diff, and commit the updated file."
+            exit 1
+          fi
+
+  # ── Smart contract ────────────────────────────────────────────────────────
+  contract:
+    name: Contract (Rust / Soroban)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,9 +117,26 @@ jobs:
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
-    needs: quality-build
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      NODE_ENV: test
+
     steps:
       - uses: actions/checkout@v4
+
+      # Install Redis directly on the runner — avoids Docker Hub rate limits entirely
+      - name: Start Redis
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y redis-server
+          sudo systemctl start redis-server
+          redis-cli ping
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

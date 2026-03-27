@@ -211,6 +211,7 @@ pub fn file_claim(
         policy_id,
         claimant: holder.clone(),
         amount,
+        asset: policy.asset.clone(),
         details: details.clone(),
         image_urls: image_urls.clone(),
         status: ClaimStatus::Processing,
@@ -273,7 +274,7 @@ pub fn vote_on_claim(
         return Err(Error::NotEligibleVoter);
     }
 
-    // Duplicate vote check.
+    // Duplicate vote check — before any write.
     if storage::get_vote(env, claim_id, voter).is_some() {
         return Err(Error::DuplicateVote);
     }
@@ -527,4 +528,20 @@ pub fn is_allowed_asset(env: &Env, asset: &Address) -> bool {
 
 pub fn set_allowed_asset(env: &Env, asset: &Address, allowed: bool) {
     storage::set_allowed_asset(env, asset, allowed);
+}
+
+/// FNV-1a hash of concatenated IPFS CID bytes, truncated to u64.
+/// Compact enough for event payload; full CIDs are stored off-chain.
+fn hash_image_urls(urls: &Vec<String>) -> u64 {
+    const FNV_OFFSET: u64 = 14695981039346656037;
+    const FNV_PRIME: u64 = 1099511628211;
+    let mut hash: u64 = FNV_OFFSET;
+    for url in urls.iter() {
+        let bytes = url.to_bytes();
+        for i in 0..bytes.len() {
+            hash ^= bytes.get(i).unwrap_or(0) as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+    hash
 }

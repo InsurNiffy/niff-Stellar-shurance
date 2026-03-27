@@ -154,17 +154,15 @@ impl NiffyInsure {
     }
 
     /// Admin-only: add or remove an asset from the allowlist.
-    /// Emits ("asset", "added") or ("asset", "removed") for indexers.
     pub fn set_allowed_asset(env: Env, asset: Address, allowed: bool) {
-        let admin = storage::get_admin(&env);
-        admin.require_auth();
+        let _admin = admin::require_admin(&env);
         storage::bump_instance(&env);
         claim::set_allowed_asset(&env, &asset, allowed);
         AllowedAssetUpdated { asset, allowed }.publish(&env);
     }
 
     pub fn is_allowed_asset(env: Env, asset: Address) -> bool {
-        claim::is_allowed_asset(&env, &asset)
+        storage::is_allowed_asset(&env, &asset)
     }
 
     pub fn process_claim(env: Env, claim_id: u64) -> Result<(), validate::Error> {
@@ -203,8 +201,72 @@ impl NiffyInsure {
         claim::get_claim(&env, claim_id)
     }
 
+    pub fn file_claim(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+        amount: i128,
+        details: String,
+        image_urls: Vec<String>,
+    ) -> u64 {
+        holder.require_auth();
+        claim::file_claim(&env, &holder, policy_id, amount, &details, &image_urls)
+            .unwrap_or_else(|e| panic_with_error!(&env, e))
+    }
+
+    pub fn vote_on_claim(
+        env: Env,
+        voter: Address,
+        claim_id: u64,
+        vote: types::VoteOption,
+    ) -> types::ClaimStatus {
+        voter.require_auth();
+        claim::vote_on_claim(&env, &voter, claim_id, &vote)
+            .unwrap_or_else(|e| panic_with_error!(&env, e))
+    }
+
+    pub fn finalize_claim(env: Env, claim_id: u64) -> types::ClaimStatus {
+        claim::finalize_claim(&env, claim_id)
+            .unwrap_or_else(|e| panic_with_error!(&env, e))
+    }
+
     pub fn get_claim_counter(env: Env) -> u64 {
         storage::get_claim_counter(&env)
+    }
+
+    /// Paginated listing of claims by claim_id range, ordered ascending.
+    ///
+    /// `start_after` is an exclusive cursor: pass `0` for the first page, or the
+    /// last `claim_id` received to advance to the next page.
+    /// `limit` is capped at `PAGE_SIZE_MAX` (20); larger values are silently clamped.
+    ///
+    /// Returns summary structs — call `get_claim` for the full record.
+    ///
+    /// Empty page (len == 0) means no more results exist beyond the cursor.
+    /// Because claim_ids are monotonically increasing and never deleted, a
+    /// stale cursor never panics — it simply returns an empty page.
+    pub fn list_claims(
+        env: Env,
+        start_after: u64,
+        limit: u32,
+    ) -> Vec<types::ClaimSummary> {
+        let cap = limit.min(types::PAGE_SIZE_MAX);
+        let total = storage::get_claim_counter(&env);
+        let mut results: Vec<types::ClaimSummary> = Vec::new(&env);
+        let mut id: u64 = start_after.saturating_add(1);
+        while id <= total && results.len() < cap {
+            if let Some(c) = storage::get_claim(&env, id) {
+                results.push_back(types::ClaimSummary {
+                    claim_id: c.claim_id,
+                    policy_id: c.policy_id,
+                    amount: c.amount,
+                    status: c.status,
+                    filed_at: c.filed_at,
+                });
+            }
+            id = id.saturating_add(1);
+        }
+        results
     }
 
     pub fn get_policy_counter(env: Env, holder: Address) -> u32 {
@@ -282,6 +344,42 @@ impl NiffyInsure {
     /// Read-only: retrieve a persisted policy by (holder, policy_id).
     pub fn get_policy(env: Env, holder: Address, policy_id: u32) -> Option<types::Policy> {
         storage::get_policy(&env, &holder, policy_id)
+    }
+
+    /// Paginated listing of a holder's policies, ordered by ascending policy_id.
+    ///
+    /// `start_after` is an exclusive cursor: pass `0` for the first page, or the
+    /// last `policy_id` received to advance to the next page.
+    /// `limit` is capped at `PAGE_SIZE_MAX` (20); larger values are silently clamped.
+    ///
+    /// Returns summary structs — call `get_policy` for the full record.
+    ///
+    /// Empty page (len == 0) means no more results exist beyond the cursor.
+    /// Because policy_ids are monotonically increasing and never deleted, a
+    /// stale cursor never panics — it simply returns an empty page.
+    pub fn list_policies(
+        env: Env,
+        holder: Address,
+        start_after: u32,
+        limit: u32,
+    ) -> Vec<types::PolicySummary> {
+        let cap = limit.min(types::PAGE_SIZE_MAX);
+        let total = storage::get_policy_counter(&env, &holder);
+        let mut results: Vec<types::PolicySummary> = Vec::new(&env);
+        let mut id: u32 = start_after.saturating_add(1);
+        while id <= total && results.len() < cap {
+            if let Some(p) = storage::get_policy(&env, &holder, id) {
+                results.push_back(types::PolicySummary {
+                    policy_id: p.policy_id,
+                    policy_type: p.policy_type,
+                    coverage: p.coverage,
+                    is_active: p.is_active,
+                    end_ledger: p.end_ledger,
+                });
+            }
+            id = id.saturating_add(1);
+        }
+        results
     }
 
     /// Read-only: number of active policies for a holder (= vote weight).

@@ -328,6 +328,200 @@ fn non_voter_cannot_vote() {
     assert!(result.is_err());
 }
 
+// ── pagination: list_policies ─────────────────────────────────────────────────
+
+#[test]
+fn list_policies_empty_for_new_holder() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+    let page = client.list_policies(&holder, &0u32, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_policies_first_page() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u32..=5 {
+            storage::set_policy(&env, &holder, id, &make_policy(&holder, id, &token));
+            env.storage().persistent().set(
+                &storage::DataKey::PolicyCounter(holder.clone()),
+                &id,
+            );
+        }
+    });
+
+    let page = client.list_policies(&holder, &0u32, &3u32);
+    assert_eq!(page.len(), 3u32);
+    assert_eq!(page.get(0).unwrap().policy_id, 1u32);
+    assert_eq!(page.get(2).unwrap().policy_id, 3u32);
+}
+
+#[test]
+fn list_policies_second_page_cursor() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u32..=5 {
+            storage::set_policy(&env, &holder, id, &make_policy(&holder, id, &token));
+            env.storage().persistent().set(
+                &storage::DataKey::PolicyCounter(holder.clone()),
+                &id,
+            );
+        }
+    });
+
+    let page = client.list_policies(&holder, &3u32, &10u32);
+    assert_eq!(page.len(), 2u32);
+    assert_eq!(page.get(0).unwrap().policy_id, 4u32);
+    assert_eq!(page.get(1).unwrap().policy_id, 5u32);
+}
+
+#[test]
+fn list_policies_cursor_past_end_returns_empty() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        storage::set_policy(&env, &holder, 1, &make_policy(&holder, 1, &token));
+        env.storage().persistent().set(
+            &storage::DataKey::PolicyCounter(holder.clone()),
+            &1u32,
+        );
+    });
+
+    let page = client.list_policies(&holder, &99u32, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_policies_limit_clamped_to_page_size_max() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u32..=25 {
+            storage::set_policy(&env, &holder, id, &make_policy(&holder, id, &token));
+            env.storage().persistent().set(
+                &storage::DataKey::PolicyCounter(holder.clone()),
+                &id,
+            );
+        }
+    });
+
+    let page = client.list_policies(&holder, &0u32, &100u32);
+    assert_eq!(page.len(), 20u32);
+}
+
+// ── pagination: list_claims ───────────────────────────────────────────────────
+
+fn make_claim(env: &Env, claim_id: u64, holder: &Address) -> niffyinsure::types::Claim {
+    use niffyinsure::types::{Claim, ClaimStatus};
+    Claim {
+        claim_id,
+        policy_id: 1,
+        claimant: holder.clone(),
+        amount: 10_000_000,
+        details: String::from_str(env, "test"),
+        image_urls: vec![env],
+        status: ClaimStatus::Processing,
+        voting_deadline_ledger: 1000,
+        approve_votes: 0,
+        reject_votes: 0,
+        filed_at: 1,
+        appeal_open_deadline_ledger: 0,
+        appeals_count: 0,
+        appeal_deadline_ledger: 0,
+        appeal_approve_votes: 0,
+        appeal_reject_votes: 0,
+    }
+}
+
+#[test]
+fn list_claims_empty_when_none_filed() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let page = client.list_claims(&0u64, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_claims_first_page() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u64..=5 {
+            storage::set_claim(&env, &make_claim(&env, id, &holder));
+            env.storage().instance().set(&storage::DataKey::ClaimCounter, &id);
+        }
+    });
+
+    let page = client.list_claims(&0u64, &3u32);
+    assert_eq!(page.len(), 3u32);
+    assert_eq!(page.get(0).unwrap().claim_id, 1u64);
+    assert_eq!(page.get(2).unwrap().claim_id, 3u64);
+}
+
+#[test]
+fn list_claims_last_page_partial() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u64..=5 {
+            storage::set_claim(&env, &make_claim(&env, id, &holder));
+            env.storage().instance().set(&storage::DataKey::ClaimCounter, &id);
+        }
+    });
+
+    let page = client.list_claims(&4u64, &10u32);
+    assert_eq!(page.len(), 1u32);
+    assert_eq!(page.get(0).unwrap().claim_id, 5u64);
+}
+
+#[test]
+fn list_claims_cursor_past_end_returns_empty() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        storage::set_claim(&env, &make_claim(&env, 1, &holder));
+        env.storage().instance().set(&storage::DataKey::ClaimCounter, &1u64);
+    });
+
+    let page = client.list_claims(&999u64, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_claims_oversize_request_clamped() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u64..=25 {
+            storage::set_claim(&env, &make_claim(&env, id, &holder));
+            env.storage().instance().set(&storage::DataKey::ClaimCounter, &id);
+        }
+    });
+
+    let page = client.list_claims(&0u64, &999u32);
+    assert_eq!(page.len(), 20u32);
+}
+
 // ── counter immutability: generate_premium does not mutate storage ────────────
 
 #[test]

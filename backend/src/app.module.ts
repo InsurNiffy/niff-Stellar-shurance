@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TerminusModule } from '@nestjs/terminus';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -17,8 +17,12 @@ import { PolicyModule } from './policy/policy.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { TxModule } from './tx/tx.module';
 import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { MetricsModule } from './metrics/metrics.module';
+import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
+import { AppLoggerService } from './common/logger/app-logger.service';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
 import { BetaCalculatorsController } from './experimental/beta-calculators.controller';
+import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 
 @Module({
   imports: [
@@ -46,7 +50,13 @@ import { BetaCalculatorsController } from './experimental/beta-calculators.contr
     NotificationsModule,
     TxModule,
     FeatureFlagsModule,
+    MetricsModule,
   ],
   controllers: [OracleHooksController, BetaCalculatorsController],
+  providers: [RequestContextMiddleware, AppLoggerService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}

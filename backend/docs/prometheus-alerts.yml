@@ -1,0 +1,64 @@
+groups:
+  - name: niffyinsure_api
+    rules:
+      # ── HTTP 5xx alert ────────────────────────────────────────────────────
+      - alert: High5xxRate
+        expr: |
+          sum(rate(http_5xx_errors_total{app="niffyinsure-api"}[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Elevated HTTP 5xx error rate"
+          description: >
+            More than 0.5 5xx errors/s over the last 5 minutes.
+            Check logs with requestId correlation for root cause.
+
+      # ── RPC error alert ───────────────────────────────────────────────────
+      - alert: HighRpcErrorRate
+        expr: |
+          sum(rate(rpc_errors_total{app="niffyinsure-api"}[5m])) > 0.2
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Elevated Soroban RPC error rate"
+          description: >
+            More than 0.2 RPC errors/s. Possible Soroban RPC degradation
+            or contract deployment issue.
+
+      # ── High latency alert ────────────────────────────────────────────────
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{app="niffyinsure-api"}[5m]))
+            by (le)
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "p99 HTTP latency above 3 s"
+          description: >
+            The 99th-percentile request latency has exceeded 3 seconds
+            for 5 consecutive minutes.
+
+      # ── RPC latency alert ─────────────────────────────────────────────────
+      - alert: HighRpcP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(rpc_call_duration_seconds_bucket{app="niffyinsure-api"}[5m]))
+            by (le, rpc_method)
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Soroban RPC p95 latency above 10 s"
+          description: >
+            RPC method {{ $labels.rpc_method }} p95 latency exceeded 10 s.
+            Soroban network may be congested.

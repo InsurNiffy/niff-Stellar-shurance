@@ -135,7 +135,6 @@ const nextConfig = {
   },
   poweredByHeader: false,
   reactStrictMode: true,
-  swcMinify: true,
 
   async headers() {
     return [

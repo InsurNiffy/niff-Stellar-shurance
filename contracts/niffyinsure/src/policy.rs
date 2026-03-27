@@ -73,6 +73,7 @@ pub struct PolicyInitiated {
 pub struct PolicyRenewed {
     #[topic]
     pub holder: Address,
+    pub version: u32,
     pub policy_id: u32,
     pub premium: i128,
     pub new_end_ledger: u32,

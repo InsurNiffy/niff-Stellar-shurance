@@ -74,4 +74,16 @@ export const TTL = {
   POLICY_CACHE_SECONDS: 30,
   /** Claim read cache. Lower TTL because claim status changes frequently. */
   CLAIM_CACHE_SECONDS: 10,
+  /**
+   * Idempotency key TTL: 24 hours.
+   *
+   * A client may safely retry any idempotent POST within this window and
+   * receive the exact same status code + body as the original response.
+   * After expiry the key is evicted and a fresh request is processed normally.
+   *
+   * Eviction note: TTL is always set unconditionally — Redis growth is bounded.
+   * Schema versioning: if a response schema changes, bump IDEMPOTENCY_VERSION
+   * in idempotency.middleware.ts; old cached entries will be ignored.
+   */
+  IDEMPOTENCY_SECONDS: 24 * 60 * 60,
 } as const;
