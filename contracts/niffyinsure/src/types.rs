@@ -173,6 +173,54 @@ pub enum TerminationReason {
     ExcessiveRejections,
 }
 
+// ── Pagination ────────────────────────────────────────────────────────────────
+
+/// Hard cap on items returned per paginated call.
+///
+/// Soroban charges per-entry read fees; returning more than this in a single
+/// simulation would blow the default instruction budget.  Callers requesting
+/// a larger `limit` receive exactly `PAGE_SIZE_MAX` items — never an error.
+///
+/// Ordering: policies are returned in ascending `policy_id` order; claims in
+/// ascending `claim_id` order.  Both orderings are stable across calls as long
+/// as no items are deleted (items are never deleted in this contract).
+///
+/// Stale-cursor note: cursors are plain integer offsets (policy_id / claim_id).
+/// If the underlying counter has not changed between pages, the cursor is safe.
+/// Because IDs are monotonically increasing and records are never deleted,
+/// a cursor pointing past the last item simply returns an empty page — it
+/// never panics or skips records.
+pub const PAGE_SIZE_MAX: u32 = 20;
+
+/// Lightweight policy summary returned by `list_policies`.
+///
+/// Omits large or rarely-needed fields (`details`, `image_urls`, etc.) to keep
+/// per-page byte cost predictable.  Callers that need the full record should
+/// follow up with `get_policy(holder, policy_id)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicySummary {
+    pub policy_id: u32,
+    pub policy_type: PolicyType,
+    pub coverage: i128,
+    pub is_active: bool,
+    pub end_ledger: u32,
+}
+
+/// Lightweight claim summary returned by `list_claims`.
+///
+/// Omits `details` and `image_urls` to keep per-page byte cost predictable.
+/// Callers that need the full record should follow up with `get_claim(claim_id)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimSummary {
+    pub claim_id: u64,
+    pub policy_id: u32,
+    pub amount: i128,
+    pub status: ClaimStatus,
+    pub filed_at: u32,
+}
+
 // ── Premium engine structs ────────────────────────────────────────────────────
 
 #[contracttype]
