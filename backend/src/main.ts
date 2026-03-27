@@ -67,7 +67,7 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Authorization", "Content-Type", "X-Requested-With", "Idempotency-Key"],
+    allowedHeaders: ["Authorization", "Content-Type", "X-Requested-With", "Idempotency-Key", "X-Tenant-Id"],
     maxAge: 86400,
     preflightContinue: false,
     optionsSuccessStatus: 204,
@@ -97,6 +97,17 @@ async function bootstrap() {
     .addBearerAuth(
       { type: "http", scheme: "bearer", bearerFormat: "JWT" },
       "JWT-auth",
+    )
+    .addApiKey(
+      {
+        type: "apiKey",
+        in: "header",
+        name: "x-tenant-id",
+        description:
+          "Optional tenant identifier for white-label / multi-tenant deployments. " +
+          "Omit in single-tenant mode. Value: 3–64 lowercase alphanumeric + hyphens.",
+      },
+      "tenant-id",
     )
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);

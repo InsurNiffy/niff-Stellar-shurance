@@ -4,9 +4,10 @@ import { ClaimsService } from './claims.service';
 import { SanitizationService } from './sanitization.service';
 import { RpcModule } from '../rpc/rpc.module';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
+import { TenantModule } from '../tenant/tenant.module';
 
 @Module({
-  imports: [RpcModule, RateLimitModule],
+  imports: [RpcModule, RateLimitModule, TenantModule],
   controllers: [ClaimsController],
   providers: [ClaimsService, SanitizationService],
   exports: [ClaimsService],

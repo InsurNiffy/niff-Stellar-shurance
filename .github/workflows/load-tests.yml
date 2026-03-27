@@ -1,0 +1,109 @@
+name: Load Tests (Staging)
+
+# Runs on a schedule against staging, or manually via workflow_dispatch.
+# NEVER targets production endpoints.
+#
+# Secrets required (set in GitHub repo settings → Secrets):
+#   STAGING_BASE_URL   — e.g. https://staging.niffyinsur.com/api
+#   STAGING_TEST_JWT   — short-lived JWT for authenticated write flows
+#                        (see backend/loadtests/README.md for generation)
+#
+# Failure alerts: the job fails when k6 thresholds are breached.
+# GitHub will send a notification to the repo watchers.
+# For Slack/PagerDuty alerts, add a notification step after the k6 run.
+
+on:
+  # Run every Monday at 08:00 UTC
+  schedule:
+    - cron: '0 8 * * 1'
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Override staging base URL (default: STAGING_BASE_URL secret)'
+        required: false
+        type: string
+
+jobs:
+  load-test:
+    name: k6 Load Tests
+    runs-on: ubuntu-latest
+    # Only run on the default branch to avoid accidental staging hammering from PRs
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] \
+            https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+
+      - name: Set target URL
+        id: url
+        run: |
+          URL="${{ github.event.inputs.target_url || secrets.STAGING_BASE_URL }}"
+          if [ -z "$URL" ]; then
+            echo "::error::STAGING_BASE_URL secret is not set. Aborting."
+            exit 1
+          fi
+          echo "base_url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (sanity check before load)
+        env:
+          BASE_URL: ${{ steps.url.outputs.base_url }}
+        run: k6 run --vus 2 --duration 30s backend/loadtests/smoke.js
+
+      - name: Load test — claims list (read-heavy)
+        env:
+          BASE_URL: ${{ steps.url.outputs.base_url }}
+        run: |
+          k6 run \
+            --out json=backend/docs/perf/$(date +%Y-%m-%d)-claims-list.json \
+            backend/loadtests/claims-list.js
+
+      - name: Load test — health and quotes
+        env:
+          BASE_URL: ${{ steps.url.outputs.base_url }}
+        run: |
+          k6 run \
+            --out json=backend/docs/perf/$(date +%Y-%m-%d)-health-quotes.json \
+            backend/loadtests/health-and-quotes.js
+
+      - name: Load test — authenticated write flow
+        env:
+          BASE_URL: ${{ steps.url.outputs.base_url }}
+          TEST_JWT: ${{ secrets.STAGING_TEST_JWT }}
+        # Only run if the secret is available (skip on forks)
+        if: env.TEST_JWT != ''
+        run: |
+          k6 run \
+            --out json=backend/docs/perf/$(date +%Y-%m-%d)-claim-submit.json \
+            backend/loadtests/claim-submit.js
+
+      - name: Upload k6 reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-reports-${{ github.run_id }}
+          path: backend/docs/perf/*.json
+          retention-days: 90
+
+      # Optional: post a Slack notification on threshold breach
+      # Uncomment and configure SLACK_WEBHOOK_URL secret to enable.
+      # - name: Notify Slack on failure
+      #   if: failure()
+      #   uses: slackapi/slack-github-action@v1
+      #   with:
+      #     payload: |
+      #       {"text": "⚠️ Load test thresholds breached on staging. Check the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

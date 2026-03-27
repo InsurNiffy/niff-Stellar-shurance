@@ -96,4 +96,11 @@ export const validationSchema = Joi.object({
     .allow("")
     .default("niff-salt")
     .description("Salt for IP hashing"),
+  // Multi-tenancy
+  TENANT_RESOLUTION_ENABLED: Joi.boolean()
+    .default(false)
+    .description("Enable tenant resolution from subdomain / x-tenant-id header"),
+  TENANT_BASE_DOMAIN: Joi.string()
+    .default("niffyinsur.com")
+    .description("Base domain for subdomain-based tenant resolution"),
 });

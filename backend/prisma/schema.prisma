@@ -29,6 +29,9 @@ model Claim {
   eventIndex        Int?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  /// Logical tenant identifier. NULL in single-tenant deployments.
+  /// Populated by the indexer from the contract's tenant context.
+  tenantId          String?
 
   // Relations
   policy            Policy    @relation(fields: [policyId], references: [id])
@@ -38,6 +41,9 @@ model Claim {
   @@index([createdAt])
   @@index([policyId])
   @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt, id]) // tenant-scoped keyset pagination
   @@map("claims")
 }
 
@@ -79,6 +85,8 @@ model Policy {
   eventIndex            Int?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+  /// Logical tenant identifier. NULL in single-tenant deployments.
+  tenantId              String?
 
   // Relations
   claims                Claim[]
@@ -87,6 +95,9 @@ model Policy {
   @@index([holderAddress])
   @@index([isActive])
   @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@index([tenantId, createdAt, id]) // tenant-scoped keyset pagination
   @@map("policies")
 }
 
