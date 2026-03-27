@@ -1,0 +1,22 @@
+# Contract Addresses & Verification
+
+Contract addresses are pulled from the same deployment registry used by the backend and the app's network switcher, so this table is always in sync.
+
+## How to Verify
+
+1. Copy the contract ID for your network from the table below.
+2. Open [Stellar Expert](https://stellar.expert) and paste the contract ID into the search bar.
+3. Compare the **WASM hash** shown on Stellar Expert against the `expectedWasmHash` in the table.
+4. If the hashes match, the deployed bytecode matches the audited build.
+
+> A mismatch between the displayed WASM hash and the registry value means the contract was upgraded after the last registry update. Check the [audit exceptions log](https://github.com/niff-Stellar-shurance/blob/main/docs/ops/audit-exceptions.md) or contact the team.
+
+## Audits
+
+External audit reports will be linked here once available. Until then, the contract source is open at `contracts/niffyinsure/src/` and all test snapshots are committed alongside the source.
+
+## Related
+
+- [Voting Mechanics](/docs/voting)
+- [Claim Timelines](/docs/claims)
+- [Treasury & Pause Caveats](/docs/treasury)

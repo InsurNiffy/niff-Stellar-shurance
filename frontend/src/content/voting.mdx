@@ -1,0 +1,44 @@
+# Voting Mechanics
+
+NiffyInsur uses on-chain DAO voting to approve or reject insurance claims. Every vote is recorded on the Stellar blockchain and is publicly verifiable.
+
+## Who Can Vote
+
+A wallet becomes a **voter** automatically when it holds an active policy. Voter status is stored in the `niffyinsure` contract and is removed when the holder's last active policy is terminated.
+
+> **On-chain vs indexer:** The voter list is read directly from Soroban contract storage via RPC — not from the indexer database. The indexer only caches historical events for display speed; governance decisions always use on-chain reads.
+
+## Vote Flow
+
+```
+Claim filed
+     │
+     ▼
+Voting window opens (configurable, default 72 h)
+     │
+     ├─ Voter calls vote(claim_id, Approve | Reject)
+     │   └─ Duplicate votes are rejected on-chain
+     │
+     ▼
+Quorum reached OR window expires
+     │
+     ├─ Majority Approve → payout released
+     └─ Majority Reject  → claim closed, no payout
+```
+
+## Rules
+
+| Rule | Detail |
+|------|--------|
+| One vote per voter per claim | Enforced by contract; duplicate reverts |
+| Non-voter cannot vote | `non_voter_cannot_vote` guard in contract |
+| Admin bypass | Admin may bypass the open-claim guard only when `force_admin_bypass = true` |
+| Quorum | Configurable threshold; see contract `admin.rs` |
+
+## Verifying a Vote On-Chain
+
+1. Find the `claim_id` from the Claims board.
+2. Open [Stellar Expert](https://stellar.expert) and search the contract address.
+3. Filter ledger entries for `Vote` storage keys matching your `claim_id`.
+
+See [Contract Addresses](/docs/contracts) for the current contract ID per network.

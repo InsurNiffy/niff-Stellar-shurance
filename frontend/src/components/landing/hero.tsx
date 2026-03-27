@@ -27,6 +27,11 @@ export function Hero() {
                 Learn More
               </Link>
             </Button>
+            <Button variant="ghost" size="lg" className="w-full sm:w-auto text-lg px-8 py-4" asChild>
+              <Link href="/docs">
+                Documentation
+              </Link>
+            </Button>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-3xl mx-auto">

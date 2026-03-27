@@ -168,5 +168,6 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
+      - run: npm run check-docs
       - run: npm run build
       - run: npm test

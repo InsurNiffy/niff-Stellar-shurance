@@ -1,0 +1,52 @@
+# Treasury & Pause Caveats
+
+> **Legal notice:** This section describes protocol mechanics only. It does not constitute financial or legal advice. Risk sections are subject to legal review before any mainnet marketing push.
+
+## Treasury
+
+Premiums collected by the contract are held in the contract's token account. Payouts are disbursed directly from this balance when a claim is approved.
+
+**Key caveats:**
+
+- The treasury balance is on-chain and publicly auditable at any time via Stellar Expert.
+- If the treasury balance is insufficient to cover an approved payout, the payout transaction will fail. The claim remains `Approved` on-chain but unpaid until the treasury is replenished.
+- Admin cannot unilaterally withdraw treasury funds — only approved claim payouts trigger outflows.
+
+## Pause Mechanism
+
+The contract supports a global pause controlled by the admin account.
+
+```
+Admin calls pause()
+     │
+     └─ All state-mutating operations revert with ContractPaused
+        (file_claim, vote, terminate_policy, etc.)
+
+Admin calls unpause()
+     └─ Normal operation resumes
+```
+
+**Caveats:**
+
+| Scenario | Behaviour |
+|----------|-----------|
+| Pause during active voting | Votes cannot be cast; window timer continues on-chain |
+| Pause during payout | Payout transaction reverts; claim stays Approved |
+| Who can pause | Admin address only (set at `initialize`) |
+| `contract_starts_unpaused` | Verified by contract test snapshot |
+
+## Indexer vs On-Chain Reads
+
+| Data | Source | Latency | Authoritative? |
+|------|--------|---------|----------------|
+| Claim history list | Indexer (PostgreSQL) | ~1 s | No — display only |
+| Current claim status | Soroban RPC (on-chain) | ~500 ms | **Yes** |
+| Treasury balance | Horizon account endpoint | ~500 ms | **Yes** |
+| Voter list | Soroban RPC (on-chain) | ~500 ms | **Yes** |
+
+When in doubt, always verify against the on-chain source. See [Contract Addresses](/docs/contracts).
+
+## Related
+
+- [Claim Timelines](/docs/claims)
+- [Voting Mechanics](/docs/voting)

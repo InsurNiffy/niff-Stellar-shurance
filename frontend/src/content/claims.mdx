@@ -1,0 +1,40 @@
+# Claim Timelines
+
+## Filing a Claim
+
+A policyholder calls `file_claim` on the contract. The contract checks:
+
+- Policy exists and belongs to the caller
+- No other open claim is already pending for this policy
+
+If an open claim exists, `open_claim_blocks_holder_terminate_until_cleared` prevents policy termination until the claim resolves.
+
+## Timeline
+
+```
+T+0    Policyholder files claim on-chain
+T+0    Claim event emitted; indexer picks it up within ~1 ledger (~5 s)
+T+0    Backend queues notification to policyholder
+T+72h  Default voting window closes (configurable by admin)
+T+72h  Contract tallies votes and executes outcome
+T+72h  Payout transaction submitted (Approve) OR claim marked Rejected
+```
+
+> **Indexer vs on-chain:** The timeline display in the UI is sourced from the indexer for speed. The authoritative claim status is always the on-chain `Claim` storage entry. If the UI shows a discrepancy, refresh or query the RPC directly.
+
+## Claim States
+
+| State | Meaning |
+|-------|---------|
+| `Open` | Filed, voting in progress |
+| `Approved` | Quorum voted Approve; payout pending or complete |
+| `Rejected` | Quorum voted Reject or window expired with no quorum |
+
+## Rate Limiting
+
+The backend enforces per-wallet claim submission rate limits to prevent spam. On-chain, the contract independently validates claim eligibility. Both layers must pass for a claim to proceed.
+
+## Related
+
+- [Voting Mechanics](/docs/voting)
+- [Treasury & Pause Caveats](/docs/treasury)
