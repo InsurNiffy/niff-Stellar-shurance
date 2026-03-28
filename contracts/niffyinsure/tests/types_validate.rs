@@ -235,6 +235,13 @@ fn rejected_claim_is_terminal() {
     assert_eq!(check_claim_open(&c), Err(Error::ClaimAlreadyTerminal));
 }
 
+#[test]
+fn withdrawn_claim_is_terminal() {
+    let env = Env::default();
+    let c = dummy_claim(&env, 1_000_000, ClaimStatus::Withdrawn);
+    assert_eq!(check_claim_open(&c), Err(Error::ClaimAlreadyTerminal));
+}
+
 // ── Enum coherence ────────────────────────────────────────────────────────────
 
 #[test]
@@ -249,4 +256,5 @@ fn claim_status_terminal_flags() {
     assert!(ClaimStatus::Approved.is_terminal());
     assert!(ClaimStatus::Paid.is_terminal());
     assert!(ClaimStatus::Rejected.is_terminal());
+    assert!(ClaimStatus::Withdrawn.is_terminal());
 }

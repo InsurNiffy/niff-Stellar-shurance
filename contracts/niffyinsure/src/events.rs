@@ -47,6 +47,11 @@
 //! ```
 //! - `amount`: stroops (i128)
 //!
+//! ### claim_withdrawn — on-chain `niffyinsure` namespace
+//! Contract topics: `["niffyinsure", "claim_withdrawn", claim_id]` with payload
+//! `{ policy_id, claimant, at_ledger }`. Emitted when the claimant withdraws before any vote.
+//! Indexers should surface `Withdrawn` distinctly on the claims board.
+//!
 //! ## Admin / config events (namespace: "niffyins")
 //!
 //! ### tbl_upd — PremiumTableUpdatedData

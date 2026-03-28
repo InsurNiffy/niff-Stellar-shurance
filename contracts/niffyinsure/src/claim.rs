@@ -6,7 +6,7 @@
 //
 // Open claim accounting: `storage::OpenClaimCount(holder, policy_id)` must be
 // incremented when a claim enters `Processing` and decremented when it reaches
-// a terminal status (`Approved` / `Rejected`), so policy termination can block
+// a terminal status (`Approved` / `Rejected` / `Withdrawn`), so policy termination can block
 // or audit in-flight claims. Until `file_claim` ships, admins may use
 // `admin_set_open_claim_count` in tests or break-glass ops only.
 //
@@ -143,6 +143,19 @@ struct ClaimFiled {
     pub image_hash: u64,
 }
 
+/// Emitted when the claimant withdraws before any vote is cast.
+///
+/// Topic layout: ["niffyinsure", "claim_withdrawn", claim_id]
+#[contractevent(topics = ["niffyinsure", "claim_withdrawn"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimWithdrawn {
+    #[topic]
+    pub claim_id: u64,
+    pub policy_id: u32,
+    pub claimant: Address,
+    pub at_ledger: u32,
+}
+
 /// Emitted as the authoritative rejection signal. Indexers must consume this
 /// event (not poll storage) to drive user-facing messaging. The vote tallies
 /// are included so the UI can explain the outcome (e.g., "rejected 4–1").
@@ -254,8 +267,11 @@ pub fn file_claim(
         return Err(Error::DuplicateOpenClaim);
     }
 
+    // Anchor for restoring per-holder rate limit if claimant later withdraws (see `withdraw_claim`).
+    let rate_limit_anchor_before_filing = storage::get_last_claim_ledger(env, holder);
+
     // Rate-limit check.
-    if let Some(last) = storage::get_last_claim_ledger(env, holder) {
+    if let Some(last) = rate_limit_anchor_before_filing {
         if !ledger::is_rate_limit_elapsed(now, last, ledger::RATE_LIMIT_WINDOW_LEDGERS) {
             return Err(Error::RateLimitExceeded);
         }
@@ -297,6 +313,7 @@ pub fn file_claim(
     storage::snapshot_claim_voters(env, claim_id);
     storage::set_claim_quorum_bps(env, claim_id, storage::get_quorum_bps(env));
     storage::set_last_claim_ledger(env, holder, now);
+    storage::set_claim_rate_limit_prev(env, claim_id, rate_limit_anchor_before_filing);
 
     ClaimFiled {
         claim_id,
@@ -306,6 +323,60 @@ pub fn file_claim(
     .publish(env);
 
     Ok(claim_id)
+}
+
+// ── withdraw_claim ────────────────────────────────────────────────────────────
+
+/// Claimant-only: withdraw a claim before any ballot is cast.
+///
+/// Allowed only while `status == Processing` and `approve_votes + reject_votes == 0`.
+/// Sets status to [`ClaimStatus::Withdrawn`], clears the open-claim flag, restores the
+/// holder's claim **rate-limit anchor** to its value before this claim was filed (see
+/// `storage::ClaimRateLimitPrev`), and emits [`ClaimWithdrawn`].
+///
+/// **Rate limit vs open-claim cap:** Withdrawal does **not** consume the per-policy
+/// "one open claim" slot once complete (open flag cleared). The per-holder time spacing
+/// between **successful** `file_claim` calls is reverted to the pre-filing anchor so a
+/// mistaken filing does not force the holder to wait another full window before refiling.
+pub fn withdraw_claim(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), Error> {
+    storage::assert_claims_not_paused(env);
+
+    let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
+
+    if claimant != &claim.claimant {
+        return Err(Error::NotEligibleVoter);
+    }
+
+    if claim.status != ClaimStatus::Processing {
+        return Err(Error::ClaimAlreadyTerminal);
+    }
+
+    if claim.approve_votes != 0 || claim.reject_votes != 0 {
+        return Err(Error::ClaimAlreadyTerminal);
+    }
+
+    let now = env.ledger().sequence();
+    claim.status = ClaimStatus::Withdrawn;
+    push_status_transition(&mut claim.status_history, ClaimStatus::Withdrawn, now);
+
+    storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
+
+    match storage::take_claim_rate_limit_prev(env, claim_id) {
+        Some(ledger) => storage::set_last_claim_ledger(env, &claim.claimant, ledger),
+        None => storage::remove_last_claim_ledger(env, &claim.claimant),
+    }
+
+    storage::set_claim(env, &claim);
+
+    ClaimWithdrawn {
+        claim_id,
+        policy_id: claim.policy_id,
+        claimant: claimant.clone(),
+        at_ledger: now,
+    }
+    .publish(env);
+
+    Ok(())
 }
 
 // ── vote_on_claim ─────────────────────────────────────────────────────────────
@@ -383,6 +454,10 @@ pub fn vote_on_claim(
         storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
     }
 
+    if status_before == ClaimStatus::Processing && claim.status != ClaimStatus::Processing {
+        storage::remove_claim_rate_limit_prev(env, claim_id);
+    }
+
     let status = claim.status.clone();
     storage::set_claim(env, &claim);
 
@@ -445,6 +520,11 @@ pub fn finalize_claim(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
     let newly_rejected = claim.status == ClaimStatus::Rejected;
 
     storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
+
+    if status_before == ClaimStatus::Processing && claim.status != ClaimStatus::Processing {
+        storage::remove_claim_rate_limit_prev(env, claim_id);
+    }
+
     let status = claim.status.clone();
     storage::set_claim(env, &claim);
 
@@ -485,6 +565,7 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
     claim.status = ClaimStatus::Paid;
     push_status_transition(&mut claim.status_history, ClaimStatus::Paid, now);
     storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
+    storage::remove_claim_rate_limit_prev(env, claim_id);
     storage::set_claim(env, &claim);
     Ok(())
 }

@@ -197,6 +197,16 @@ impl NiffyInsure {
         claim::file_claim(&env, &holder, policy_id, amount, &details, &image_urls)
     }
 
+    /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
+    pub fn withdraw_claim(
+        env: Env,
+        claimant: Address,
+        claim_id: u64,
+    ) -> Result<(), validate::Error> {
+        claimant.require_auth();
+        claim::withdraw_claim(&env, &claimant, claim_id)
+    }
+
     pub fn vote_on_claim(
         env: Env,
         voter: Address,

@@ -11,7 +11,8 @@
     "pending": "En Revisión",
     "approved": "Aprobada",
     "rejected": "Rechazada",
-    "paid": "Pagada"
+    "paid": "Pagada",
+    "withdrawn": "Retirada"
   },
   "updates": {
     "submitted": "Reclamación enviada exitosamente.",

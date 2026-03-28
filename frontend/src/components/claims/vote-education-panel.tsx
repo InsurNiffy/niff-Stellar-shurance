@@ -76,6 +76,12 @@ export function VoteEducationPanel() {
           on-chain, votes cannot be changed or retracted.
         </p>
         <p>
+          <strong>Claimant withdrawal.</strong> Before any vote is cast, the
+          claimant can withdraw the claim on-chain. After the first vote,
+          withdrawal is disabled. Withdrawn claims stay visible for audit and
+          do not receive payout.
+        </p>
+        <p>
           <strong>No governance token.</strong> Voting power comes solely from
           holding an active policy — there is no separate token to buy or stake.
         </p>

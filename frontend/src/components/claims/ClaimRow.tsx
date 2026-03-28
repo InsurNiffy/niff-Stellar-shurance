@@ -48,6 +48,11 @@ const STATUS_CONFIG: Record<
     shape: "✕",
     className: "bg-red-100 text-red-800",
   },
+  Withdrawn: {
+    label: "Withdrawn",
+    shape: "↩",
+    className: "bg-slate-100 text-slate-700",
+  },
 };
 
 const DEFAULT_STATUS_CONFIG = {

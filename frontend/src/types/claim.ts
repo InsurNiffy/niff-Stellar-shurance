@@ -54,7 +54,7 @@ export interface OnChainClaimSummary {
   claim_id: bigint;
   policy_id: number;
   amount: bigint;
-  /** 'Processing' | 'Pending' | 'Approved' | 'Paid' | 'Rejected' | 'UnderAppeal' | 'AppealApproved' | 'AppealRejected' */
+  /** 'Processing' | 'Pending' | 'Approved' | 'Paid' | 'Rejected' | 'Withdrawn' | … */
   status: string;
   filed_at: number;
   /** Last ledger where a vote may be cast (inclusive); frozen at filing time. */

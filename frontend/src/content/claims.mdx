@@ -29,10 +29,15 @@ T+72h  Payout transaction submitted (Approve) OR claim marked Rejected
 | `Open` | Filed, voting in progress |
 | `Approved` | Participation quorum met and approve votes outnumber reject; payout pending or complete |
 | `Rejected` | Participation quorum met with reject or tie; or window ended with insufficient ballots cast |
+| `Withdrawn` | Claimant withdrew before any vote; claim remains on-chain for audit; no payout |
+
+## Withdrawing a claim (pre-vote)
+
+The claimant may call `withdraw_claim` while the claim is `Processing` and **no approve or reject votes have been cast**. After the first ballot, withdrawal is blocked so governance rounds cannot be manipulated. Withdrawn claims stay readable on-chain and in the indexer; surface them distinctly from `Rejected` on the claims board.
 
 ## Rate Limiting
 
-The backend enforces per-wallet claim submission rate limits to prevent spam. On-chain, the contract independently validates claim eligibility. Both layers must pass for a claim to proceed.
+The backend enforces per-wallet claim submission rate limits to prevent spam. On-chain, the contract spaces **successful** `file_claim` calls per holder using `LastClaimLedger` and `RATE_LIMIT_WINDOW_LEDGERS`. **Withdrawal does not count against that limit going forward:** the contract restores the holder’s previous rate-limit anchor (or clears it if this was their first filing), so a withdrawn mistaken claim does not force an extra full waiting period before refiling. The per-policy **one open claim** rule still applies while a claim is open; withdrawal clears the open slot like any other terminal resolution.
 
 ## Related
 

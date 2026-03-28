@@ -6,6 +6,7 @@ export const ClaimStatusSchema = z.enum([
   'Approved',
   'Paid',
   'Rejected',
+  'Withdrawn',
 ])
 export type ClaimStatus = z.infer<typeof ClaimStatusSchema>
 
@@ -92,5 +93,10 @@ export function isVoteOpen(votingDeadlineLedger: number, currentLedger: number):
 }
 
 export function isTerminal(status: ClaimStatus): boolean {
-  return status === 'Approved' || status === 'Paid' || status === 'Rejected'
+  return (
+    status === 'Approved' ||
+    status === 'Paid' ||
+    status === 'Rejected' ||
+    status === 'Withdrawn'
+  )
 }

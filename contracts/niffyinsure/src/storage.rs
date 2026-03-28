@@ -60,6 +60,9 @@ pub enum DataKey {
     GracePeriodLedgers,
     /// Per-claim snapshot of `QuorumBps` at `file_claim` time (immutable for that claim).
     ClaimQuorumBps(u64),
+    /// Value of `LastClaimLedger(claimant)` **before** this claim's filing updated it.
+    /// Removed when the claim leaves `Processing` without withdraw, or consumed by `withdraw_claim`.
+    ClaimRateLimitPrev(u64),
 }
 
 // ── Instance bump ─────────────────────────────────────────────────────────────
@@ -539,6 +542,41 @@ pub fn get_last_claim_ledger(env: &Env, holder: &Address) -> Option<u32> {
     env.storage()
         .persistent()
         .get(&DataKey::LastClaimLedger(holder.clone()))
+}
+
+pub fn remove_last_claim_ledger(env: &Env, holder: &Address) {
+    let key = DataKey::LastClaimLedger(holder.clone());
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+/// Snapshot `LastClaimLedger` before filing (only written when `prev` is `Some`).
+pub fn set_claim_rate_limit_prev(env: &Env, claim_id: u64, prev: Option<u32>) {
+    if let Some(ledger) = prev {
+        let key = DataKey::ClaimRateLimitPrev(claim_id);
+        env.storage().persistent().set(&key, &ledger);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    }
+}
+
+pub fn remove_claim_rate_limit_prev(env: &Env, claim_id: u64) {
+    let key = DataKey::ClaimRateLimitPrev(claim_id);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+/// Read and remove the rate-limit restore snapshot for `claim_id` (withdraw path).
+pub fn take_claim_rate_limit_prev(env: &Env, claim_id: u64) -> Option<u32> {
+    let key = DataKey::ClaimRateLimitPrev(claim_id);
+    let v: Option<u32> = env.storage().persistent().get(&key);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
+    v
 }
 
 // ── Sweep cap (instance) ──────────────────────────────────────────────────────

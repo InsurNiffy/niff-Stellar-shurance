@@ -11,7 +11,8 @@
     "pending": "Pending Review",
     "approved": "Approved",
     "rejected": "Rejected",
-    "paid": "Paid Out"
+    "paid": "Paid Out",
+    "withdrawn": "Withdrawn"
   },
   "updates": {
     "submitted": "Claim submitted successfully.",
