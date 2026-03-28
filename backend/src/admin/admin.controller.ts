@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Post,
   Get,
@@ -11,6 +12,7 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
@@ -18,6 +20,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminRoleGuard } from './guards/admin-role.guard';
 import { AdminService } from './admin.service';
+import { AdminPoliciesService } from './admin-policies.service';
 import { AuditService } from './audit.service';
 import { ReindexDto } from './dto/reindex.dto';
 import { AuditQueryDto } from './dto/audit-query.dto';
@@ -45,6 +48,7 @@ type AdminRequest = Request & {
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
+    private readonly adminPoliciesService: AdminPoliciesService,
     private readonly auditService: AuditService,
     private readonly privacyService: PrivacyService,
     private readonly rateLimitService: RateLimitService,
@@ -84,6 +88,54 @@ export class AdminController {
   @ApiOperation({ summary: 'Paginated admin audit log' })
   async getAudits(@Query() query: AuditQueryDto) {
     return this.auditService.findAll(query.page, query.limit, query.action);
+  }
+
+  /**
+   * GET /admin/policies
+   *
+   * Indexed policies. Omit soft-deleted rows unless `include_deleted=true`.
+   */
+  @Get('policies')
+  @ApiOperation({ summary: 'List indexed policies (optional include_deleted for compliance)' })
+  async getAdminPolicies(@Query('include_deleted') includeDeleted?: string) {
+    const inc = includeDeleted === 'true' || includeDeleted === '1';
+    return this.adminPoliciesService.listPolicies(inc);
+  }
+
+  /**
+   * DELETE /admin/policies/:holder/:policyId
+   *
+   * Soft-delete: sets `deleted_at` on policy, its claims, and their votes.
+   * Does not remove `raw_events` (reindex integrity).
+   */
+  @Delete('policies/:holder/:policyId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Soft-delete a policy and dependent claims/votes' })
+  async softDeletePolicy(
+    @Param('holder') holder: string,
+    @Param('policyId') policyIdParam: string,
+    @Req() req: AdminRequest,
+  ) {
+    const policyId = Number(policyIdParam);
+    if (!Number.isFinite(policyId) || policyId < 0) {
+      throw new BadRequestException('policyId must be a non-negative number');
+    }
+    const result = await this.adminPoliciesService.softDeletePolicy(holder, policyId);
+    if (!result) {
+      throw new NotFoundException(`Policy ${holder}:${policyId} not found`);
+    }
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'policy_soft_delete',
+      payload: {
+        policyKey: result.id,
+        deletedAt: result.deletedAt,
+        alreadyDeleted: result.alreadyDeleted,
+      },
+      ipAddress: req.ip,
+    });
+    return result;
   }
 
   /**

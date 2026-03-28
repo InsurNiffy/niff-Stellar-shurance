@@ -194,9 +194,9 @@ export class RenewalService {
   private async validateRenewalEligibility(dto: BuildRenewalTransactionDto) {
     const compositeId = `${dto.holder}:${dto.policy_id}`;
 
-    const policy = await this.prisma.policy.findUnique({
-      where: { id: compositeId },
-      include: { claims: { select: { status: true } } },
+    const policy = await this.prisma.policy.findFirst({
+      where: { id: compositeId, deletedAt: null },
+      include: { claims: { where: { deletedAt: null }, select: { status: true } } },
     });
 
     if (!policy) {

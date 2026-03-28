@@ -3,12 +3,23 @@ import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Request } from 'express';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { AdminPoliciesService } from './admin-policies.service';
 import { AuditService } from './audit.service';
+import { PrivacyService } from '../maintenance/privacy.service';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { AdminRoleGuard } from './guards/admin-role.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 const mockAdminService = { enqueueReindex: jest.fn(), setFeatureFlag: jest.fn(), getFeatureFlags: jest.fn() };
+const mockAdminPoliciesService = { listPolicies: jest.fn(), softDeletePolicy: jest.fn() };
 const mockAuditService = { write: jest.fn(), findAll: jest.fn() };
+const mockPrivacyService = {};
+const mockRateLimitService = {
+  setLimit: jest.fn(),
+  getCounterState: jest.fn(),
+  enableOverride: jest.fn(),
+  disableOverride: jest.fn(),
+};
 
 const adminReq = (role = 'admin') => ({ user: { walletAddress: 'GADMIN', role }, ip: '127.0.0.1' });
 const toExecutionContext = (role?: string): ExecutionContext =>
@@ -25,7 +36,10 @@ describe('AdminController', () => {
       controllers: [AdminController],
       providers: [
         { provide: AdminService, useValue: mockAdminService },
+        { provide: AdminPoliciesService, useValue: mockAdminPoliciesService },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: PrivacyService, useValue: mockPrivacyService },
+        { provide: RateLimitService, useValue: mockRateLimitService },
       ],
     })
       .overrideGuard(JwtAuthGuard).useValue({ canActivate: () => true })
@@ -47,6 +61,35 @@ describe('AdminController', () => {
       expect(mockAdminService.enqueueReindex).toHaveBeenCalledWith(500);
       expect(mockAuditService.write).toHaveBeenCalledWith(
         expect.objectContaining({ actor: 'GADMIN', action: 'reindex', payload: expect.objectContaining({ fromLedger: 500 }) }),
+      );
+    });
+  });
+
+  describe('GET /admin/policies', () => {
+    it('passes include_deleted=false by default', async () => {
+      mockAdminPoliciesService.listPolicies.mockResolvedValue({ policies: [] });
+      await controller.getAdminPolicies(undefined);
+      expect(mockAdminPoliciesService.listPolicies).toHaveBeenCalledWith(false);
+    });
+
+    it('passes include_deleted=true when query set', async () => {
+      mockAdminPoliciesService.listPolicies.mockResolvedValue({ policies: [] });
+      await controller.getAdminPolicies('true');
+      expect(mockAdminPoliciesService.listPolicies).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe('DELETE /admin/policies/:holder/:policyId', () => {
+    it('soft-deletes and audits', async () => {
+      mockAdminPoliciesService.softDeletePolicy.mockResolvedValue({
+        id: 'GX:1',
+        deletedAt: new Date().toISOString(),
+        alreadyDeleted: false,
+      });
+      const res = await controller.softDeletePolicy('GX', '1', adminReq() as unknown as Request);
+      expect(res.id).toBe('GX:1');
+      expect(mockAuditService.write).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'policy_soft_delete' }),
       );
     });
   });

@@ -210,46 +210,44 @@ export class IndexerService {
 
   private async handlePolicyRenewed(tx: IndexerTx, data: EventPayload) {
     const id = `${getStringValue(data.holder)}:${getNumberValue(data.policy_id)}`;
-    await tx.policy.update({
-      where: { id },
+    await tx.policy.updateMany({
+      where: { id, deletedAt: null },
       data: {
         endLedger: getNumberValue(data.new_end_ledger),
         updatedAt: new Date(),
-      }
+      },
     });
   }
 
   private async handleClaimFiled(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
     const claimId = getNumberValue(data.claim_id);
-    const id = `${getStringValue(data.claimant)}:${getNumberValue(data.policy_id)}`;
+    const holder = getStringValue(data.holder) || getStringValue(data.claimant);
+    const policyIdNum = getNumberValue(data.policy_id);
+    const policyDbId = `${holder}:${policyIdNum}`;
 
-  private async handleClaimFiled(tx: any, data: ClaimFiledEvent, ids: unknown[], event: any) {
-    // ids[0] = claim_id (u64), ids[1] = holder (Address)
-    const claimId = Number(ids[0]);
-    const holder = String(ids[1]);
-    const policyDbId = `${holder}:${data.policy_id}`;
     await tx.claim.upsert({
       where: { id: claimId },
       create: {
         id: claimId,
-        policyId: id,
+        policyId: policyDbId,
         creatorAddress: getStringValue(data.claimant),
         amount: getStringValue(data.amount),
-        asset: getStringValue(data.asset),
+        asset: data.asset != null && data.asset !== '' ? getStringValue(data.asset) : null,
         description: getStringValue(data.details),
         imageUrls: getStringArray(data.image_urls),
         status: 'PENDING',
         approveVotes: 0,
         rejectVotes: 0,
         createdAtLedger: event.ledger,
+        updatedAtLedger: event.ledger,
         txHash: event.txHash,
+        eventIndex: 0,
       },
       update: {
-        // Already exists from previous vote or processing (shouldn't happen with correct order but handle it)
         amount: getStringValue(data.amount),
         description: getStringValue(data.details),
         imageUrls: getStringArray(data.image_urls),
-      }
+      },
     });
   }
 
@@ -261,10 +259,31 @@ export class IndexerService {
   ) {
     const claimId = Number(topics[1]);
     const voter = topics[2]?.toString();
-    const option = getStringValue(data); // VoteOption enum: "Approve" or "Reject"
+    const payload =
+      typeof data === 'object' && data !== null && !Array.isArray(data)
+        ? (data as EventPayload)
+        : {};
+    const option =
+      payload.vote !== undefined && payload.vote !== null
+        ? getStringValue(payload.vote)
+        : getStringValue(data);
 
     if (!voter) {
       this.logger.warn(`Skipping vote event for claim ${claimId}: missing voter topic`);
+      return;
+    }
+
+    if (option !== 'Approve' && option !== 'Reject') {
+      this.logger.warn(`Skipping vote event for claim ${claimId}: unknown option "${option}"`);
+      return;
+    }
+
+    const activeClaim = await tx.claim.findFirst({
+      where: { id: claimId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!activeClaim) {
+      this.logger.debug(`Skipping vote event for soft-deleted or missing claim ${claimId}`);
       return;
     }
 
@@ -279,36 +298,27 @@ export class IndexerService {
       },
       update: {
         vote: option === 'Approve' ? 'APPROVE' : 'REJECT',
-      }
+      },
     });
-    await tx.claim.update({
-      where: { id: claimId },
-      data: { approveVotes: data.approve_votes, rejectVotes: data.reject_votes },
-    });
-  }
-
-  private async handleClaimFinalized(tx: any, data: ClaimFinalizedEvent, ids: unknown[]) {
-    const claimId = Number(ids[0]);
-    await tx.claim.update({
-      where: { id: claimId },
+    await tx.claim.updateMany({
+      where: { id: claimId, deletedAt: null },
       data: {
-        status: data.status === 'Approved' ? 'APPROVED' : 'REJECTED',
-        approveVotes: data.approve_votes,
-        rejectVotes: data.reject_votes,
-        updatedAtLedger: data.at_ledger,
+        approveVotes: getNumberValue(payload.approve_votes),
+        rejectVotes: getNumberValue(payload.reject_votes),
+        updatedAtLedger: event.ledger,
       },
     });
   }
 
   private async handleClaimProcessed(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
     const claimId = getNumberValue(data.claim_id);
-    await tx.claim.update({
-      where: { id: claimId },
+    await tx.claim.updateMany({
+      where: { id: claimId, deletedAt: null },
       data: {
         status: 'PAID',
         paidAt: new Date(event.ledgerClosedAt),
         updatedAtLedger: event.ledger,
-      }
+      },
     });
   }
 }

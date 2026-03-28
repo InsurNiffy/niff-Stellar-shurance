@@ -103,4 +103,12 @@ export const validationSchema = Joi.object({
   TENANT_BASE_DOMAIN: Joi.string()
     .default("niffyinsur.com")
     .description("Base domain for subdomain-based tenant resolution"),
+  // Soft-delete retention: materialized rows with deleted_at older than this are purged daily
+  DATA_RETENTION_DAYS: Joi.number()
+    .integer()
+    .min(1)
+    .default(730)
+    .description(
+      "Days to retain soft-deleted policies/claims/votes before hard-delete (raw_events untouched)",
+    ),
 });
