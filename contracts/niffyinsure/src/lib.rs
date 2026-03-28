@@ -147,6 +147,7 @@ impl NiffyInsure {
             41 => validate::Error::NotEligibleVoter,
             42 => validate::Error::RateLimitExceeded,
             49 => validate::Error::VotingDurationOutOfBounds,
+            51 => validate::Error::VoterSnapshotExpired,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -197,6 +198,12 @@ impl NiffyInsure {
     ) -> Result<types::ClaimStatus, validate::Error> {
         voter.require_auth();
         claim::vote_on_claim(&env, &voter, claim_id, &vote)
+    }
+
+    /// Permissionless keeper hook: bump persistent TTL for the claim voter snapshot.
+    /// Does not alter eligibility or tallies.
+    pub fn refresh_snapshot(env: Env, claim_id: u64) -> Result<(), validate::Error> {
+        claim::refresh_snapshot(&env, claim_id)
     }
 
     pub fn finalize_claim(env: Env, claim_id: u64) -> Result<types::ClaimStatus, validate::Error> {

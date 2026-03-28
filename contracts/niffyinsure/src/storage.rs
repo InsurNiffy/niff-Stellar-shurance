@@ -9,6 +9,24 @@ pub const PERSISTENT_TTL_THRESHOLD: u32 = 100_000;
 /// Target TTL after extension (in ledgers, ~1 year).
 pub const PERSISTENT_TTL_EXTEND_TO: u32 = 6_000_000;
 
+// ── Claim voter snapshot TTL (persistent `ClaimVoters`) ───────────────────────
+//
+// Soroban persistent entries have a ledger TTL; when they expire the key is
+// removed. These values are sized from [`ledger::MAX_VOTING_DURATION_LEDGERS`]
+// so snapshots stay live through the longest allowed vote plus keeper margin.
+// See Stellar docs on state archival and TTL:
+// <https://developers.stellar.org/docs/learn/smart-contract-internals/state-archival>
+//
+/// When remaining TTL for a `ClaimVoters` entry is below this (in ledgers),
+/// `extend_ttl` may extend it toward [`CLAIM_VOTER_SNAPSHOT_EXTEND_TO`].
+pub const CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD: u32 =
+    ledger::MAX_VOTING_DURATION_LEDGERS + ledger::LEDGERS_PER_WEEK;
+
+/// Minimum target remaining TTL (ledgers from current sequence) after extension
+/// for `ClaimVoters` keys (max voting window + ~3 weeks for permissionless refresh cadence).
+pub const CLAIM_VOTER_SNAPSHOT_EXTEND_TO: u32 =
+    ledger::MAX_VOTING_DURATION_LEDGERS + 3 * ledger::LEDGERS_PER_WEEK;
+
 // ── DataKey ───────────────────────────────────────────────────────────────────
 
 /// Exhaustive enumeration of every storage key used by the contract.
@@ -471,17 +489,38 @@ pub fn snapshot_claim_voters(env: &Env, claim_id: u64) {
     let voters = get_voters(env);
     let key = DataKey::ClaimVoters(claim_id);
     env.storage().persistent().set(&key, &voters);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    env.storage().persistent().extend_ttl(
+        &key,
+        CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD,
+        CLAIM_VOTER_SNAPSHOT_EXTEND_TO,
+    );
 }
 
 pub fn set_claim_voters(env: &Env, claim_id: u64, voters: &Vec<Address>) {
     let key = DataKey::ClaimVoters(claim_id);
     env.storage().persistent().set(&key, voters);
+    env.storage().persistent().extend_ttl(
+        &key,
+        CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD,
+        CLAIM_VOTER_SNAPSHOT_EXTEND_TO,
+    );
+}
+
+/// `true` if the persistent `ClaimVoters` entry exists (not expired / evicted).
+pub fn has_claim_voters(env: &Env, claim_id: u64) -> bool {
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .has(&DataKey::ClaimVoters(claim_id))
+}
+
+/// Extend TTL for the snapshot only; does not read or rewrite the voter list.
+pub fn extend_claim_voters_snapshot_ttl(env: &Env, claim_id: u64) {
+    let key = DataKey::ClaimVoters(claim_id);
+    env.storage().persistent().extend_ttl(
+        &key,
+        CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD,
+        CLAIM_VOTER_SNAPSHOT_EXTEND_TO,
+    );
 }
 
 pub fn get_claim_voters(env: &Env, claim_id: u64) -> Vec<Address> {

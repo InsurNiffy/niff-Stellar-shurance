@@ -190,16 +190,13 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::VotingWindowStillOpen => "voting window is still open; cannot finalize yet",
         Error::NotEligibleVoter => "caller is not in the claim voter snapshot",
         Error::RateLimitExceeded => "claim rate-limit: wait before filing another claim",
-        Error::AppealWindowClosed => "appeal window has closed",
-        Error::AppealAlreadyOpen => "an appeal is already open for this claim",
-        Error::MaxAppealsReached => "claim has reached the maximum allowed appeals",
-        Error::ClaimNotRejected => "claim is not in rejected status; cannot open appeal",
-        Error::AppealNotOpen => "no appeal is currently open",
-        Error::AppealWindowStillOpen => "appeal voting window is still open; cannot finalize yet",
         Error::VotingDurationOutOfBounds => {
             "voting duration ledgers outside allowed min/max; see contract docs"
-        }
+        },
         Error::PolicyBatchTooLarge => "batch exceeds maximum allowed keys per call",
+        Error::VoterSnapshotExpired => {
+            "claim voter snapshot expired or missing; run refresh_snapshot before voting ends"
+        },
     };
     QuoteFailure {
         code: err as u32,

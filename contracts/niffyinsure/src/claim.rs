@@ -290,6 +290,10 @@ pub fn vote_on_claim(
         return Err(Error::VotingWindowClosed);
     }
 
+    if !storage::has_claim_voters(env, claim_id) {
+        return Err(Error::VoterSnapshotExpired);
+    }
+
     // Voter must be in the claim's snapshot electorate.
     let snapshot = storage::get_claim_voters(env, claim_id);
     let eligible = snapshot.iter().any(|v| v == *voter);
@@ -342,6 +346,17 @@ pub fn vote_on_claim(
     }
 
     Ok(status)
+}
+
+/// Permissionless: extends persistent TTL for `ClaimVoters(claim_id)` only.
+/// Does not change the voter list or vote tallies.
+pub fn refresh_snapshot(env: &Env, claim_id: u64) -> Result<(), Error> {
+    let _ = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
+    if !storage::has_claim_voters(env, claim_id) {
+        return Err(Error::VoterSnapshotExpired);
+    }
+    storage::extend_claim_voters_snapshot_ttl(env, claim_id);
+    Ok(())
 }
 
 // ── finalize_claim ────────────────────────────────────────────────────────────

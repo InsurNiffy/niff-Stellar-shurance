@@ -129,4 +129,8 @@ fn generate_premium_returns_structured_validation_errors() {
     assert_eq!(base_msg.code, Error::InvalidBaseAmount as u32);
     assert!(!safety_msg.message.is_empty());
     assert!(!base_msg.message.is_empty());
+
+    let snap_msg = client.quote_error_message(&(Error::VoterSnapshotExpired as u32));
+    assert_eq!(snap_msg.code, Error::VoterSnapshotExpired as u32);
+    assert!(!snap_msg.message.is_empty());
 }

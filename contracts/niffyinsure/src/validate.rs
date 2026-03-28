@@ -53,22 +53,13 @@ pub enum Error {
     VotingWindowStillOpen = 40,
     NotEligibleVoter = 41,
     RateLimitExceeded = 42,
-    /// Appeal open window has passed; claimant can no longer appeal this claim.
-    AppealWindowClosed = 43,
-    /// An appeal is already open for this claim.
-    AppealAlreadyOpen = 44,
-    /// Claim has reached the maximum allowed appeals per claim.
-    MaxAppealsReached = 45,
-    /// Claim is not in Rejected status; cannot open an appeal.
-    ClaimNotRejected = 46,
-    /// No appeal is currently open; cannot vote on or finalize appeal.
-    AppealNotOpen = 47,
-    /// Appeal voting window is still open; cannot finalize appeal yet.
-    AppealWindowStillOpen = 48,
     /// Admin `set_voting_duration_ledgers` value outside allowed [min, max] range.
     VotingDurationOutOfBounds = 49,
     /// Batch get exceeded POLICY_BATCH_GET_MAX.
     PolicyBatchTooLarge = 50,
+    /// Claim voter snapshot persistent entry is missing or expired (Soroban TTL).
+    /// Keepers should call `refresh_snapshot` before eviction during open votes.
+    VoterSnapshotExpired = 51,
 }
 
 pub fn check_policy(policy: &Policy) -> Result<(), Error> {
