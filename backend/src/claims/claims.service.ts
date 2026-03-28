@@ -323,4 +323,74 @@ export class ClaimsService {
     
     return result;
   }
+
+  // ── Claim status polling & SSE ───────────────────────────────────────────
+
+  /**
+   * Returns the current status for a set of claim IDs.
+   * Used by the frontend polling loop (GET /api/claims/status).
+   */
+  async getClaimStatuses(
+    claimIds: string[],
+  ): Promise<{ claimId: string; status: string; updatedAt: string }[]> {
+    const numericIds = claimIds.map(Number).filter((n) => !isNaN(n));
+    if (numericIds.length === 0) return [];
+
+    const claims = await this.prisma.claim.findMany({
+      where: { id: { in: numericIds } },
+      select: { id: true, status: true, updatedAt: true },
+    });
+
+    return claims.map((c) => ({
+      claimId: String(c.id),
+      status: c.status.toLowerCase(),
+      updatedAt: c.updatedAt.toISOString(),
+    }));
+  }
+
+  /**
+   * Subscribes a SSE client to status changes for the given claim IDs.
+   * Returns an unsubscribe function to call when the client disconnects.
+   *
+   * Implementation: lightweight in-process pub/sub via a Map of listeners.
+   * In a multi-instance deployment, replace with a Redis pub/sub channel.
+   */
+  subscribeToStatusChanges(
+    claimIds: string[],
+    send: (data: object) => void,
+  ): () => void {
+    const idSet = new Set(claimIds);
+
+    const listener = (update: { claimId: string; status: string; updatedAt: string }) => {
+      if (idSet.has(update.claimId)) {
+        send(update);
+      }
+    };
+
+    ClaimsService.statusListeners.add(listener);
+    return () => ClaimsService.statusListeners.delete(listener);
+  }
+
+  /**
+   * Publishes a status-change event to all active SSE subscribers.
+   * Call this from the indexer or queue consumer whenever a claim status changes.
+   */
+  static publishStatusChange(update: {
+    claimId: string;
+    status: string;
+    updatedAt: string;
+  }): void {
+    for (const listener of ClaimsService.statusListeners) {
+      try {
+        listener(update);
+      } catch {
+        // Ignore errors from individual listeners (e.g. closed connections).
+      }
+    }
+  }
+
+  // In-process listener registry. Replace with Redis pub/sub for multi-instance.
+  private static readonly statusListeners = new Set<
+    (update: { claimId: string; status: string; updatedAt: string }) => void
+  >();
 }
