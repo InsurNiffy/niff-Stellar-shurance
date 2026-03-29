@@ -91,7 +91,7 @@ function makeSorobanMock(currentLedger = WINDOW_OPEN + 1000) {
 function makePrismaMock(policy: ReturnType<typeof makePolicy> | null) {
   return {
     policy: {
-      findUnique: jest.fn().mockResolvedValue(policy),
+      findFirst: jest.fn().mockResolvedValue(policy),
     },
   };
 }

@@ -14,6 +14,10 @@ import { xBullModule, XBULL_ID } from '@creit.tech/stellar-wallets-kit/modules/x
 import type { AppNetwork } from '@/config/networkManifest'
 import { passphraseToAppNetwork } from '@/config/networkManifest'
 import { toast } from '@/components/ui/use-toast'
+import {
+  computeNetworkMismatch,
+  type WalletNetworkResolution,
+} from '@/features/wallet/utils/networkMismatch'
 
 export type WalletId = typeof FREIGHTER_ID | typeof XBULL_ID
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -26,8 +30,13 @@ export interface WalletContextValue {
   walletNetwork: AppNetwork | null
   /** The network the app is configured to use */
   appNetwork: AppNetwork
-  /** True when wallet network ≠ app network */
+  /** True when wallet network ≠ app network (or wallet uses an unmapped passphrase) */
   networkMismatch: boolean
+  /**
+   * Last wallet `getNetwork()` outcome: `ok` + mapped passphrase (or null if unknown),
+   * `idle` before connect / after disconnect, `error` if getNetwork threw.
+   */
+  walletNetworkResolution: WalletNetworkResolution
   connect: (walletId: WalletId) => Promise<void>
   disconnect: () => Promise<void>
   signTransaction: (xdr: string) => Promise<string>
@@ -57,6 +66,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [activeWalletId, setActiveWalletId] = useState<WalletId | null>(null)
   const [walletNetwork, setWalletNetwork] = useState<AppNetwork | null>(null)
+  const [walletNetworkResolution, setWalletNetworkResolution] =
+    useState<WalletNetworkResolution>({ status: 'idle' })
   const [appNetwork, setAppNetworkState] = useState<AppNetwork>(() => {
     if (typeof window === 'undefined') return 'testnet'
     return (localStorage.getItem(LS_NETWORK_KEY) as AppNetwork) ?? 'testnet'
@@ -75,6 +86,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       try {
         const { address: addr } = await StellarWalletsKit.getAddress()
         setAddress(addr ?? null)
+        if (addr) {
+          setConnectionStatus('connected')
+          await refreshWalletNetwork()
+        } else {
+          setConnectionStatus('disconnected')
+          setActiveWalletId(null)
+          setWalletNetwork(null)
+          setWalletNetworkResolution({ status: 'idle' })
+        }
       } catch {
         setAddress(null)
       }
@@ -85,6 +105,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setConnectionStatus('disconnected')
       setActiveWalletId(null)
       setWalletNetwork(null)
+      setWalletNetworkResolution({ status: 'idle' })
     })
 
     // Auto-reconnect last wallet
@@ -115,8 +136,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const { network } = await StellarWalletsKit.getNetwork()
       const appNet = passphraseToAppNetwork(network)
       setWalletNetwork(appNet)
+      setWalletNetworkResolution({ status: 'ok', mappedNetwork: appNet })
     } catch {
       setWalletNetwork(null)
+      setWalletNetworkResolution({ status: 'error' })
     }
   }
 
@@ -131,6 +154,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(LS_WALLET_KEY, walletId)
       await refreshWalletNetwork()
     } catch (err: unknown) {
+      setWalletNetworkResolution({ status: 'idle' })
       setConnectionStatus('error')
       const msg = err instanceof Error ? err.message : String(err)
       if (msg.toLowerCase().includes('reject') || msg.toLowerCase().includes('cancel')) {
@@ -148,12 +172,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setConnectionStatus('disconnected')
     setActiveWalletId(null)
     setWalletNetwork(null)
+    setWalletNetworkResolution({ status: 'idle' })
     localStorage.removeItem(LS_WALLET_KEY)
   }, [])
 
   const signTransaction = useCallback(async (xdr: string): Promise<string> => {
+    await refreshWalletNetwork()
     try {
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr)
+      await refreshWalletNetwork()
       return signedTxXdr
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -175,10 +202,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionStatus])
 
-  const networkMismatch =
-    connectionStatus === 'connected' &&
-    walletNetwork !== null &&
-    walletNetwork !== appNetwork
+  const networkMismatch = computeNetworkMismatch(
+    connectionStatus,
+    appNetwork,
+    walletNetworkResolution,
+  )
 
   return (
     <WalletContext.Provider
@@ -189,6 +217,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         walletNetwork,
         appNetwork,
         networkMismatch,
+        walletNetworkResolution,
         connect,
         disconnect,
         signTransaction,

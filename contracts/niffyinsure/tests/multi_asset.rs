@@ -9,6 +9,8 @@
 
 #![cfg(test)]
 
+mod common;
+
 use niffyinsure::NiffyInsureClient;
 use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
@@ -67,6 +69,7 @@ fn initiate(t: &TestEnv, holder: &Address, asset: &Address) -> niffyinsure::type
         &1_000_000_000i128,
         asset,
         &None,
+        &None,
     )
 }
 
@@ -105,6 +108,7 @@ fn initiate_policy_rejects_non_allowlisted_asset() {
         &3u32,
         &500_000_000i128,
         &token_b,
+        &None,
         &None,
     );
     assert!(result.is_err(), "expected AssetNotAllowed error");
@@ -253,9 +257,9 @@ fn claim_payout_uses_policy_bound_asset() {
         policy_id: policy.policy_id,
         claimant: holder.clone(),
         amount: 5_000_000i128,
-        asset: t.token_a.clone(),
+        asset: policy.asset.clone(),
         details: SorobanString::from_str(&t.env, "fire damage"),
-        image_urls: Vec::new(&t.env),
+        evidence: common::empty_evidence(&t.env),
         status: ClaimStatus::Approved,
         voting_deadline_ledger: 1_000,
         approve_votes: 3,
@@ -313,9 +317,9 @@ fn claim_with_disallowed_bound_asset_is_rejected() {
         policy_id: policy.policy_id,
         claimant: holder.clone(),
         amount: 5_000_000i128,
-        asset: t.token_a.clone(),
+        asset: policy.asset.clone(),
         details: SorobanString::from_str(&t.env, "mismatch test"),
-        image_urls: Vec::new(&t.env),
+        evidence: common::empty_evidence(&t.env),
         status: ClaimStatus::Approved,
         voting_deadline_ledger: 1_000,
         approve_votes: 3,
@@ -382,6 +386,7 @@ fn removing_asset_from_allowlist_blocks_new_policies() {
         &5u32,
         &1_000_000_000i128,
         &token_b,
+        &None,
         &None,
     );
     assert!(result.is_err(), "expected AssetNotAllowed after removal");

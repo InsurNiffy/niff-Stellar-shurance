@@ -26,6 +26,14 @@ Restrict it at the ingress/firewall level — it must not be publicly reachable.
 
 `error_type` values: `client_error`, `unavailable`, `unknown`.
 
+### Quote simulation cache
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `quote_simulation_cache_requests_total` | Counter | `result` | `hit` = Redis served; `miss` = computed via RPC; `bypass` = `Cache-Control: no-cache` |
+
+See [quote-simulation-cache.md](./quote-simulation-cache.md) for TTL and invalidation.
+
 ### Cardinality notes
 
 - `route` is normalised: numeric path segments → `:id`, UUIDs → `:uuid`,
@@ -129,3 +137,48 @@ this.winston.log(level, message, { ...fields, traceId, spanId });
 Similarly, `MetricsService.recordHttpRequest` / `recordRpcCall` map directly
 to OTel `Meter` histogram/counter calls — swap the prom-client calls for OTel
 Meter API calls when you're ready to migrate.
+
+## Queue Dashboard — `/admin/queues`
+
+Bull Board is mounted at `/admin/queues`. It requires a valid admin JWT in the
+`Authorization: Bearer <token>` header. No token or a non-admin token returns 401/403.
+
+## Dead-Letter Queue (DLQ)
+
+Jobs that fail `DLQ_MAX_ATTEMPTS` (5) times are moved to BullMQ's **failed** set.
+Two metrics track this:
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `bullmq_dlq_depth` | Gauge | `queue` | Current failed-job count per queue |
+| `bullmq_dlq_jobs_total` | Counter | `queue`, `job_name`, `failure_reason` | Cumulative jobs exhausted |
+
+Alert `DlqDepthHigh` fires when `bullmq_dlq_depth > 10` for 5 minutes.
+The alert annotation includes the queue name and links to the replay endpoint.
+
+### Manual Job Replay
+
+1. Open Bull Board at `https://<host>/admin/queues` (admin JWT required) and
+   identify the failed job id from the UI.
+2. Or query the API:
+   ```
+   GET /api/admin/queues   # via Bull Board UI
+   ```
+3. Replay a single job:
+   ```
+   POST /api/admin/queues/:queue/jobs/:jobId/retry
+   Authorization: Bearer <admin-jwt>
+   ```
+   The job is moved back to `waiting` and retried from scratch.
+   An audit row is written with actor, queue, and jobId.
+4. To bulk-replay all failed jobs on a queue, use the Bull Board UI
+   "Retry all" button — it is equivalent to calling retry on each job.
+
+### Queues monitored
+
+| Queue | Max attempts | Purpose |
+|---|---|---|
+| `indexer` | 5 | Soroban ledger event indexing |
+| `notifications` | 5 | Claim-finalized email/Discord/Telegram |
+| `claim-events` | 5 | Raw claim event DB writes |
+| `reindex` | 5 | Admin-triggered ledger reindex |

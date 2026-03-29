@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input'
 import { useSettings } from '@/hooks/use-settings'
 import { useWallet } from '@/hooks/use-wallet'
+import { SETTINGS_NETWORK_SECTION_ID } from '@/features/wallet/constants'
 import { getContracts } from '@/lib/network-manifest'
 import { validateRpcUrl, PUBLIC_RPC, STATUS_PAGES, type AppSettings } from '@/lib/settings-store'
 import type { Network } from '@/lib/network-manifest'
@@ -15,7 +16,7 @@ const NETWORKS: Network[] = ['testnet', 'public']
 
 export function SettingsPanel() {
   const { settings, update, reset } = useSettings()
-  const { disconnect } = useWallet()
+  const { disconnect, setAppNetwork } = useWallet()
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [rpcInput, setRpcInput] = useState(settings.customRpcUrl ?? '')
   const [rpcError, setRpcError] = useState<string | null>(null)
@@ -23,6 +24,7 @@ export function SettingsPanel() {
 
   function handleNetworkChange(network: Network) {
     update('network', network)
+    setAppNetwork(network === 'public' ? 'mainnet' : 'testnet')
     // Pull fresh contract manifests for the new network
     startTransition(() => {
       getContracts(network) // re-reads registry; triggers any dependent queries
@@ -58,7 +60,7 @@ export function SettingsPanel() {
   return (
     <div className="space-y-6 max-w-xl">
       {/* Network */}
-      <Card>
+      <Card id={SETTINGS_NETWORK_SECTION_ID} tabIndex={-1}>
         <CardHeader>
           <CardTitle>Network</CardTitle>
           <CardDescription>

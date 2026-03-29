@@ -70,7 +70,7 @@ export default function () {
       policyId: 1,
       amount: '100',
       details: 'k6 load test claim — staging only',
-      imageUrls: [],
+      evidence: [],
     },
     JWT,
     'build-tx',

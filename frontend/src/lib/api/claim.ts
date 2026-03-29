@@ -39,7 +39,8 @@ export class ClaimAPI {
     policyId: number;
     amount: string;
     details: string;
-    imageUrls: string[];
+    /** From IPFS/proxy: URL + 64-char hex SHA-256 of file bytes. */
+    evidence: { url: string; contentSha256Hex: string }[];
   }): Promise<BuildClaimTransactionResponse> {
     const response = await fetch(`${API_BASE_URL}/api/claims/build-transaction`, {
       method: 'POST',

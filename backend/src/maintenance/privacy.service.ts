@@ -82,7 +82,7 @@ export class PrivacyService {
     const results = await this.prisma.$transaction([
       // Nullify description and imageUrls on claims filed by this address
       this.prisma.claim.updateMany({
-        where: { creatorAddress: walletAddress },
+        where: { creatorAddress: walletAddress, deletedAt: null },
         data: { description: '[redacted]', imageUrls: [] },
       }),
     ]);
@@ -97,7 +97,11 @@ export class PrivacyService {
   private async delete(walletAddress: string): Promise<number> {
     const results = await this.prisma.$transaction([
       this.prisma.claim.deleteMany({
-        where: { creatorAddress: walletAddress, isFinalized: false },
+        where: {
+          creatorAddress: walletAddress,
+          isFinalized: false,
+          deletedAt: null,
+        },
       }),
     ]);
     return results.reduce((sum, r) => sum + r.count, 0);

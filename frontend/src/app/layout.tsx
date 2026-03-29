@@ -2,9 +2,12 @@ import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 
 import "./globals.css";
+import { AnalyticsScript } from "@/components/analytics-script";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
+import { WalletProvider, NetworkMismatchModal } from "@/features/wallet";
 import { inter, ibmPlexMono } from "@/lib/fonts";
+import { QueryProvider } from "@/lib/query";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -81,11 +84,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="font-sans antialiased">
         <ThemeProvider defaultTheme="system" storageKey="niffyinsur-theme">
-          <WalletProvider>
-            {children}
-            <NetworkMismatchModal />
-            <Toaster />
-          </WalletProvider>
+          <QueryProvider>
+            <WalletProvider>
+              {children}
+              <NetworkMismatchModal />
+              <Toaster />
+            </WalletProvider>
+          </QueryProvider>
         </ThemeProvider>
       </body>
     </html>

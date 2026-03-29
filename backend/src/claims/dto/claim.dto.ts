@@ -192,6 +192,15 @@ export class ConsistencyMetadataDto {
   @Expose()
   @IsBoolean()
   isStale!: boolean;
+
+  @ApiProperty({
+    description:
+      'Whether the stored vote tallies reconcile with the count of individual vote rows. ' +
+      'False indicates a data-quality issue — display a warning on the claims board.',
+  })
+  @Expose()
+  @IsBoolean()
+  tallyReconciled!: boolean;
 }
 
 export class ClaimListItemDto {

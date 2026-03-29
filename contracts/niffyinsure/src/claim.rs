@@ -1,7 +1,7 @@
 // Claim lifecycle and DAO voting will be implemented here.
 //
 // Planned public functions:
-//   file_claim(env, policy_id, amount, details, image_urls)
+//   file_claim(env, policy_id, amount, details, evidence)
 //   vote_on_claim(env, voter, claim_id, vote)
 //
 // Open claim accounting: `storage::OpenClaimCount(holder, policy_id)` must be
@@ -39,7 +39,7 @@
 // extensions and remain readable indefinitely via `get_claim`. The `details`
 // field holds a brief description (≤ 256 chars); full allegation narratives
 // must NOT be stored on-chain — use IPFS/off-chain storage and reference via
-// `image_urls` or an off-chain indexer.
+// `evidence` URLs or an off-chain indexer.
 //
 // ── Appeal window interaction ─────────────────────────────────────────────────
 //
@@ -66,14 +66,14 @@
 // or deadline-plurality approval, which is controlled by the DAO snapshot, not
 // the admin. The admin cannot flip a `Rejected` claim to `Approved`.
 use crate::{
-    ledger, storage,
+    ledger, rolling_claim_cap, storage,
     types::{
-        Claim, ClaimProcessed, ClaimStatus, ClaimStatusHistoryEntry, TerminationReason, VoteOption,
-        CLAIM_STATUS_HISTORY_MAX, STRIKE_DEACTIVATION_THRESHOLD,
+        Claim, ClaimEvidenceEntry, ClaimProcessed, ClaimStatus, ClaimStatusHistoryEntry,
+        TerminationReason, VoteOption, CLAIM_STATUS_HISTORY_MAX, STRIKE_DEACTIVATION_THRESHOLD,
     },
     validate::Error,
 };
-use soroban_sdk::{contractevent, Address, Env, String, Vec};
+use soroban_sdk::{contractevent, Address, BytesN, Env, String, Vec};
 
 /// Append `status` at `ledger`, then drop oldest entries if over [`CLAIM_STATUS_HISTORY_MAX`].
 /// Never fails — transitions must not revert because the log is full.
@@ -140,6 +140,11 @@ struct ClaimFiled {
     #[topic]
     pub claim_id: u64,
     pub holder: Address,
+    pub policy_id: u32,
+    /// Gross claim amount requested (before deductible at payout).
+    pub claim_amount: i128,
+    /// Deductible copied from the policy at filing (for indexer / UI breakdown).
+    pub deductible: i128,
     pub image_hash: u64,
 }
 
@@ -230,7 +235,7 @@ pub fn file_claim(
     policy_id: u32,
     amount: i128,
     details: &String,
-    image_urls: &Vec<String>,
+    evidence: &Vec<ClaimEvidenceEntry>,
 ) -> Result<u64, Error> {
     // Check pause: claims are blocked if claims_paused is true
     storage::assert_claims_not_paused(env);
@@ -261,7 +266,9 @@ pub fn file_claim(
         }
     }
 
-    crate::validate::check_claim_fields(env, amount, policy.coverage, details, image_urls)?;
+    crate::validate::check_claim_fields(env, amount, policy.coverage, details, evidence)?;
+
+    let deductible_snapshot = policy.deductible.unwrap_or(0);
 
     let duration = storage::get_voting_duration_ledgers(env);
     let voting_deadline_ledger = now
@@ -276,9 +283,10 @@ pub fn file_claim(
         policy_id,
         claimant: holder.clone(),
         amount,
+        deductible: deductible_snapshot,
         asset: policy.asset.clone(),
         details: details.clone(),
-        image_urls: image_urls.clone(),
+        evidence: evidence.clone(),
         status: ClaimStatus::Processing,
         voting_deadline_ledger,
         approve_votes: 0,
@@ -298,9 +306,17 @@ pub fn file_claim(
     storage::set_claim_quorum_bps(env, claim_id, storage::get_quorum_bps(env));
     storage::set_last_claim_ledger(env, holder, now);
 
+    let mut evidence_hashes: Vec<BytesN<32>> = Vec::new(env);
+    for e in evidence.iter() {
+        evidence_hashes.push_back(e.hash.clone());
+    }
+
     ClaimFiled {
         claim_id,
         holder: holder.clone(),
+        policy_id,
+        claim_amount: amount,
+        deductible: deductible_snapshot,
         image_hash: hash_image_urls(image_urls),
     }
     .publish(env);
@@ -333,6 +349,10 @@ pub fn vote_on_claim(
     let now = env.ledger().sequence();
     if !ledger::is_claim_voting_open(now, claim.voting_deadline_ledger) {
         return Err(Error::VotingWindowClosed);
+    }
+
+    if !storage::has_claim_voters(env, claim_id) {
+        return Err(Error::VoterSnapshotExpired);
     }
 
     // Voter must be in the claim's snapshot electorate.
@@ -394,6 +414,17 @@ pub fn vote_on_claim(
     }
 
     Ok(status)
+}
+
+/// Permissionless: extends persistent TTL for `ClaimVoters(claim_id)` only.
+/// Does not change the voter list or vote tallies.
+pub fn refresh_snapshot(env: &Env, claim_id: u64) -> Result<(), Error> {
+    let _ = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
+    if !storage::has_claim_voters(env, claim_id) {
+        return Err(Error::VoterSnapshotExpired);
+    }
+    storage::extend_claim_voters_snapshot_ttl(env, claim_id);
+    Ok(())
 }
 
 // ── finalize_claim ────────────────────────────────────────────────────────────
@@ -591,7 +622,17 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         return Err(Error::InvalidAsset);
     }
 
-    if !crate::token::check_balance(env, &policy.asset, claim.amount) {
+    let gross = claim.amount;
+    let deductible = claim.deductible;
+    let net = gross
+        .checked_sub(deductible)
+        .ok_or(Error::Overflow)?;
+    if net <= 0 {
+        // Enum size capped by Soroban; reuse ClaimAmountZero for "no positive payout after deductible".
+        return Err(Error::ClaimAmountZero);
+    }
+
+    if !crate::token::check_balance(env, &policy.asset, net) {
         return Err(Error::InsufficientTreasury);
     }
 
@@ -605,13 +646,15 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         &policy.asset,
         &env.current_contract_address(),
         &payout_to,
-        claim.amount,
+        net,
     );
 
     ClaimProcessed {
         claim_id: claim.claim_id,
         recipient: payout_to,
-        amount: claim.amount,
+        gross_amount: gross,
+        deductible,
+        amount: net,
     }
     .publish(env);
 
@@ -631,22 +674,6 @@ pub fn get_claim_history(env: &Env, claim_id: u64) -> Result<Vec<ClaimStatusHist
 
 pub fn set_allowed_asset(env: &Env, asset: &Address, allowed: bool) {
     storage::set_allowed_asset(env, asset, allowed);
-}
-
-/// FNV-1a hash of concatenated IPFS CID bytes, truncated to u64.
-/// Compact enough for event payload; full CIDs are stored off-chain.
-fn hash_image_urls(urls: &Vec<String>) -> u64 {
-    const FNV_OFFSET: u64 = 14695981039346656037;
-    const FNV_PRIME: u64 = 1099511628211;
-    let mut hash: u64 = FNV_OFFSET;
-    for url in urls.iter() {
-        let bytes = url.to_bytes();
-        for i in 0..bytes.len() {
-            hash ^= bytes.get(i).unwrap_or(0) as u64;
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-    }
-    hash
 }
 
 #[cfg(test)]

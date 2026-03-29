@@ -211,7 +211,7 @@ export async function simulateGeneratePremium(args: {
  * resource footprints.  Returns the base64 XDR for wallet signing.
  *
  * Argument ordering matches on-chain initiate_policy: holder, policy_type, region,
- * age_band, coverage_tier, safety_score, base_amount, asset, beneficiary.
+ * age_band, coverage_tier, safety_score, base_amount, asset, beneficiary, deductible.
  *
  * Multisig: `authRequirements` lists all addresses that must sign the Soroban
  * auth entries before submission. Display these to the user before the wallet popup.
@@ -229,6 +229,8 @@ export async function buildInitiatePolicyTransaction(args: {
   baseAmount: bigint;
   asset?: string;
   beneficiary?: string;
+  /** Optional per-claim deductible (stroops), same asset as premium/payout. */
+  deductible?: bigint | null;
 }): Promise<BuildTransactionResult> {
   const server = makeServer();
   const account = await loadAccount(server, args.holder);
@@ -246,6 +248,14 @@ export async function buildInitiatePolicyTransaction(args: {
           innerType: 'address',
         } as { type: string; innerType: string });
 
+  const deductibleScv =
+    args.deductible == null || args.deductible === undefined
+      ? nativeToScVal(null)
+      : nativeToScVal(args.deductible, {
+          type: 'option',
+          innerType: 'i128',
+        } as { type: string; innerType: string });
+
   const scArgs = [
     new Address(args.holder).toScVal(),
     enumVariantToScVal(args.policyType),
@@ -256,6 +266,7 @@ export async function buildInitiatePolicyTransaction(args: {
     nativeToScVal(args.baseAmount, { type: 'i128' }),
     new Address(assetAddress).toScVal(),
     beneficiaryScv,
+    deductibleScv,
   ];
 
   const contract = new Contract(config.stellar.contractId);

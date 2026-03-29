@@ -18,6 +18,8 @@ export interface IpfsUploadResponse {
   cid: string;
   /** Gateway URLs where the content can be accessed */
   gatewayUrls: string[];
+  /** SHA-256 hex (64 chars) of uploaded bytes (after EXIF strip); for `file_claim` evidence. */
+  contentSha256Hex: string;
   /** Original filename (sanitized) */
   filename?: string;
   /** File size in bytes */
@@ -140,12 +142,17 @@ export class IpfsService {
 
     if (!idempotencyCheck.shouldUpload && idempotencyCheck.existingRecord) {
       this.logger.log(`Returning cached response for idempotent request: ${idempotencyCheck.key}`);
+      const cached = idempotencyCheck.existingRecord.response;
       return {
-        ...idempotencyCheck.existingRecord.response,
+        cid: cached.cid,
+        gatewayUrls: cached.gatewayUrls,
+        contentSha256Hex:
+          cached.contentSha256Hex ?? idempotencyCheck.contentHash,
         filename: sanitizedFilename,
         size: processedBuffer.length,
         mimeType,
         duplicated: true,
+        uploadedAt: cached.uploadedAt,
       };
     }
 
@@ -160,9 +167,12 @@ export class IpfsService {
       throw new ServiceUnavailableException('IPFS provider is temporarily unavailable');
     }
 
+    const contentSha256Hex =
+      this.fileValidationService.calculateContentHash(processedBuffer);
+
     // Upload to IPFS
     this.logger.debug(`Uploading ${sanitizedFilename} (${processedBuffer.length} bytes) to IPFS`);
-    
+
     let uploadResult: IpfsUploadResult;
     try {
       uploadResult = await this.provider.upload(
@@ -183,7 +193,7 @@ export class IpfsService {
     await this.idempotencyService.storeResult(
       idempotencyCheck.key,
       contentHash,
-      { cid: uploadResult.cid, gatewayUrls },
+      { cid: uploadResult.cid, gatewayUrls, contentSha256Hex },
     );
 
     const duration = Date.now() - startTime;
@@ -194,6 +204,7 @@ export class IpfsService {
     return {
       cid: uploadResult.cid,
       gatewayUrls,
+      contentSha256Hex,
       filename: sanitizedFilename,
       size: uploadResult.size,
       mimeType: uploadResult.mimeType,

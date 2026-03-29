@@ -32,12 +32,15 @@ model Claim {
   /// Logical tenant identifier. NULL in single-tenant deployments.
   /// Populated by the indexer from the contract's tenant context.
   tenantId          String?
+  /// Set when the row is logically removed (admin/compliance). Null = active.
+  deletedAt         DateTime? @map("deleted_at")
 
   // Relations
   policy            Policy    @relation(fields: [policyId], references: [id])
   votes             Vote[]
 
   @@index([status])
+  @@index([deletedAt])
   @@index([createdAt])
   @@index([policyId])
   @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
@@ -57,6 +60,7 @@ model Vote {
   eventIndex    Int?
   votedAtLedger Int
   createdAt     DateTime  @default(now())
+  deletedAt     DateTime? @map("deleted_at")
 
   // Relations
   claim         Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
@@ -64,6 +68,7 @@ model Vote {
   @@unique([claimId, voterAddress])
   @@index([voterAddress])
   @@index([claimId])
+  @@index([deletedAt])
   @@map("votes")
 }
 
@@ -87,6 +92,7 @@ model Policy {
   updatedAt             DateTime @updatedAt
   /// Logical tenant identifier. NULL in single-tenant deployments.
   tenantId              String?
+  deletedAt             DateTime? @map("deleted_at")
 
   // Relations
   claims                Claim[]
@@ -98,6 +104,7 @@ model Policy {
   @@index([tenantId])
   @@index([tenantId, isActive])
   @@index([tenantId, createdAt, id]) // tenant-scoped keyset pagination
+  @@index([deletedAt])
   @@map("policies")
 }
 
@@ -108,6 +115,28 @@ model IndexerState {
   updatedAt       DateTime @updatedAt
 
   @@map("indexer_state")
+}
+
+/// Per-Stellar-network indexer progress. `last_processed_ledger` is the last ledger
+/// sequence whose relevant contract events have been applied (cursor advances in the
+/// same DB transaction as raw event / projection upserts).
+model LedgerCursor {
+  network               String   @id
+  lastProcessedLedger   Int      @map("last_processed_ledger")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("ledger_cursors")
+}
+
+/// One row per network: last time a ledger gap alert was emitted (dedup / cooldown).
+model LedgerGapAlertDedup {
+  network               String   @id
+  lastFiredAt           DateTime @map("last_fired_at")
+  lastGapSize           Int?     @map("last_gap_size")
+  lastProcessedLedger   Int?     @map("last_processed_ledger")
+  latestLedger          Int?     @map("latest_ledger")
+
+  @@map("ledger_gap_alert_dedup")
 }
 
 model RawEvent {

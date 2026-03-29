@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsInt,
@@ -7,6 +8,7 @@ import {
   Matches,
   MaxLength,
   Validate,
+  ValidateNested,
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from 'class-validator';
@@ -19,6 +21,26 @@ class PositiveIntStringConstraint implements ValidatorConstraintInterface {
   defaultMessage() {
     return 'amount must be a positive integer string (stroops)';
   }
+}
+
+export class ClaimEvidenceItemDto {
+  @ApiProperty({
+    description: 'Evidence location (e.g. ipfs:// or gateway URL).',
+    example: 'ipfs://QmXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  })
+  @IsString()
+  url!: string;
+
+  @ApiProperty({
+    description: 'Lowercase hex SHA-256 of file bytes (64 chars). Prefer value from IPFS upload/proxy.',
+    example:
+      '0100000000000000000000000000000000000000000000000000000000000000',
+  })
+  @IsString()
+  @Matches(/^[0-9a-fA-F]{64}$/, {
+    message: 'contentSha256Hex must be 64 hex characters (32-byte SHA-256)',
+  })
+  contentSha256Hex!: string;
 }
 
 export class BuildClaimTransactionDto {
@@ -57,10 +79,12 @@ export class BuildClaimTransactionDto {
   details!: string;
 
   @ApiProperty({
-    description: 'List of IPFS URLs (or CIDs) for evidence images.',
-    example: ['https://ipfs.io/ipfs/Qm...'],
+    description:
+      'Evidence attachments: URL plus SHA-256 content hash (from proxy when pinning).',
+    type: [ClaimEvidenceItemDto],
   })
   @IsArray()
-  @IsString({ each: true })
-  imageUrls!: string[];
+  @ValidateNested({ each: true })
+  @Type(() => ClaimEvidenceItemDto)
+  evidence!: ClaimEvidenceItemDto[];
 }

@@ -15,13 +15,15 @@
 
 #![cfg(test)]
 
+mod common;
+
 use niffyinsure::{
     types::{ClaimStatus, VoteOption, VOTE_WINDOW_LEDGERS},
     NiffyInsureClient,
 };
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
-    vec, Address, Env, String,
+    Address, Env, String,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,8 +47,8 @@ fn seed(client: &NiffyInsureClient, holder: &Address, coverage: i128, end_ledger
 
 fn file(client: &NiffyInsureClient, holder: &Address, amount: i128, env: &Env) -> u64 {
     let details = String::from_str(env, "test claim");
-    let urls = vec![env];
-    client.file_claim(holder, &1u32, &amount, &details, &urls)
+    let ev = common::empty_evidence(env);
+    client.file_claim(holder, &1u32, &amount, &details, &ev)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

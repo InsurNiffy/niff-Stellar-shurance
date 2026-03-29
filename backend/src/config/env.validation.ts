@@ -9,7 +9,24 @@ export const validationSchema = Joi.object({
     .required()
     .description("PostgreSQL connection URL"),
   REDIS_URL: Joi.string().required().description("Redis connection URL"),
+  STELLAR_NETWORK: Joi.string()
+    .valid('testnet', 'mainnet', 'futurenet')
+    .default('testnet')
+    .description('Active Stellar network'),
   SOROBAN_RPC_URL: Joi.string().required().description("Soroban RPC endpoint"),
+  STELLAR_NETWORK: Joi.string()
+    .default("testnet")
+    .description("Logical network id for indexer cursor isolation (e.g. testnet, public)"),
+  INDEXER_GAP_ALERT_THRESHOLD_LEDGERS: Joi.number()
+    .integer()
+    .min(1)
+    .default(100)
+    .description("Alert when chain head minus last_processed exceeds this"),
+  INDEXER_GAP_ALERT_COOLDOWN_MS: Joi.number()
+    .integer()
+    .min(60_000)
+    .default(3_600_000)
+    .description("Minimum milliseconds between gap alerts per network"),
   // IPFS Configuration
   IPFS_PROVIDER: Joi.string()
     .valid("mock", "pinata")
@@ -80,6 +97,16 @@ export const validationSchema = Joi.object({
   CACHE_TTL_SECONDS: Joi.number()
     .default(60)
     .description("Cache TTL in seconds"),
+  QUOTE_SIMULATION_CACHE_ENABLED: Joi.string()
+    .valid("true", "false", "1", "0")
+    .default("true")
+    .description("Redis cache for successful Soroban quote simulations"),
+  QUOTE_SIMULATION_CACHE_TTL_SECONDS: Joi.number()
+    .integer()
+    .min(1)
+    .max(600)
+    .default(30)
+    .description("TTL for quote simulation cache entries (seconds)"),
   // CAPTCHA (Turnstile or hCaptcha)
   CAPTCHA_PROVIDER: Joi.string()
     .valid("turnstile", "hcaptcha")
@@ -103,4 +130,12 @@ export const validationSchema = Joi.object({
   TENANT_BASE_DOMAIN: Joi.string()
     .default("niffyinsur.com")
     .description("Base domain for subdomain-based tenant resolution"),
+  // Soft-delete retention: materialized rows with deleted_at older than this are purged daily
+  DATA_RETENTION_DAYS: Joi.number()
+    .integer()
+    .min(1)
+    .default(730)
+    .description(
+      "Days to retain soft-deleted policies/claims/votes before hard-delete (raw_events untouched)",
+    ),
 });

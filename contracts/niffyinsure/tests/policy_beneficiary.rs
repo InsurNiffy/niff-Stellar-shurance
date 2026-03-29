@@ -2,13 +2,15 @@
 
 #![cfg(test)]
 
+mod common;
+
 use niffyinsure::{
     types::{AgeBand, Claim, ClaimStatus, CoverageTier, PolicyType, RegionTier},
     NiffyInsureClient,
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, vec, Address, Env, String,
+    token, Address, Env, String,
 };
 
 fn setup() -> (
@@ -63,6 +65,7 @@ fn initiate(
         &1_000_000_000i128,
         token_addr,
         &beneficiary,
+        &None,
     )
 }
 
@@ -80,9 +83,10 @@ fn inject_approved_claim(
         policy_id: policy.policy_id,
         claimant: holder.clone(),
         amount,
+        deductible: 0,
         asset: token_addr.clone(),
         details: String::from_str(env, "test"),
-        image_urls: vec![env],
+        evidence: common::empty_evidence(env),
         status: ClaimStatus::Approved,
         voting_deadline_ledger: 1_000,
         approve_votes: 3,

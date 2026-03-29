@@ -2,11 +2,12 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod admin;
+pub mod events;
 mod calculator;
 mod claim;
-pub mod events;
 mod governance_token;
 mod ledger;
+mod rolling_claim_cap;
 mod policy;
 mod policy_lifecycle;
 pub mod premium;
@@ -26,7 +27,7 @@ use soroban_sdk::{contract, contractevent, contractimpl, panic_with_error, Addre
 #[contract]
 pub struct NiffyInsure;
 pub use admin::AdminError;
-pub use policy::RenewalError;
+pub use policy::{PolicyError, RenewalError};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[soroban_sdk::contracterror]
@@ -155,6 +156,7 @@ impl NiffyInsure {
             41 => validate::Error::NotEligibleVoter,
             42 => validate::Error::RateLimitExceeded,
             49 => validate::Error::VotingDurationOutOfBounds,
+            51 => validate::Error::VoterSnapshotExpired,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -191,10 +193,10 @@ impl NiffyInsure {
         policy_id: u32,
         amount: i128,
         details: soroban_sdk::String,
-        image_urls: Vec<soroban_sdk::String>,
+        evidence: Vec<types::ClaimEvidenceEntry>,
     ) -> Result<u64, validate::Error> {
         holder.require_auth();
-        claim::file_claim(&env, &holder, policy_id, amount, &details, &image_urls)
+        claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence)
     }
 
     pub fn vote_on_claim(
@@ -205,6 +207,12 @@ impl NiffyInsure {
     ) -> Result<types::ClaimStatus, validate::Error> {
         voter.require_auth();
         claim::vote_on_claim(&env, &voter, claim_id, &vote)
+    }
+
+    /// Permissionless keeper hook: bump persistent TTL for the claim voter snapshot.
+    /// Does not alter eligibility or tallies.
+    pub fn refresh_snapshot(env: Env, claim_id: u64) -> Result<(), validate::Error> {
+        claim::refresh_snapshot(&env, claim_id)
     }
 
     pub fn finalize_claim(env: Env, claim_id: u64) -> Result<types::ClaimStatus, validate::Error> {
@@ -335,6 +343,7 @@ impl NiffyInsure {
                     claim_id: c.claim_id,
                     policy_id: c.policy_id,
                     amount: c.amount,
+                    deductible: c.deductible,
                     status: c.status,
                     filed_at: c.filed_at,
                     voting_deadline_ledger: c.voting_deadline_ledger,
@@ -404,6 +413,7 @@ impl NiffyInsure {
         base_amount: i128,
         asset: Address,
         beneficiary: Option<Address>,
+        deductible: Option<i128>,
     ) -> Result<types::Policy, policy::PolicyError> {
         policy::initiate_policy(
             &env,
@@ -416,6 +426,7 @@ impl NiffyInsure {
             base_amount,
             asset,
             beneficiary,
+            deductible,
         )
     }
 
@@ -502,6 +513,48 @@ impl NiffyInsure {
     /// Read-only: number of active policies for a holder (= vote weight).
     pub fn get_active_policy_count(env: Env, holder: Address) -> u32 {
         storage::get_active_policy_count(&env, &holder)
+    }
+
+    /// If set, the `end_ledger` for which a [`policy::PolicyExpired`] event was already recorded
+    /// (one row per policy). Indexers may use this with `get_policy` for idempotency checks.
+    /// Name is shortened to satisfy the 32-char Soroban export limit.
+    pub fn get_pol_exp_evt_end_ledger(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+    ) -> Option<u32> {
+        storage::get_policy_expired_event_end_ledger(&env, &holder, policy_id)
+    }
+
+    /// Keeper hook: when `ledger_sequence >= policy.end_ledger`, emit [`policy::PolicyExpired`]
+    /// once per policy term (see `policy` module docs for notification delay). Reverts if the
+    /// policy does not exist or is not yet expired.
+    pub fn process_expired(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+    ) -> Result<(), policy::PolicyError> {
+        policy::process_expired(&env, holder, policy_id)
+    }
+
+    /// Renew before `end_ledger` (renewal window). If already expired, emits [`policy::PolicyExpired`]
+    /// when due and returns [`types::RenewPolicyOutcome::Lapsed`] in **`Ok`** (see type docs).
+    pub fn renew_policy(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+        age_band: types::AgeBand,
+        coverage_type: types::CoverageType,
+        safety_score: u32,
+    ) -> Result<types::RenewPolicyOutcome, policy::PolicyError> {
+        policy::renew_policy(
+            &env,
+            holder,
+            policy_id,
+            age_band,
+            coverage_type,
+            safety_score,
+        )
     }
 
     pub fn terminate_policy(
@@ -692,6 +745,51 @@ impl NiffyInsure {
     pub fn get_pause_flags(env: Env) -> storage::PauseFlags {
         storage::get_pause_flags(&env)
     }
+
+    // ── Rolling claim cap (ledger-window cumulative paid per policy) ─────────
+
+    /// Global rolling cap on **paid** claim amounts per policy per ledger window (gross `claim.amount`).
+    /// `i128::MAX` means effectively uncapped.
+    pub fn get_rolling_claim_cap(env: Env) -> i128 {
+        storage::get_rolling_claim_cap(&env)
+    }
+
+    /// Ledger length of each rolling window bucket (aligned to `ledger_sequence / window`).
+    pub fn get_rolling_claim_window_ledgers(env: Env) -> u32 {
+        storage::get_rolling_claim_window_ledgers(&env)
+    }
+
+    /// Remaining amount that can be **filed** this window before hitting the cap (`0` if at/over cap).
+    /// Indexers can combine with cap and `get_rolling_claim_state` for full UI.
+    pub fn get_rolling_claim_remaining(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+    ) -> i128 {
+        let now = env.ledger().sequence();
+        rolling_claim_cap::remaining_under_cap(&env, &holder, policy_id, now)
+    }
+
+    /// Raw rolling state for `(holder, policy_id)` if present (window bucket + cumulative paid).
+    pub fn get_rolling_claim_state(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+    ) -> Option<types::RollingClaimWindowState> {
+        storage::get_rolling_claim_state(&env, &holder, policy_id)
+    }
+
+    /// Admin: set rolling claim cap. Bounded unless `i128::MAX` (uncapped). Emits `ClaimCapUpdated`.
+    pub fn set_rolling_claim_cap(env: Env, new_cap: i128) -> Result<(), AdminError> {
+        let _admin = admin::require_admin(&env);
+        rolling_claim_cap::try_set_cap(&env, new_cap)
+    }
+
+    /// Admin: set rolling window length in ledgers. Emits `RollingClaimWindowLedgersUpdated`.
+    pub fn set_rolling_claim_window_ledgers(env: Env, window_ledgers: u32) -> Result<(), AdminError> {
+        let _admin = admin::require_admin(&env);
+        rolling_claim_cap::try_set_window_ledgers(&env, window_ledgers)
+    }
 }
 
 /// Governance token: reserved entrypoints only when built with `--features governance-token`.
@@ -747,6 +845,7 @@ impl NiffyInsure {
             start_ledger: 1,
             end_ledger,
             asset: token,
+            deductible: None,
             beneficiary: None,
             terminated_at_ledger: 0,
             termination_reason: TerminationReason::None,

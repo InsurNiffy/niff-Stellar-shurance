@@ -26,6 +26,10 @@ import {
   Address,
 } from '@stellar/stellar-sdk';
 import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
+import {
+  claimEvidenceVecToScVal,
+  type ClaimEvidenceInput,
+} from '../soroban/file-claim-evidence';
 
 const { Api, assembleTransaction } = SorobanRpc;
 
@@ -302,7 +306,7 @@ export class SorobanService {
    * Build unsigned initiate_policy transaction with simulation-derived footprints.
    * Argument ordering matches `contracts/niffyinsure/src/lib.rs` initiate_policy:
    * holder, policy_type, region, age_band, coverage_tier, safety_score,
-   * base_amount, asset, beneficiary (optional payout address).
+   * base_amount, asset, beneficiary (optional payout address), deductible (optional i128).
    */
   async buildInitiatePolicyTransaction(args: {
     holder: string;
@@ -314,6 +318,7 @@ export class SorobanService {
     baseAmount: bigint;
     asset?: string;
     beneficiary?: string;
+    deductible?: bigint | null;
   }): Promise<BuildTransactionResult> {
     return this.trackRpc('build_initiate_policy', () =>
       this._buildInitiatePolicyTransaction(args),
@@ -330,6 +335,7 @@ export class SorobanService {
     baseAmount: bigint;
     asset?: string;
     beneficiary?: string;
+    deductible?: bigint | null;
   }): Promise<BuildTransactionResult> {
     const server = this.makeServer();
     const account = await this.loadAccount(server, args.holder);
@@ -346,6 +352,14 @@ export class SorobanService {
             innerType: 'address',
           } as { type: string; innerType: string });
 
+    const deductibleScv =
+      args.deductible == null || args.deductible === undefined
+        ? nativeToScVal(null)
+        : nativeToScVal(args.deductible, {
+            type: 'option',
+            innerType: 'i128',
+          } as { type: string; innerType: string });
+
     const scArgs = [
       new Address(args.holder).toScVal(),
       SorobanService.enumVariantToScVal(args.policyType),
@@ -356,6 +370,7 @@ export class SorobanService {
       nativeToScVal(args.baseAmount, { type: 'i128' }),
       new Address(assetAddress).toScVal(),
       beneficiaryScv,
+      deductibleScv,
     ];
 
     const contract = new Contract(this.contractId);
@@ -420,14 +435,15 @@ export class SorobanService {
 
   /**
    * Build unsigned file_claim transaction.
-   * Signature: file_claim(holder, policy_id, amount, details, image_urls)
+   * Signature: file_claim(holder, policy_id, amount, details, evidence)
+   * Each evidence item: URL + 32-byte SHA-256 hex (from IPFS proxy / client).
    */
   async buildFileClaimTransaction(args: {
     holder: string;
     policyId: number;
     amount: bigint;
     details: string;
-    imageUrls: string[];
+    evidence: ClaimEvidenceInput[];
   }): Promise<BuildTransactionResult> {
     return this.trackRpc('build_file_claim', () =>
       this._buildFileClaimTransaction(args),
@@ -439,7 +455,7 @@ export class SorobanService {
     policyId: number;
     amount: bigint;
     details: string;
-    imageUrls: string[];
+    evidence: ClaimEvidenceInput[];
   }): Promise<BuildTransactionResult> {
     const server = this.makeServer();
     const account = await this.loadAccount(server, args.holder);
@@ -450,9 +466,7 @@ export class SorobanService {
       nativeToScVal(args.policyId, { type: 'u32' }),
       nativeToScVal(args.amount, { type: 'i128' }),
       nativeToScVal(args.details, { type: 'string' }),
-      xdr.ScVal.scvVec(
-        args.imageUrls.map((url) => nativeToScVal(url, { type: 'string' })),
-      ),
+      claimEvidenceVecToScVal(args.evidence),
     ];
 
     const contract = new Contract(this.contractId);

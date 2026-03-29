@@ -26,10 +26,16 @@ export class MetricsService implements OnModuleInit {
   readonly httpRequestTotal: client.Counter<string>;
   readonly http5xxTotal: client.Counter<string>;
 
+  // ── Queue / DLQ metrics ───────────────────────────────────────────────────
+  readonly dlqDepth: client.Gauge<string>;
+  readonly dlqJobFailed: client.Counter<string>;
+
   // ── RPC metrics ───────────────────────────────────────────────────────────
   readonly rpcCallDuration: client.Histogram<string>;
   readonly rpcCallTotal: client.Counter<string>;
   readonly rpcErrorTotal: client.Counter<string>;
+  /** result: hit | miss | bypass — quote simulation Redis cache */
+  readonly quoteSimulationCacheTotal: client.Counter<string>;
 
   constructor() {
     this.registry = new client.Registry();
@@ -61,6 +67,20 @@ export class MetricsService implements OnModuleInit {
       registers: [this.registry],
     });
 
+    this.dlqDepth = new client.Gauge({
+      name: 'bullmq_dlq_depth',
+      help: 'Number of jobs currently in the dead-letter (failed) queue',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
+    this.dlqJobFailed = new client.Counter({
+      name: 'bullmq_dlq_jobs_total',
+      help: 'Total jobs moved to dead-letter queue after max retries',
+      labelNames: ['queue', 'job_name', 'failure_reason'],
+      registers: [this.registry],
+    });
+
     this.rpcCallDuration = new client.Histogram({
       name: 'rpc_call_duration_seconds',
       help: 'Soroban RPC call latency in seconds',
@@ -80,6 +100,13 @@ export class MetricsService implements OnModuleInit {
       name: 'rpc_errors_total',
       help: 'Total Soroban RPC errors',
       labelNames: ['rpc_method', 'error_type'],
+      registers: [this.registry],
+    });
+
+    this.quoteSimulationCacheTotal = new client.Counter({
+      name: 'quote_simulation_cache_requests_total',
+      help: 'Quote simulation cache lookups (hit/miss/bypass)',
+      labelNames: ['result'],
       registers: [this.registry],
     });
   }
@@ -134,6 +161,10 @@ export class MetricsService implements OnModuleInit {
     if (status === 'error' && errorType) {
       this.rpcErrorTotal.inc({ rpc_method: rpcMethod, error_type: errorType });
     }
+  }
+
+  recordQuoteSimulationCache(result: 'hit' | 'miss' | 'bypass') {
+    this.quoteSimulationCacheTotal.inc({ result });
   }
 
   async getMetrics(): Promise<string> {

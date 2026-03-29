@@ -12,13 +12,20 @@ export type ClaimStatus = z.infer<typeof ClaimStatusSchema>
 export const VoteOptionSchema = z.enum(['Approve', 'Reject'])
 export type VoteOption = z.infer<typeof VoteOptionSchema>
 
+/** On-chain claim evidence: URL + 32-byte SHA-256 commitment (encoding varies by RPC client). */
+export const ClaimEvidenceEntrySchema = z.object({
+  url: z.string(),
+  hash: z.string(),
+})
+export type ClaimEvidenceEntry = z.infer<typeof ClaimEvidenceEntrySchema>
+
 export const ClaimSchema = z.object({
   claim_id: z.string(),
   policy_id: z.string(),
   claimant: z.string(),
   amount: z.string(),
   details: z.string(),
-  image_urls: z.array(z.string()),
+  evidence: z.array(ClaimEvidenceEntrySchema),
   status: ClaimStatusSchema,
   voting_deadline_ledger: z.number(),
   approve_votes: z.number(),

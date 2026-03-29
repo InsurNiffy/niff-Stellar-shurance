@@ -115,7 +115,7 @@ export class ClaimsController {
       policyId: dto.policyId,
       amount: BigInt(dto.amount),
       details: dto.details,
-      imageUrls: dto.imageUrls,
+      evidence: dto.evidence,
     });
   }
 
@@ -190,3 +190,4 @@ export class ClaimsController {
       unsubscribe();
     });
   }
+}

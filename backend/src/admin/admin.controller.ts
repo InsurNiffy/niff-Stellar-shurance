@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Post,
   Get,
@@ -11,13 +12,16 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminRoleGuard } from './guards/admin-role.guard';
 import { AdminService } from './admin.service';
+import { AdminPoliciesService } from './admin-policies.service';
 import { AuditService } from './audit.service';
 import { ReindexDto } from './dto/reindex.dto';
 import { AuditQueryDto } from './dto/audit-query.dto';
@@ -25,6 +29,7 @@ import { FeatureFlagDto } from './dto/feature-flag.dto';
 import { SetRateLimitDto, EnableOverrideDto } from './dto/rate-limit.dto';
 import { PrivacyService, PrivacyRequestType } from '../maintenance/privacy.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { QueueMonitorService } from '../queues/queue-monitor.service';
 
 class PrivacyRequestDto {
   @IsString() subjectWalletAddress!: string;
@@ -45,9 +50,11 @@ type AdminRequest = Request & {
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
+    private readonly adminPoliciesService: AdminPoliciesService,
     private readonly auditService: AuditService,
     private readonly privacyService: PrivacyService,
     private readonly rateLimitService: RateLimitService,
+    private readonly queueMonitor: QueueMonitorService,
   ) {}
 
   /**
@@ -64,14 +71,16 @@ export class AdminController {
   @ApiOperation({ summary: 'Enqueue a ledger reindex job from a given ledger' })
   async reindex(@Body() dto: ReindexDto, @Req() req: AdminRequest) {
     const actor = req.user?.walletAddress ?? 'unknown';
-    const jobId = await this.adminService.enqueueReindex(dto.fromLedger);
+    const network =
+      dto.network ?? this.configService.get<string>('STELLAR_NETWORK', 'testnet');
+    const jobId = await this.adminService.enqueueReindex(dto.fromLedger, network);
     await this.auditService.write({
       actor,
       action: 'reindex',
-      payload: { fromLedger: dto.fromLedger, jobId },
+      payload: { fromLedger: dto.fromLedger, network, jobId },
       ipAddress: req.ip,
     });
-    return { jobId, fromLedger: dto.fromLedger, status: 'queued' };
+    return { jobId, fromLedger: dto.fromLedger, network, status: 'queued' };
   }
 
   /**
@@ -84,6 +93,54 @@ export class AdminController {
   @ApiOperation({ summary: 'Paginated admin audit log' })
   async getAudits(@Query() query: AuditQueryDto) {
     return this.auditService.findAll(query.page, query.limit, query.action);
+  }
+
+  /**
+   * GET /admin/policies
+   *
+   * Indexed policies. Omit soft-deleted rows unless `include_deleted=true`.
+   */
+  @Get('policies')
+  @ApiOperation({ summary: 'List indexed policies (optional include_deleted for compliance)' })
+  async getAdminPolicies(@Query('include_deleted') includeDeleted?: string) {
+    const inc = includeDeleted === 'true' || includeDeleted === '1';
+    return this.adminPoliciesService.listPolicies(inc);
+  }
+
+  /**
+   * DELETE /admin/policies/:holder/:policyId
+   *
+   * Soft-delete: sets `deleted_at` on policy, its claims, and their votes.
+   * Does not remove `raw_events` (reindex integrity).
+   */
+  @Delete('policies/:holder/:policyId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Soft-delete a policy and dependent claims/votes' })
+  async softDeletePolicy(
+    @Param('holder') holder: string,
+    @Param('policyId') policyIdParam: string,
+    @Req() req: AdminRequest,
+  ) {
+    const policyId = Number(policyIdParam);
+    if (!Number.isFinite(policyId) || policyId < 0) {
+      throw new BadRequestException('policyId must be a non-negative number');
+    }
+    const result = await this.adminPoliciesService.softDeletePolicy(holder, policyId);
+    if (!result) {
+      throw new NotFoundException(`Policy ${holder}:${policyId} not found`);
+    }
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'policy_soft_delete',
+      payload: {
+        policyKey: result.id,
+        deletedAt: result.deletedAt,
+        alreadyDeleted: result.alreadyDeleted,
+      },
+      ipAddress: req.ip,
+    });
+    return result;
   }
 
   /**
@@ -229,5 +286,25 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return { policyId, overrideActive: false };
+  }
+
+  /** POST /admin/queues/:queue/jobs/:jobId/retry — replay a DLQ job */
+  @Post('queues/:queue/jobs/:jobId/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Replay a failed (DLQ) job by id' })
+  async retryDlqJob(
+    @Param('queue') queue: string,
+    @Param('jobId') jobId: string,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.queueMonitor.replayJob(queue, jobId);
+    await this.auditService.write({
+      actor,
+      action: 'dlq_job_replayed',
+      payload: { queue, jobId },
+      ipAddress: req.ip,
+    });
+    return { queue, jobId, status: 'retried' };
   }
 }

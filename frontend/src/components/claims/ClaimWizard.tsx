@@ -2,19 +2,26 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import React, { useState } from 'react';
+import { Loader2, ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react';
 
-import { Stepper, StepContent, Card, CardHeader, CardTitle, CardDescription, CardContent, Button, useToast } from '@/components/ui';
-import { useWallet } from '@/hooks/use-wallet'; // Assuming this exists based on common patterns
+import {
+  Stepper,
+  StepContent,
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  Button,
+  useToast,
+} from '@/components/ui';
+import { useWallet } from '@/hooks/use-wallet';
 import { ClaimAPI } from '@/lib/api/claim';
 
 import { AmountStep } from './steps/AmountStep';
 import { EvidenceStep } from './steps/EvidenceStep';
 import { NarrativeStep } from './steps/NarrativeStep';
 import { ReviewStep } from './steps/ReviewStep';
-import { ClaimAPI } from '@/lib/api/claim';
-import { useWallet } from '@/hooks/use-wallet';
-import { Loader2, ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react';
 
 interface ClaimWizardProps {
   policyId: string;
@@ -41,7 +48,7 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
   const [formData, setFormData] = useState({
     amount: '',
     details: '',
-    imageUrls: [] as string[],
+    evidence: [] as { url: string; contentSha256Hex: string }[],
   });
 
   // Move focus to step heading when step changes
@@ -85,7 +92,7 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
         policyId: parseInt(policyId),
         amount: formData.amount,
         details: formData.details,
-        imageUrls: formData.imageUrls,
+        evidence: formData.evidence,
       });
 
       setTxStatus('Waiting for wallet signature…');
@@ -192,8 +199,8 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
 
         <StepContent title={STEPS[2].title} isActive={activeStep === 2} isCompleted={activeStep > 2}>
           <EvidenceStep
-            imageUrls={formData.imageUrls}
-            onChange={(urls) => setFormData(prev => ({ ...prev, imageUrls: urls }))}
+            evidence={formData.evidence}
+            onChange={(evidence) => setFormData(prev => ({ ...prev, evidence }))}
           />
         </StepContent>
 

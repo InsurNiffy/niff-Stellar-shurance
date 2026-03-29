@@ -55,23 +55,34 @@ export class TenantOwnershipError extends Error {
   }
 }
 
+export type SoftDeleteQueryOpts = {
+  /** When true, include rows with `deletedAt` set (admin / compliance queries). */
+  includeDeleted?: boolean;
+};
+
 /**
  * Builds a Prisma ClaimWhereInput scoped to the given tenant.
  * Merges with any additional where conditions provided.
+ * By default excludes soft-deleted rows (`deletedAt` IS NULL).
  */
 export function claimTenantWhere(
   tenantId: string | null,
   extra: Prisma.ClaimWhereInput = {},
+  opts?: SoftDeleteQueryOpts,
 ): Prisma.ClaimWhereInput {
-  return { ...tenantFilter(tenantId), ...extra };
+  const active = opts?.includeDeleted ? {} : { deletedAt: null };
+  return { ...tenantFilter(tenantId), ...active, ...extra };
 }
 
 /**
  * Builds a Prisma PolicyWhereInput scoped to the given tenant.
+ * By default excludes soft-deleted rows.
  */
 export function policyTenantWhere(
   tenantId: string | null,
   extra: Prisma.PolicyWhereInput = {},
+  opts?: SoftDeleteQueryOpts,
 ): Prisma.PolicyWhereInput {
-  return { ...tenantFilter(tenantId), ...extra };
+  const active = opts?.includeDeleted ? {} : { deletedAt: null };
+  return { ...tenantFilter(tenantId), ...active, ...extra };
 }

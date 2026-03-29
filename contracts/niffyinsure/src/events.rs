@@ -22,10 +22,10 @@
 //! ### clm_filed — ClaimFiledData
 //! topics: ("niffyins", "clm_filed", claim_id: u64, holder: Address)
 //! ```json
-//! { "version": 1, "policy_id": 3, "amount": 5000000, "image_hash": 2864434397, "filed_at": 1234567 }
+//! { "version": 1, "policy_id": 3, "amount": 5000000, "deductible": 0, "image_hash": 2864434397, "filed_at": 1234567 }
 //! ```
 //! - `amount`: stroops (i128)
-//! - `image_hash`: FNV-1a u64 hash of concatenated IPFS CIDs
+//! - `evidence_hashes`: SHA-256 digests (32 bytes each), same order as stored claim evidence; on-chain commitment only
 //! - `filed_at`: ledger sequence number
 //!
 //! ### vote_cast — VoteCastData
@@ -110,7 +110,7 @@
 //! See those modules for field-level documentation.
 
 use crate::types::{ClaimStatus, VoteOption};
-use soroban_sdk::{contractevent, Address, Env};
+use soroban_sdk::{contractevent, Address, BytesN, Env, Vec};
 
 /// Bump this when any event payload has a breaking change (semver-major release).
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
@@ -131,8 +131,8 @@ pub struct ClaimFiledData {
     pub policy_id: u32,
     /// Amount in stroops (i128; 7 decimals).
     pub amount: i128,
-    /// FNV-1a u64 hash of concatenated IPFS CIDs.
-    pub image_hash: u64,
+    /// SHA-256 commitments per evidence entry (on-chain storage only; not content-verified here).
+    pub evidence_hashes: Vec<BytesN<32>>,
     /// Ledger sequence number at filing time.
     pub filed_at: u32,
 }
@@ -143,7 +143,7 @@ pub fn emit_claim_filed(
     holder: &Address,
     policy_id: u32,
     amount: i128,
-    image_hash: u64,
+    evidence_hashes: Vec<BytesN<32>>,
     filed_at: u32,
 ) {
     ClaimFiledData {
@@ -152,7 +152,7 @@ pub fn emit_claim_filed(
         version: EVENT_SCHEMA_VERSION,
         policy_id,
         amount,
-        image_hash,
+        evidence_hashes,
         filed_at,
     }
     .publish(env);

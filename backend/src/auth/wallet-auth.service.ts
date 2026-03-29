@@ -21,6 +21,7 @@ import { ConfigService } from '@nestjs/config';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { NonceService } from './nonce.service';
+import { normalizeAddress } from '../common/utils/normalize-address';
 
 @Injectable()
 export class WalletAuthService {
@@ -59,7 +60,9 @@ export class WalletAuthService {
   async generateChallenge(
     publicKey: string,
   ): Promise<{ nonce: string; message: string; expiresAt: string }> {
-    if (!StrKey.isValidEd25519PublicKey(publicKey)) {
+    // Normalize and validate at the API boundary
+    const canonicalKey = normalizeAddress(publicKey);
+    if (!StrKey.isValidEd25519PublicKey(canonicalKey)) {
       throw new BadRequestException({
         code: 'INVALID_PUBLIC_KEY',
         message: 'Invalid Stellar public key.',
@@ -70,9 +73,9 @@ export class WalletAuthService {
     const ttl = this.configService.get<number>('NONCE_TTL_SECONDS', 300);
     const issuedAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
-    const message = this.buildMessage(publicKey, nonce, issuedAt, expiresAt);
+    const message = this.buildMessage(canonicalKey, nonce, issuedAt, expiresAt);
 
-    await this.nonceService.store(nonce, { publicKey, message });
+    await this.nonceService.store(nonce, { publicKey: canonicalKey, message });
 
     return { nonce, message, expiresAt };
   }
@@ -82,7 +85,8 @@ export class WalletAuthService {
     nonce: string,
     signatureBase64: string,
   ): Promise<{ token: string; expiresAt: string }> {
-    if (!StrKey.isValidEd25519PublicKey(publicKey)) {
+    const canonicalKey = normalizeAddress(publicKey);
+    if (!StrKey.isValidEd25519PublicKey(canonicalKey)) {
       throw new BadRequestException({
         code: 'INVALID_PUBLIC_KEY',
         message: 'Invalid Stellar public key.',
@@ -98,7 +102,7 @@ export class WalletAuthService {
       });
     }
 
-    if (stored.publicKey !== publicKey) {
+    if (stored.publicKey !== canonicalKey) {
       throw new UnauthorizedException({
         code: 'KEY_MISMATCH',
         message: 'Public key does not match the one used to request the challenge.',
@@ -106,7 +110,7 @@ export class WalletAuthService {
     }
 
     try {
-      const keypair = Keypair.fromPublicKey(publicKey);
+      const keypair = Keypair.fromPublicKey(canonicalKey);
       const valid = keypair.verify(
         Buffer.from(stored.message),
         Buffer.from(signatureBase64, 'base64'),
@@ -130,7 +134,7 @@ export class WalletAuthService {
     );
     const now = Math.floor(Date.now() / 1000);
     // scope='user' — explicitly not admin
-    const payload = { sub: publicKey, scope: 'user', iat: now, exp: now + ttlSeconds };
+    const payload = { sub: canonicalKey, scope: 'user', iat: now, exp: now + ttlSeconds };
     const token = this.jwtService.sign(payload);
     const expiresAt = new Date((now + ttlSeconds) * 1000).toISOString();
 

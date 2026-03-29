@@ -39,8 +39,8 @@ export interface ClaimFiledEvent {
   policy_id: number;
   /** Requested payout in stroops (i128 as string). */
   amount: string;
-  /** FNV-1a u64 hash of concatenated IPFS CIDs (number). Full CIDs stored off-chain. */
-  image_hash: number;
+  /** SHA-256 digests (32 bytes each), same order as claim evidence; commitment only on-chain. */
+  evidence_hashes: string[];
   /** Ledger sequence at filing time. */
   filed_at: number;
 }

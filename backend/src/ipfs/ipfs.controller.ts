@@ -131,6 +131,12 @@ export class IpfsController {
             'https://cloudflare-ipfs.com/ipfs/QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco',
           ],
         },
+        contentSha256Hex: {
+          type: 'string',
+          example:
+            'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+          description: 'SHA-256 of uploaded bytes (64 hex chars); use in file_claim evidence.',
+        },
         filename: { type: 'string', example: 'document.pdf' },
         size: { type: 'number', example: 123456 },
         mimeType: { type: 'string', example: 'application/pdf' },

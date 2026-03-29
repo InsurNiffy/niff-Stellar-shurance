@@ -7,6 +7,8 @@ import { validationSchema } from './config/env.validation';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { CacheModule } from './cache/cache.module';
+import { RedisService } from './cache/redis.service';
+import { RedisThrottlerStorage } from './common/guards/throttler-redis.storage';
 import { RpcModule } from './rpc/rpc.module';
 import { IndexerModule } from './indexer/indexer.module';
 import { IpfsModule } from './ipfs/ipfs.module';

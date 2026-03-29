@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 # Never enable in production WASM builds.
 testutils = ["soroban-sdk/testutils"]
 experimental = []
+# Opt-in: `quarantine/events_integration_stale.rs` targets a pre-`contractevent` topic layout; keep off in CI until migrated.
+legacy-event-schema-tests = []
 # Reserves governance-token storage keys and optional admin entrypoints. No mint/transfer.
 # MVP / default builds must ship with this disabled.
 governance-token = []

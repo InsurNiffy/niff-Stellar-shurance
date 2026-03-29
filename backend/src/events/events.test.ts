@@ -41,7 +41,9 @@ describe('clm_filed', () => {
     version: SCHEMA_VERSION,
     policy_id: 3,
     amount: '5000000',
-    image_hash: 2864434397,
+    evidence_hashes: [
+      '0100000000000000000000000000000000000000000000000000000000000000',
+    ],
     filed_at: LEDGER,
   };
 
@@ -62,7 +64,9 @@ describe('clm_filed', () => {
     expect(p.version).toBe(SCHEMA_VERSION);
     expect(p.policy_id).toBe(3);
     expect(p.amount).toBe('5000000');
-    expect(p.image_hash).toBe(2864434397);
+    expect(p.evidence_hashes).toEqual([
+      '0100000000000000000000000000000000000000000000000000000000000000',
+    ]);
     expect(p.filed_at).toBe(LEDGER);
   });
 });
@@ -300,7 +304,13 @@ describe('parseEvent', () => {
   });
 
   it('returns null for unsupported schema version', () => {
-    const payload = { version: 999, policy_id: 1, amount: '0', image_hash: 0, filed_at: 0 };
+    const payload = {
+      version: 999,
+      policy_id: 1,
+      amount: '0',
+      evidence_hashes: [],
+      filed_at: 0,
+    };
     expect(parseEvent(['niffyins', 'clm_filed', 1n, HOLDER], payload, LEDGER, TX)).toBeNull();
   });
 

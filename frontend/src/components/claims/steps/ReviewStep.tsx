@@ -6,7 +6,7 @@ interface ReviewStepProps {
   data: {
     amount: string;
     details: string;
-    imageUrls: string[];
+    evidence: { url: string; contentSha256Hex: string }[];
   };
   policyId: string;
 }
@@ -61,14 +61,14 @@ export function ReviewStep({ data, policyId }: ReviewStepProps) {
                 <ImageIcon className="h-5 w-5" />
               </div>
               <div className="flex-1 space-y-3">
-                <p className="text-xs font-medium text-muted-foreground">Evidence ({data.imageUrls.length} files)</p>
+                <p className="text-xs font-medium text-muted-foreground">Evidence ({data.evidence.length} files)</p>
                 <div className="grid grid-cols-1 gap-2">
-                  {data.imageUrls.length > 0 ? (
-                    data.imageUrls.map((url, i) => (
+                  {data.evidence.length > 0 ? (
+                    data.evidence.map((item, i) => (
                       <div key={i} className="flex items-center gap-2 rounded-md border bg-muted/30 p-2 text-xs">
-                        <span className="truncate flex-1">{url}</span>
+                        <span className="truncate flex-1">{item.url}</span>
                         <a 
-                          href={url} 
+                          href={item.url} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="text-primary hover:underline"

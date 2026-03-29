@@ -21,6 +21,7 @@ export interface IdempotencyRecord {
     cid: string;
     gatewayUrls: string[];
     uploadedAt: string;
+    contentSha256Hex?: string;
   };
   /** Timestamp when the record was created */
   createdAt: string;
@@ -120,7 +121,7 @@ export class IdempotencyService {
   async storeResult(
     key: string,
     contentHash: string,
-    response: { cid: string; gatewayUrls: string[] },
+    response: { cid: string; gatewayUrls: string[]; contentSha256Hex: string },
   ): Promise<void> {
     const record: IdempotencyRecord = {
       key,
@@ -129,6 +130,7 @@ export class IdempotencyService {
         cid: response.cid,
         gatewayUrls: response.gatewayUrls,
         uploadedAt: new Date().toISOString(),
+        contentSha256Hex: response.contentSha256Hex,
       },
       createdAt: new Date().toISOString(),
       hitCount: 0,

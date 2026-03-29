@@ -62,3 +62,19 @@ groups:
           description: >
             RPC method {{ $labels.rpc_method }} p95 latency exceeded 10 s.
             Soroban network may be congested.
+
+      # ── Dead-letter queue depth alert ─────────────────────────────────────
+      - alert: DlqDepthHigh
+        expr: |
+          bullmq_dlq_depth{app="niffyinsure-api"} > 10
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Dead-letter queue depth above threshold on {{ $labels.queue }}"
+          description: >
+            Queue "{{ $labels.queue }}" has more than 10 failed jobs sitting in
+            the dead-letter set. Check bullmq_dlq_jobs_total for job_name and
+            failure_reason labels to triage. Replay via:
+            POST /api/admin/queues/{{ $labels.queue }}/jobs/:jobId/retry

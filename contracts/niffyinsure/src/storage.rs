@@ -9,6 +9,24 @@ pub const PERSISTENT_TTL_THRESHOLD: u32 = 100_000;
 /// Target TTL after extension (in ledgers, ~1 year).
 pub const PERSISTENT_TTL_EXTEND_TO: u32 = 6_000_000;
 
+// ── Claim voter snapshot TTL (persistent `ClaimVoters`) ───────────────────────
+//
+// Soroban persistent entries have a ledger TTL; when they expire the key is
+// removed. These values are sized from [`ledger::MAX_VOTING_DURATION_LEDGERS`]
+// so snapshots stay live through the longest allowed vote plus keeper margin.
+// See Stellar docs on state archival and TTL:
+// <https://developers.stellar.org/docs/learn/smart-contract-internals/state-archival>
+//
+/// When remaining TTL for a `ClaimVoters` entry is below this (in ledgers),
+/// `extend_ttl` may extend it toward [`CLAIM_VOTER_SNAPSHOT_EXTEND_TO`].
+pub const CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD: u32 =
+    ledger::MAX_VOTING_DURATION_LEDGERS + ledger::LEDGERS_PER_WEEK;
+
+/// Minimum target remaining TTL (ledgers from current sequence) after extension
+/// for `ClaimVoters` keys (max voting window + ~3 weeks for permissionless refresh cadence).
+pub const CLAIM_VOTER_SNAPSHOT_EXTEND_TO: u32 =
+    ledger::MAX_VOTING_DURATION_LEDGERS + 3 * ledger::LEDGERS_PER_WEEK;
+
 // ── DataKey ───────────────────────────────────────────────────────────────────
 
 /// Exhaustive enumeration of every storage key used by the contract.
@@ -30,6 +48,10 @@ pub enum DataKey {
     ActivePolicyCount(Address),
     /// Optional per-transaction cap for emergency sweep operations (i128).
     SweepCap,
+    /// Max total **paid** claim amount per policy per rolling ledger window (gross `claim.amount`).
+    RollingClaimCap,
+    /// Ledger length of each rolling window (bucket alignment uses current ledger sequence).
+    RollingClaimWindowLedgers,
     // ── Reserved: future governance token (`governance_token` module) ────────
     /// Runtime toggle: only meaningful when crate is built with `governance-token`.
     /// Unset or `false` in MVP; no token logic runs unless feature + flag align.
@@ -507,17 +529,38 @@ pub fn snapshot_claim_voters(env: &Env, claim_id: u64) {
     let voters = get_voters(env);
     let key = DataKey::ClaimVoters(claim_id);
     env.storage().persistent().set(&key, &voters);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    env.storage().persistent().extend_ttl(
+        &key,
+        CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD,
+        CLAIM_VOTER_SNAPSHOT_EXTEND_TO,
+    );
 }
 
 pub fn set_claim_voters(env: &Env, claim_id: u64, voters: &Vec<Address>) {
     let key = DataKey::ClaimVoters(claim_id);
     env.storage().persistent().set(&key, voters);
+    env.storage().persistent().extend_ttl(
+        &key,
+        CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD,
+        CLAIM_VOTER_SNAPSHOT_EXTEND_TO,
+    );
+}
+
+/// `true` if the persistent `ClaimVoters` entry exists (not expired / evicted).
+pub fn has_claim_voters(env: &Env, claim_id: u64) -> bool {
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .has(&DataKey::ClaimVoters(claim_id))
+}
+
+/// Extend TTL for the snapshot only; does not read or rewrite the voter list.
+pub fn extend_claim_voters_snapshot_ttl(env: &Env, claim_id: u64) {
+    let key = DataKey::ClaimVoters(claim_id);
+    env.storage().persistent().extend_ttl(
+        &key,
+        CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD,
+        CLAIM_VOTER_SNAPSHOT_EXTEND_TO,
+    );
 }
 
 pub fn get_claim_voters(env: &Env, claim_id: u64) -> Vec<Address> {
@@ -571,4 +614,80 @@ pub fn get_appeal_vote(env: &Env, claim_id: u64, voter: &Address) -> Option<Vote
     env.storage()
         .persistent()
         .get(&DataKey::AppealVote(claim_id, voter.clone()))
+}
+
+// ── Rolling claim cap (instance + persistent) ─────────────────────────────────
+
+pub fn set_rolling_claim_cap(env: &Env, cap: i128) {
+    env.storage().instance().set(&DataKey::RollingClaimCap, &cap);
+}
+
+pub fn get_rolling_claim_cap(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RollingClaimCap)
+        .unwrap_or(i128::MAX)
+}
+
+pub fn set_rolling_claim_window_ledgers(env: &Env, w: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RollingClaimWindowLedgers, &w);
+}
+
+pub fn get_rolling_claim_window_ledgers(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RollingClaimWindowLedgers)
+        .unwrap_or(1_000_000)
+}
+
+pub fn get_rolling_claim_state(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+) -> Option<RollingClaimWindowState> {
+    env.storage().persistent().get(&DataKey::RollingClaimState(
+        holder.clone(),
+        policy_id,
+    ))
+}
+
+pub fn set_rolling_claim_state(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+    state: &RollingClaimWindowState,
+) {
+    let key = DataKey::RollingClaimState(holder.clone(), policy_id);
+    env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+// ── Policy expiry notification (instance) ─────────────────────────────────────
+
+/// Last `end_ledger` for which `PolicyExpired` was emitted for this policy term.
+pub fn get_policy_expired_event_end_ledger(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+) -> Option<u32> {
+    env.storage().instance().get(&DataKey::PolicyExpiredEventEndLedger(
+        holder.clone(),
+        policy_id,
+    ))
+}
+
+pub fn set_policy_expired_event_end_ledger(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+    end_ledger: u32,
+) {
+    env.storage().instance().set(
+        &DataKey::PolicyExpiredEventEndLedger(holder.clone(), policy_id),
+        &end_ledger,
+    );
 }

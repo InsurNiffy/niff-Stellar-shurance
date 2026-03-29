@@ -9,12 +9,14 @@
 
 #![cfg(test)]
 
+mod common;
+
 use niffyinsure::{
     storage,
     types::{ClaimStatus, Policy, PolicyType, RegionTier, TerminationReason, VoteOption},
     NiffyInsureClient,
 };
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,6 +43,7 @@ fn make_policy(holder: &Address, policy_id: u32, asset: &Address) -> Policy {
         start_ledger: 0,
         end_ledger: 9_999_999,
         asset: asset.clone(),
+        deductible: None,
         beneficiary: None,
         terminated_at_ledger: 0,
         termination_reason: TerminationReason::None,
@@ -156,9 +159,10 @@ fn set_and_get_claim_round_trip() {
             policy_id: 1,
             claimant: holder.clone(),
             amount: 50_000_000,
+            deductible: 0,
             asset: token.clone(),
             details: String::from_str(&env, "water damage"),
-            image_urls: vec![&env],
+            evidence: common::empty_evidence(&env),
             status: ClaimStatus::Processing,
             voting_deadline_ledger: 101,
             approve_votes: 0,
@@ -203,9 +207,49 @@ fn file_claim_fails_when_policy_not_found() {
     let client = NiffyInsureClient::new(&env, &contract_id);
     let holder = Address::generate(&env);
     let details = String::from_str(&env, "damage");
-    let urls = vec![&env];
-    let result = client.try_file_claim(&holder, &1u32, &50_000_000i128, &details, &urls);
+    let ev = common::empty_evidence(&env);
+    let result = client.try_file_claim(&holder, &1u32, &50_000_000i128, &details, &ev);
     assert!(result.is_err());
+}
+
+#[test]
+fn file_claim_rejects_zero_evidence_hash() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+    env.as_contract(&contract_id, || {
+        let policy = make_policy(&holder, 1, &token);
+        storage::set_policy(&env, &holder, 1, &policy);
+        storage::add_voter(&env, &holder);
+    });
+    let details = String::from_str(&env, "damage");
+    let bad = common::one_url_evidence_with_hash(&env, "ipfs://x", common::zero_hash(&env));
+    assert!(client
+        .try_file_claim(&holder, &1u32, &10_000_000i128, &details, &bad)
+        .is_err());
+}
+
+#[test]
+fn file_claim_stores_evidence_hashes_on_claim() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+    env.as_contract(&contract_id, || {
+        let policy = make_policy(&holder, 1, &token);
+        storage::set_policy(&env, &holder, 1, &policy);
+        storage::add_voter(&env, &holder);
+    });
+    let details = String::from_str(&env, "roof");
+    let digest = common::sample_digest(&env);
+    let ev = common::one_url_evidence_with_hash(&env, "ipfs://Qmabc", digest.clone());
+    let claim_id = client.file_claim(&holder, &1u32, &15_000_000i128, &details, &ev);
+    let claim = client.get_claim(&claim_id);
+    assert_eq!(claim.evidence.len(), 1u32);
+    assert_eq!(claim.evidence.get(0).unwrap().hash, digest);
+    assert_eq!(
+        claim.evidence.get(0).unwrap().url,
+        String::from_str(&env, "ipfs://Qmabc")
+    );
 }
 
 // ── full multi-step flow: file → vote → approve ───────────────────────────────
@@ -241,7 +285,13 @@ fn full_claim_vote_flow_approve() {
     });
 
     let details = String::from_str(&env, "roof collapsed");
-    let claim_id = client.file_claim(&holder, &1u32, &50_000_000i128, &details, &vec![&env]);
+    let claim_id = client.file_claim(
+        &holder,
+        &1u32,
+        &50_000_000i128,
+        &details,
+        &common::empty_evidence(&env),
+    );
     assert_eq!(claim_id, 1u64);
     assert_eq!(client.get_claim_counter(), 1u64);
 
@@ -279,7 +329,13 @@ fn full_claim_vote_flow_reject() {
     });
 
     let details = String::from_str(&env, "fraudulent claim");
-    let claim_id = client.file_claim(&holder, &1u32, &10_000_000i128, &details, &vec![&env]);
+    let claim_id = client.file_claim(
+        &holder,
+        &1u32,
+        &10_000_000i128,
+        &details,
+        &common::empty_evidence(&env),
+    );
 
     client.vote_on_claim(&holder, &claim_id, &VoteOption::Reject);
     let status = client.vote_on_claim(&voter2, &claim_id, &VoteOption::Reject);
@@ -303,7 +359,13 @@ fn duplicate_vote_is_rejected() {
     });
 
     let details = String::from_str(&env, "fire damage");
-    let claim_id = client.file_claim(&holder, &1u32, &20_000_000i128, &details, &vec![&env]);
+    let claim_id = client.file_claim(
+        &holder,
+        &1u32,
+        &20_000_000i128,
+        &details,
+        &common::empty_evidence(&env),
+    );
 
     client.vote_on_claim(&holder, &claim_id, &VoteOption::Approve);
     let dup = client.try_vote_on_claim(&holder, &claim_id, &VoteOption::Approve);
@@ -327,7 +389,13 @@ fn non_voter_cannot_vote() {
     });
 
     let details = String::from_str(&env, "theft");
-    let claim_id = client.file_claim(&holder, &1u32, &30_000_000i128, &details, &vec![&env]);
+    let claim_id = client.file_claim(
+        &holder,
+        &1u32,
+        &30_000_000i128,
+        &details,
+        &common::empty_evidence(&env),
+    );
 
     let result = client.try_vote_on_claim(&outsider, &claim_id, &VoteOption::Approve);
     assert!(result.is_err());
@@ -435,9 +503,10 @@ fn make_claim(env: &Env, claim_id: u64, holder: &Address, asset: &Address) -> ni
         policy_id: 1,
         claimant: holder.clone(),
         amount: 10_000_000,
+        deductible: 0,
         asset: asset.clone(),
         details: String::from_str(env, "test"),
-        image_urls: vec![env],
+        evidence: common::empty_evidence(env),
         status: ClaimStatus::Processing,
         voting_deadline_ledger: 1000,
         approve_votes: 0,

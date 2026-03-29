@@ -74,6 +74,8 @@ curl -X POST https://staging-api.example.com/admin/maintenance/check-wasm-drift 
 
 ## 3. Privacy Requests (Anonymization / Deletion)
 
+See also **[privacy-runbook.md](./privacy-runbook.md)** for soft-delete behaviour, `DATA_RETENTION_DAYS`, and the scheduled purge of materialized rows (`raw_events` remains append-only).
+
 ### Scope and immutability limits
 
 > **Do not promise on-chain erasure to users.**  
@@ -85,7 +87,7 @@ curl -X POST https://staging-api.example.com/admin/maintenance/check-wasm-drift 
 |---|---|---|
 | PostgreSQL `claims` rows | Yes | Anonymize description/images or delete unfinalized rows |
 | PostgreSQL `policies` rows | Yes | Anonymize (retain for audit); deletion requires legal sign-off |
-| PostgreSQL `votes` rows | No — audit integrity | Retained; not deleted |
+| PostgreSQL `votes` rows | Yes (soft-delete) | Logical delete with policy; hard-delete after retention |
 | PostgreSQL `raw_events` rows | No — audit integrity | Retained; not deleted |
 | Stellar ledger (on-chain) | **Immutable** | None |
 | IPFS-pinned files | **Immutable** (public network) | Local unpin only |

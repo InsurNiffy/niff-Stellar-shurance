@@ -9,6 +9,7 @@ import type { PolicyDto } from '../api';
 interface Props {
   policy: PolicyDto;
   onClose: () => void;
+  onSubmitted?: (txHash: string) => void;
 }
 
 /**
@@ -18,7 +19,7 @@ interface Props {
  *
  * Displayed when the policy is within the 30-day renewal window.
  */
-export function RenewModal({ policy, onClose }: Props) {
+export function RenewModal({ policy, onClose, onSubmitted }: Props) {
   const { address, signTransaction } = useWallet();
   const [step, setStep] = useState<'confirm' | 'signing' | 'done' | 'error'>('confirm');
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -38,6 +39,7 @@ export function RenewModal({ policy, onClose }: Props) {
       const result = await PolicyAPI.submitTransaction(signed, '');
       setTxHash(result.transactionHash);
       setStep('done');
+      onSubmitted?.(result.transactionHash);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Renewal failed');
       setStep('error');

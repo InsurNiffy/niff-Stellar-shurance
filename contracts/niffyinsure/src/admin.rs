@@ -37,6 +37,10 @@ pub enum AdminError {
     AssetNotAllowlisted = 108,
     /// Sweep would violate protected balance constraints.
     ProtectedBalanceViolation = 109,
+    /// Rolling claim cap outside allowed bounds.
+    RollingClaimCapOutOfBounds = 110,
+    /// Rolling claim window length outside allowed bounds.
+    RollingClaimWindowOutOfBounds = 111,
 }
 
 #[contractevent(topics = ["niffyinsure", "admin_proposed"])]
@@ -345,7 +349,10 @@ fn calculate_protected_balance(env: &Env, asset: &Address) -> i128 {
                 // Get the policy to check its asset
                 if let Some(policy) = storage::get_policy(env, &claim.claimant, claim.policy_id) {
                     if policy.asset == *asset {
-                        protected = protected.saturating_add(claim.amount);
+                        let net = claim.amount.saturating_sub(claim.deductible);
+                        if net > 0 {
+                            protected = protected.saturating_add(net);
+                        }
                     }
                 }
             }

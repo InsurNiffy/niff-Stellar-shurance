@@ -8,6 +8,8 @@ export interface ClaimFormData {
 export interface IpfsUploadResponse {
   cid: string;
   gatewayUrls: string[];
+  /** SHA-256 of uploaded bytes (hex); pass to `file_claim` as `contentSha256Hex`. */
+  contentSha256Hex: string;
   filename: string;
   size: number;
   mimeType: string;

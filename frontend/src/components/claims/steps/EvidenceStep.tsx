@@ -15,15 +15,17 @@ interface FileUploadState {
   controller?: AbortController;
 }
 
+export type EvidenceAttachment = { url: string; contentSha256Hex: string };
+
 interface EvidenceStepProps {
-  imageUrls: string[];
-  onChange: (urls: string[]) => void;
+  evidence: EvidenceAttachment[];
+  onChange: (items: EvidenceAttachment[]) => void;
 }
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-export function EvidenceStep({ imageUrls, onChange }: EvidenceStepProps) {
+export function EvidenceStep({ evidence, onChange }: EvidenceStepProps) {
   const [uploads, setUploads] = useState<Record<string, FileUploadState>>({});
   const [consent, setConsent] = useState(false);
 
@@ -76,13 +78,13 @@ export function EvidenceStep({ imageUrls, onChange }: EvidenceStepProps) {
       );
 
       const url = response.gatewayUrls[0] || '';
+      const contentSha256Hex = response.contentSha256Hex;
       setUploads(prev => ({
         ...prev,
         [id]: { ...prev[id], status: 'completed', progress: 100, url }
       }));
 
-      // Update the parent state
-      onChange([...imageUrls, url]);
+      onChange([...evidence, { url, contentSha256Hex }]);
     } catch (err) {
       if (err instanceof Error && err.message === 'Upload aborted') return;
       
@@ -103,7 +105,7 @@ export function EvidenceStep({ imageUrls, onChange }: EvidenceStepProps) {
     setUploads(newUploads);
 
     if (upload.url) {
-      onChange(imageUrls.filter(u => u !== upload.url));
+      onChange(evidence.filter((e) => e.url !== upload.url));
     }
   };
 

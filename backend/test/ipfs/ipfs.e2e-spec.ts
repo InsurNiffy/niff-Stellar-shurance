@@ -164,6 +164,8 @@ describe('IPFS Upload (e2e)', () => {
       expect(response.body).toHaveProperty('gatewayUrls');
       expect(response.body.gatewayUrls).toBeInstanceOf(Array);
       expect(response.body.gatewayUrls.length).toBeGreaterThan(0);
+      expect(response.body).toHaveProperty('contentSha256Hex');
+      expect(response.body.contentSha256Hex).toMatch(/^[0-9a-f]{64}$/);
       expect(response.body).toHaveProperty('filename', 'test-image.png');
       expect(response.body).toHaveProperty('mimeType', 'image/png');
       expect(response.body).toHaveProperty('size', testImage.length);

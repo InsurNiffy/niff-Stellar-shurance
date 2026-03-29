@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ThrottlerStorage } from '@nestjs/throttler';
-import { ThrottlerStorageRecord } from '@nestjs/throttler';
-import { RedisService } from '../cache/redis.service';
+import type { ThrottlerStorageRecord } from '@nestjs/throttler/dist/throttler-storage-record.interface';
+import { RedisService } from '../../cache/redis.service';
 
 /**
  * Redis-backed storage for @nestjs/throttler.

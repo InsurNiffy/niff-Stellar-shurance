@@ -7,6 +7,7 @@ import { RedisService } from '../cache/redis.service';
 import { SanitizationService } from './sanitization.service';
 import { TenantContextService } from '../tenant/tenant-context.service';
 import { claimTenantWhere, assertTenantOwnership } from '../tenant/tenant-filter.helper';
+import { ReconciliationService } from '../indexer/reconciliation.service';
 import {
   ClaimDetailResponseDto,
   ClaimMetadataDto,
@@ -44,6 +45,7 @@ export class ClaimsService {
   private readonly cacheTtl: number;
   private readonly ipfsGateway: string;
   private readonly maxAcceptableLag = 5;
+  private readonly indexerNetwork: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -52,9 +54,11 @@ export class ClaimsService {
     private readonly config: ConfigService,
     private readonly soroban: SorobanService,
     private readonly tenantCtx: TenantContextService,
+    private readonly reconciliation: ReconciliationService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.ipfsGateway = this.config.get<string>('IPFS_GATEWAY', 'https://ipfs.io');
+    this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
   }
 
   async listClaims(params: ListClaimsParams): Promise<ClaimsListResponseDto> {
@@ -82,7 +86,9 @@ export class ClaimsService {
     const [claims, total] = await Promise.all([
       this.prisma.claim.findMany({
         where,
-        include: { votes: { select: { vote: true } } },
+        include: {
+          votes: { where: { deletedAt: null }, select: { vote: true } },
+        },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
       }),
@@ -111,7 +117,7 @@ export class ClaimsService {
     const lastLedger = await this.getLastLedger();
 
     const votedClaimIds = await this.prisma.vote.findMany({
-      where: { voterAddress: walletAddress.toLowerCase() },
+      where: { voterAddress: walletAddress.toLowerCase(), deletedAt: null },
       select: { claimId: true },
     });
     const votedIds = votedClaimIds.map((v) => v.claimId);
@@ -126,7 +132,9 @@ export class ClaimsService {
       this.prisma.claim.count({ where: baseWhere }),
       this.prisma.claim.findMany({
         where: { ...baseWhere, ...(keysetWhere ?? {}) },
-        include: { votes: { select: { vote: true } } },
+        include: {
+          votes: { where: { deletedAt: null }, select: { vote: true } },
+        },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
       }),
@@ -156,10 +164,11 @@ export class ClaimsService {
     }
 
     const lastLedger = await this.getLastLedger();
-    const claim = await this.prisma.claim.findUnique({
-      where: { id },
+    const claim = await this.prisma.claim.findFirst({
+      where: { id, deletedAt: null },
       include: {
         votes: {
+          where: { deletedAt: null },
           select: { vote: true },
         },
       },
@@ -174,6 +183,10 @@ export class ClaimsService {
 
     const response = this.transformClaim(claim, lastLedger);
 
+    // Attach reconciliation status so the frontend can show a data-quality warning.
+    const reconStatus = await this.reconciliation.getClaimReconciliationStatus(id);
+    response.consistency.tallyReconciled = reconStatus.ok;
+
     if (!walletAddress) {
       await this.redis.set(cacheKey, response, this.cacheTtl);
       return response;
@@ -183,10 +196,16 @@ export class ClaimsService {
   }
 
   private async getLastLedger(): Promise<number> {
-    const indexerState = await this.prisma.indexerState.findFirst({
+    const cursor = await this.prisma.ledgerCursor.findUnique({
+      where: { network: this.indexerNetwork },
+    });
+    if (cursor) {
+      return cursor.lastProcessedLedger;
+    }
+    const legacy = await this.prisma.indexerState.findFirst({
       orderBy: { lastLedger: 'desc' },
     });
-    return indexerState?.lastLedger || 0;
+    return legacy?.lastLedger ?? 0;
   }
 
   private transformClaim(claim: ClaimWithVotes, lastLedger: number): ClaimDetailResponseDto {
@@ -248,6 +267,7 @@ export class ClaimsService {
         indexerLag,
         lastIndexedLedger: lastLedger,
         isStale: indexerLag > this.maxAcceptableLag,
+        tallyReconciled: true, // overridden in getClaimById with live reconciliation check
       } as ConsistencyMetadataDto,
     };
   }
@@ -280,6 +300,7 @@ export class ClaimsService {
       where: {
         claimId: claim.metadata.id,
         voterAddress: walletAddress.toLowerCase(),
+        deletedAt: null,
       },
     });
 
@@ -307,7 +328,7 @@ export class ClaimsService {
     policyId: number;
     amount: bigint;
     details: string;
-    imageUrls: string[];
+    evidence: { url: string; contentSha256Hex: string }[];
   }) {
     return this.soroban.buildFileClaimTransaction(args);
   }
@@ -337,7 +358,7 @@ export class ClaimsService {
     if (numericIds.length === 0) return [];
 
     const claims = await this.prisma.claim.findMany({
-      where: { id: { in: numericIds } },
+      where: { id: { in: numericIds }, deletedAt: null },
       select: { id: true, status: true, updatedAt: true },
     });
 
