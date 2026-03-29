@@ -110,6 +110,28 @@ model IndexerState {
   @@map("indexer_state")
 }
 
+/// Per-Stellar-network indexer progress. `last_processed_ledger` is the last ledger
+/// sequence whose relevant contract events have been applied (cursor advances in the
+/// same DB transaction as raw event / projection upserts).
+model LedgerCursor {
+  network               String   @id
+  lastProcessedLedger   Int      @map("last_processed_ledger")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("ledger_cursors")
+}
+
+/// One row per network: last time a ledger gap alert was emitted (dedup / cooldown).
+model LedgerGapAlertDedup {
+  network               String   @id
+  lastFiredAt           DateTime @map("last_fired_at")
+  lastGapSize           Int?     @map("last_gap_size")
+  lastProcessedLedger   Int?     @map("last_processed_ledger")
+  latestLedger          Int?     @map("latest_ledger")
+
+  @@map("ledger_gap_alert_dedup")
+}
+
 model RawEvent {
   id              Int      @id @default(autoincrement())
   txHash          String

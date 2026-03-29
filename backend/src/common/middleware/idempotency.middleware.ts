@@ -46,8 +46,8 @@
 import { Injectable, NestMiddleware, BadRequestException, Logger } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { createHash } from 'crypto';
-import { getIdempotencyEntry, setIdempotencyEntry } from '../redis/cache';
-import { TTL } from '../redis/config';
+import { getIdempotencyEntry, setIdempotencyEntry } from '../../redis/cache';
+import { TTL } from '../../redis/config';
 
 /** Bump this when any covered endpoint's response schema changes. */
 export const IDEMPOTENCY_VERSION = 1;
@@ -82,8 +82,13 @@ export class IdempotencyMiddleware implements NestMiddleware {
       .update(`${req.method}:${req.path}:${rawKey}:${subject}`)
       .digest('hex');
 
-    // Cache hit — replay stored response
-    const cached = await getIdempotencyEntry(cacheKey, IDEMPOTENCY_VERSION);
+    // Cache hit — replay stored response (fail open if Redis/cache layer errors)
+    let cached: Awaited<ReturnType<typeof getIdempotencyEntry>> = null;
+    try {
+      cached = await getIdempotencyEntry(cacheKey, IDEMPOTENCY_VERSION);
+    } catch (err) {
+      this.logger.warn(`Idempotency lookup failed (fail open): ${String(err)}`);
+    }
     if (cached) {
       this.logger.debug(`Idempotency replay: key=${rawKey} subject=${subject} path=${req.path}`);
       res.setHeader('Idempotency-Replayed', 'true');

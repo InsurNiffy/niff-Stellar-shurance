@@ -10,6 +10,19 @@ export const validationSchema = Joi.object({
     .description("PostgreSQL connection URL"),
   REDIS_URL: Joi.string().required().description("Redis connection URL"),
   SOROBAN_RPC_URL: Joi.string().required().description("Soroban RPC endpoint"),
+  STELLAR_NETWORK: Joi.string()
+    .default("testnet")
+    .description("Logical network id for indexer cursor isolation (e.g. testnet, public)"),
+  INDEXER_GAP_ALERT_THRESHOLD_LEDGERS: Joi.number()
+    .integer()
+    .min(1)
+    .default(100)
+    .description("Alert when chain head minus last_processed exceeds this"),
+  INDEXER_GAP_ALERT_COOLDOWN_MS: Joi.number()
+    .integer()
+    .min(60_000)
+    .default(3_600_000)
+    .description("Minimum milliseconds between gap alerts per network"),
   // IPFS Configuration
   IPFS_PROVIDER: Joi.string()
     .valid("mock", "pinata")
