@@ -47,6 +47,12 @@ const WalletContext = createContext<WalletContextValue | null>(null)
 
 const LS_WALLET_KEY = 'niffyinsure:lastWalletId'
 const LS_NETWORK_KEY = 'niffyinsure:appNetwork'
+const LS_WALLET_SESSION = 'niffyinsur-wallet-session-v1'
+
+interface WalletSession {
+  walletId: WalletId;
+  publicKey: string;
+}
 
 function kitNetworkFor(app: AppNetwork): Networks {
   if (app === 'mainnet') return Networks.PUBLIC
@@ -94,6 +100,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           setActiveWalletId(null)
           setWalletNetwork(null)
           setWalletNetworkResolution({ status: 'idle' })
+          localStorage.removeItem(LS_WALLET_SESSION)
         }
       } catch {
         setAddress(null)
@@ -106,28 +113,48 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setActiveWalletId(null)
       setWalletNetwork(null)
       setWalletNetworkResolution({ status: 'idle' })
+      localStorage.removeItem(LS_WALLET_SESSION)
     })
 
-    // Auto-reconnect last wallet
-    const lastWallet = localStorage.getItem(LS_WALLET_KEY) as WalletId | null
-    if (lastWallet) {
-      reconnect(lastWallet)
+    // Auto-reconnect last wallet (Silent reconnect on app mount)
+    const sessionRaw = localStorage.getItem(LS_WALLET_SESSION)
+    if (sessionRaw) {
+      try {
+        const session = JSON.parse(sessionRaw) as WalletSession
+        reconnect(session)
+      } catch {
+        localStorage.removeItem(LS_WALLET_SESSION)
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function reconnect(walletId: WalletId) {
+  async function reconnect(session: WalletSession) {
     try {
-      StellarWalletsKit.setWallet(walletId)
+      StellarWalletsKit.setWallet(session.walletId)
       const { address: addr } = await StellarWalletsKit.getAddress()
+      
       if (addr) {
+        // Validate reconnected public key matches stored value (Requirement: clear if mismatched)
+        if (addr !== session.publicKey) {
+          console.warn('Wallet address mismatch during reconnect. Clearing session.')
+          localStorage.removeItem(LS_WALLET_SESSION)
+          return
+        }
+
         setAddress(addr)
-        setActiveWalletId(walletId)
+        setActiveWalletId(session.walletId)
         setConnectionStatus('connected')
         await refreshWalletNetwork()
       }
-    } catch {
-      // Silent — wallet may not be unlocked yet
+    } catch (err) {
+      // Failed to reconnect (extension locked or unavailable)
+      // Requirement: show a non-blocking banner if it fails.
+      toast({
+        title: 'Reconnect failed',
+        description: 'Unable to auto-reconnect to your wallet. Please unlock your extension or connect manually.',
+        variant: 'default', // non-blocking (not 'destructive' if we want it subtle)
+      })
     }
   }
 
@@ -148,11 +175,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     try {
       StellarWalletsKit.setWallet(walletId)
       const { address: addr } = await StellarWalletsKit.getAddress()
-      setAddress(addr ?? null)
-      setActiveWalletId(walletId)
-      setConnectionStatus('connected')
-      localStorage.setItem(LS_WALLET_KEY, walletId)
-      await refreshWalletNetwork()
+      
+      if (addr) {
+        setAddress(addr)
+        setActiveWalletId(walletId)
+        setConnectionStatus('connected')
+        
+        // Save session data (Requirement: {walletType, publicKey})
+        // SECURITY NOTE: We only store the public key. Never store private keys or seed phrases in localStorage.
+        localStorage.setItem(LS_WALLET_SESSION, JSON.stringify({
+          walletId,
+          publicKey: addr
+        }))
+        
+        await refreshWalletNetwork()
+      }
     } catch (err: unknown) {
       setWalletNetworkResolution({ status: 'idle' })
       setConnectionStatus('error')
@@ -173,7 +210,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setActiveWalletId(null)
     setWalletNetwork(null)
     setWalletNetworkResolution({ status: 'idle' })
-    localStorage.removeItem(LS_WALLET_KEY)
+    localStorage.removeItem(LS_WALLET_SESSION)
   }, [])
 
   const signTransaction = useCallback(async (xdr: string): Promise<string> => {
