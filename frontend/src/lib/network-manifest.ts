@@ -5,7 +5,7 @@
  */
 import registry from '../../../contracts/deployment-registry.json'
 
-export type Network = 'testnet' | 'public'
+export type Network = 'testnet' | 'mainnet' | 'futurenet'
 
 export interface ContractEntry {
   name: string
@@ -17,11 +17,14 @@ export interface ContractEntry {
 
 const EXPLORER: Record<Network, string> = {
   testnet: 'https://stellar.expert/explorer/testnet/contract',
-  public: 'https://stellar.expert/explorer/public/contract',
+  mainnet: 'https://stellar.expert/explorer/public/contract',
+  futurenet: 'https://stellar.expert/explorer/futurenet/contract',
 }
 
 export function getContracts(network: Network): ContractEntry[] {
-  return registry.contracts.map((c) => ({
+  const networkEntry = registry.networks[network]
+  if (!networkEntry) return []
+  return networkEntry.contracts.map((c) => ({
     name: c.name,
     contractId: c.contractId,
     expectedWasmHash: c.expectedWasmHash,
