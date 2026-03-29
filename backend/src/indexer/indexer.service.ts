@@ -269,11 +269,17 @@ export class IndexerService {
         await this.handlePolicyInitiated(tx, dataNative, event);
       } else if (mainTopic === 'policy' && subTopic === 'renewed') {
         await this.handlePolicyRenewed(tx, dataNative);
-      } else if (mainTopic === 'claim' && subTopic === 'filed') {
+      } else if (
+        (mainTopic === 'claim' && subTopic === 'filed') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'claim_filed')
+      ) {
         await this.handleClaimFiled(tx, dataNative, event);
       } else if (mainTopic === 'vote') {
-        await this.handleVoteCast(tx, topics, dataNative, event);
-      } else if (mainTopic === 'claim_pd') {
+        await this.handleVoteCast(tx, topics, dataNative as EventPayload, event);
+      } else if (
+        mainTopic === 'claim_pd' ||
+        (mainTopic === 'niffyinsure' && subTopic === 'claim_paid')
+      ) {
         await this.handleClaimProcessed(tx, dataNative, event);
       }
 

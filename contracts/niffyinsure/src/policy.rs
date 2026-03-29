@@ -27,6 +27,8 @@ pub enum PolicyError {
     LedgerOverflow = 105,
     /// Policy struct failed internal validation.
     PolicyValidation = 106,
+    /// Deductible missing, negative, or greater than coverage cap.
+    InvalidDeductible = 113,
     /// Caller is not authorized.
     Unauthorized = 107,
     /// Age out of range (1..=120).
@@ -73,6 +75,8 @@ pub struct PolicyInitiated {
     pub policy_type: PolicyType,
     pub region: RegionTier,
     pub coverage: i128,
+    /// Per-claim deductible in policy asset units (`None` = zero).
+    pub deductible: Option<i128>,
     pub start_ledger: u32,
     pub end_ledger: u32,
 }
@@ -256,6 +260,7 @@ pub fn initiate_policy(
     base_amount: i128,
     asset: Address,
     beneficiary: Option<Address>,
+    deductible: Option<i128>,
 ) -> Result<Policy, PolicyError> {
     // Check granular pause: policy binding should be blocked if bind_paused
     storage::assert_bind_not_paused(env);
@@ -280,6 +285,14 @@ pub fn initiate_policy(
     if base_amount <= 0 {
         return Err(PolicyError::InvalidCoverage);
     }
+
+    let deductible_stored = match deductible {
+        None => None,
+        Some(0) => None,
+        Some(d) if d < 0 => return Err(PolicyError::InvalidDeductible),
+        Some(d) if d > base_amount => return Err(PolicyError::InvalidDeductible),
+        Some(d) => Some(d),
+    };
 
     // Compute premium via the calculator (external or local fallback).
     let quote =
@@ -323,6 +336,7 @@ pub fn initiate_policy(
         start_ledger: current_ledger,
         end_ledger,
         asset: asset.clone(),
+        deductible: deductible_stored,
         beneficiary: beneficiary.clone(),
         terminated_at_ledger: 0,
         termination_reason: crate::types::TerminationReason::None,
@@ -344,6 +358,7 @@ pub fn initiate_policy(
         policy_type,
         region,
         coverage: base_amount,
+        deductible: deductible_stored,
         start_ledger: current_ledger,
         end_ledger,
     }
@@ -447,6 +462,8 @@ pub enum RenewalError {
     LedgerOverflow = 205,
     /// Grace period value outside allowed [min, max] range.
     GracePeriodOutOfBounds = 206,
+    /// Renewed coverage is incompatible with stored deductible (see `check_policy`).
+    InvalidDeductible = 207,
 }
 
 /// Renew an existing active policy.
@@ -524,6 +541,12 @@ pub fn renew_policy(
     policy.start_ledger = new_start;
     policy.end_ledger = new_end;
     policy.premium = premium_amount;
+    policy.coverage = base_amount;
+
+    validate::check_policy(&policy).map_err(|e| match e {
+        validate::Error::Overflow => RenewalError::InvalidDeductible,
+        _ => RenewalError::PremiumError,
+    })?;
 
     storage::set_policy(env, &holder, policy_id, &policy);
 

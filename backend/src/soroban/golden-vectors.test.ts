@@ -41,7 +41,7 @@ function scvTypeName(val: xdr.ScVal): string {
  *
  * Argument order MUST match contracts/niffyinsure/src/lib.rs `initiate_policy`:
  *   holder, policy_type, region, age_band, coverage_tier, safety_score,
- *   base_amount, asset, beneficiary (Option<Address>)
+ *   base_amount, asset, beneficiary (Option<Address>), deductible (Option<i128>)
  */
 function buildInitiatePolicyArgs(inputs: Record<string, unknown>): xdr.ScVal[] {
   const ben = inputs['beneficiary'];
@@ -51,6 +51,14 @@ function buildInitiatePolicyArgs(inputs: Record<string, unknown>): xdr.ScVal[] {
       : nativeToScVal(new Address(String(ben)), {
           type: 'option',
           innerType: 'address',
+        } as { type: string; innerType: string });
+  const ded = inputs['deductible'];
+  const deductibleScv =
+    ded == null || ded === ''
+      ? nativeToScVal(null)
+      : nativeToScVal(BigInt(String(ded)), {
+          type: 'option',
+          innerType: 'i128',
         } as { type: string; innerType: string });
   return [
     new Address(inputs['holder'] as string).toScVal(),
@@ -62,6 +70,7 @@ function buildInitiatePolicyArgs(inputs: Record<string, unknown>): xdr.ScVal[] {
     nativeToScVal(BigInt(inputs['base_amount'] as string), { type: 'i128' }),
     new Address(inputs['asset'] as string).toScVal(),
     beneficiaryScv,
+    deductibleScv,
   ];
 }
 
@@ -129,7 +138,7 @@ describe('Soroban argument golden vectors', () => {
       // Simulate a builder that omits the last arg (asset)
       const inputs = vectors.vectors.find((v) => v.id === 'initiate_policy__basic')!.inputs as Record<string, unknown>;
       const full = buildInitiatePolicyArgs(inputs);
-      const truncated = full.slice(0, 8); // drop beneficiary (9th arg)
+      const truncated = full.slice(0, 9); // drop deductible (10th arg)
       const neg = vectors.negativeVectors.find((n) => n.id === 'initiate_policy__wrong_arg_count')!;
       expect(truncated.length).toBe(neg.badArgCount);
       expect(truncated.length).not.toBe(

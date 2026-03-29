@@ -96,6 +96,11 @@ struct ClaimFiled {
     #[topic]
     pub claim_id: u64,
     pub holder: Address,
+    pub policy_id: u32,
+    /// Gross claim amount requested (before deductible at payout).
+    pub claim_amount: i128,
+    /// Deductible copied from the policy at filing (for indexer / UI breakdown).
+    pub deductible: i128,
     pub image_hash: u64,
 }
 
@@ -219,6 +224,8 @@ pub fn file_claim(
 
     crate::validate::check_claim_fields(env, amount, policy.coverage, details, image_urls)?;
 
+    let deductible_snapshot = policy.deductible.unwrap_or(0);
+
     let duration = storage::get_voting_duration_ledgers(env);
     let voting_deadline_ledger = now
         .checked_add(duration)
@@ -232,6 +239,7 @@ pub fn file_claim(
         policy_id,
         claimant: holder.clone(),
         amount,
+        deductible: deductible_snapshot,
         asset: policy.asset.clone(),
         details: details.clone(),
         image_urls: image_urls.clone(),
@@ -256,6 +264,9 @@ pub fn file_claim(
     ClaimFiled {
         claim_id,
         holder: holder.clone(),
+        policy_id,
+        claim_amount: amount,
+        deductible: deductible_snapshot,
         image_hash: hash_image_urls(image_urls),
     }
     .publish(env);
@@ -528,7 +539,17 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         return Err(Error::InvalidAsset);
     }
 
-    if !crate::token::check_balance(env, &policy.asset, claim.amount) {
+    let gross = claim.amount;
+    let deductible = claim.deductible;
+    let net = gross
+        .checked_sub(deductible)
+        .ok_or(Error::Overflow)?;
+    if net <= 0 {
+        // Enum size capped by Soroban; reuse ClaimAmountZero for "no positive payout after deductible".
+        return Err(Error::ClaimAmountZero);
+    }
+
+    if !crate::token::check_balance(env, &policy.asset, net) {
         return Err(Error::InsufficientTreasury);
     }
 
@@ -542,13 +563,15 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         &policy.asset,
         &env.current_contract_address(),
         &payout_to,
-        claim.amount,
+        net,
     );
 
     ClaimProcessed {
         claim_id: claim.claim_id,
         recipient: payout_to,
-        amount: claim.amount,
+        gross_amount: gross,
+        deductible,
+        amount: net,
     }
     .publish(env);
 

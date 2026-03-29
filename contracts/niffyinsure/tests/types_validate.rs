@@ -21,6 +21,7 @@ fn dummy_policy(env: &Env, start: u32, end: u32, coverage: i128, active: bool) -
         start_ledger: start,
         end_ledger: end,
         asset: Address::generate(env),
+        deductible: None,
         beneficiary: None,
         terminated_at_ledger: 0,
         termination_reason: TerminationReason::None,
@@ -35,6 +36,7 @@ fn dummy_claim(env: &Env, amount: i128, status: ClaimStatus) -> Claim {
         policy_id: 1,
         claimant: Address::generate(env),
         amount,
+        deductible: 0,
         asset: Address::generate(env),
         details: String::from_str(env, "fire damage"),
         image_urls: vec![env],
@@ -87,6 +89,30 @@ fn equal_ledger_window_rejected() {
     let env = Env::default();
     let p = dummy_policy(&env, 100, 100, 50_000_000, true);
     assert_eq!(check_policy(&p), Err(Error::InvalidLedgerWindow));
+}
+
+#[test]
+fn deductible_within_coverage_passes() {
+    let env = Env::default();
+    let mut p = dummy_policy(&env, 100, 200, 50_000_000, true);
+    p.deductible = Some(10_000_000);
+    assert_eq!(check_policy(&p), Ok(()));
+}
+
+#[test]
+fn deductible_exceeding_coverage_rejected() {
+    let env = Env::default();
+    let mut p = dummy_policy(&env, 100, 200, 50_000_000, true);
+    p.deductible = Some(50_000_001);
+    assert_eq!(check_policy(&p), Err(Error::Overflow));
+}
+
+#[test]
+fn negative_deductible_rejected() {
+    let env = Env::default();
+    let mut p = dummy_policy(&env, 100, 200, 50_000_000, true);
+    p.deductible = Some(-1);
+    assert_eq!(check_policy(&p), Err(Error::Overflow));
 }
 
 // ── Policy active check ───────────────────────────────────────────────────────

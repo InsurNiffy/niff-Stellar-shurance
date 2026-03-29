@@ -349,7 +349,10 @@ fn calculate_protected_balance(env: &Env, asset: &Address) -> i128 {
                 // Get the policy to check its asset
                 if let Some(policy) = storage::get_policy(env, &claim.claimant, claim.policy_id) {
                     if policy.asset == *asset {
-                        protected = protected.saturating_add(claim.amount);
+                        let net = claim.amount.saturating_sub(claim.deductible);
+                        if net > 0 {
+                            protected = protected.saturating_add(net);
+                        }
                     }
                 }
             }

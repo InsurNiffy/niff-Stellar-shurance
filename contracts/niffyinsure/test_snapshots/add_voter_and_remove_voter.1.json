@@ -324,6 +324,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "VoteDurLedgers"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 120960
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "Voters"
                             }
                           ]

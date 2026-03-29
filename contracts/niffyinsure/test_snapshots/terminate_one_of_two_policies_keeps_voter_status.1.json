@@ -140,6 +140,12 @@
                     },
                     {
                       "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "end_ledger"
                       },
                       "val": {
@@ -319,6 +325,12 @@
                       "val": {
                         "i128": "20000000"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -700,6 +712,18 @@
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "VoteDurLedgers"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 120960
                         }
                       },
                       {

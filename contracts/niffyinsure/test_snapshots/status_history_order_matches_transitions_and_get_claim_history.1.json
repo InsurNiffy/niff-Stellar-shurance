@@ -169,7 +169,9 @@
                 },
                 {
                   "address": "CCABDO7UZXYE4W6GVSEGSNNZTKSLFQGKXXQTH6OX7M7GKZ4Z6CUJNGZN"
-                }
+                },
+                "void",
+                "void"
               ]
             }
           },
@@ -480,6 +482,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": {
+                        "i128": "0"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "details"
                       },
                       "val": {
@@ -781,11 +791,23 @@
                     },
                     {
                       "key": {
+                        "symbol": "beneficiary"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "coverage"
                       },
                       "val": {
                         "i128": "1000000"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -957,11 +979,23 @@
                     },
                     {
                       "key": {
+                        "symbol": "beneficiary"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "coverage"
                       },
                       "val": {
                         "i128": "1000000"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -1133,11 +1167,23 @@
                     },
                     {
                       "key": {
+                        "symbol": "beneficiary"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "coverage"
                       },
                       "val": {
                         "i128": "1000000"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -1710,6 +1756,18 @@
                         },
                         "val": {
                           "address": "CCABDO7UZXYE4W6GVSEGSNNZTKSLFQGKXXQTH6OX7M7GKZ4Z6CUJNGZN"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "VoteDurLedgers"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 120960
                         }
                       },
                       {

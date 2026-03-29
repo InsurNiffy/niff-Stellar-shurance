@@ -80,6 +80,7 @@ function makeInitiatePolicyVector(
     nativeToScVal(opts.baseAmount, { type: 'i128' }),
     new Address(PLACEHOLDER_ASSET).toScVal(),
     nativeToScVal(null),
+    nativeToScVal(null),
   ];
   const names = [
     'holder',
@@ -91,6 +92,7 @@ function makeInitiatePolicyVector(
     'base_amount',
     'asset',
     'beneficiary',
+    'deductible',
   ];
   return {
     id,

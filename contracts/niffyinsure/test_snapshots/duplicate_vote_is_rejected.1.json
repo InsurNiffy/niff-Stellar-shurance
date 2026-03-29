@@ -220,6 +220,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": {
+                        "i128": "0"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "details"
                       },
                       "val": {
@@ -266,6 +274,39 @@
                         "vec": [
                           {
                             "symbol": "Processing"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "status_history"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "map": [
+                              {
+                                "key": {
+                                  "symbol": "ledger"
+                                },
+                                "val": {
+                                  "u32": 0
+                                }
+                              },
+                              {
+                                "key": {
+                                  "symbol": "status"
+                                },
+                                "val": {
+                                  "vec": [
+                                    {
+                                      "symbol": "Processing"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
                           }
                         ]
                       }
@@ -448,6 +489,12 @@
                       "val": {
                         "i128": "100000000"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -929,6 +976,18 @@
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "VoteDurLedgers"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 120960
                         }
                       },
                       {

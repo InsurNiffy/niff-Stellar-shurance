@@ -19,9 +19,10 @@
         { "pos": 5, "name": "safety_score",  "scvType": "scvU32",      "encoding": "AAAAB3UAAABK" },
         { "pos": 6, "name": "base_amount",   "scvType": "scvI128",     "encoding": "AAAACQAAAAAAAAAAAAAAAO5rKAA=" },
         { "pos": 7, "name": "asset",         "scvType": "scvAddress",  "encoding": "AAAAEgAAAAIAAAAA" },
-        { "pos": 8, "name": "beneficiary",   "scvType": "scvVoid",     "encoding": "AAAAAQ==" }
+        { "pos": 8, "name": "beneficiary",   "scvType": "scvVoid",     "encoding": "AAAAAQ==" },
+        { "pos": 9, "name": "deductible",    "scvType": "scvVoid",     "encoding": "AAAAAQ==" }
       ],
-      "argCount": 9,
+      "argCount": 10,
       "inputs": {
         "holder":        "GDVOEGATQV4FGUJKDEBEYT5NAPWJ55MEMJVLC5TU7Y74WD73PPAS4TYW",
         "policy_type":   "Auto",
@@ -31,7 +32,8 @@
         "safety_score":  74,
         "base_amount":   "1000000000",
         "asset":         "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-        "beneficiary":   null
+        "beneficiary":   null,
+        "deductible":    null
       }
     },
     {
@@ -47,9 +49,10 @@
         { "pos": 5, "name": "safety_score",  "scvType": "scvU32",      "encoding": "AAAAB3UAAAAB" },
         { "pos": 6, "name": "base_amount",   "scvType": "scvI128",     "encoding": "AAAACQAAAAAAAAAAAAAABN+AAAA=" },
         { "pos": 7, "name": "asset",         "scvType": "scvAddress",  "encoding": "AAAAEgAAAAIAAAAA" },
-        { "pos": 8, "name": "beneficiary",   "scvType": "scvVoid",     "encoding": "AAAAAQ==" }
+        { "pos": 8, "name": "beneficiary",   "scvType": "scvVoid",     "encoding": "AAAAAQ==" },
+        { "pos": 9, "name": "deductible",    "scvType": "scvVoid",     "encoding": "AAAAAQ==" }
       ],
-      "argCount": 9,
+      "argCount": 10,
       "inputs": {
         "holder":        "GDVOEGATQV4FGUJKDEBEYT5NAPWJ55MEMJVLC5TU7Y74WD73PPAS4TYW",
         "policy_type":   "Health",
@@ -59,7 +62,8 @@
         "safety_score":  1,
         "base_amount":   "5000000000",
         "asset":         "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-        "beneficiary":   null
+        "beneficiary":   null,
+        "deductible":    null
       }
     },
     {
@@ -123,10 +127,10 @@
   "negativeVectors": [
     {
       "id": "initiate_policy__wrong_arg_count",
-      "description": "Builder must reject calls with fewer than 9 args",
+      "description": "Builder must reject calls with fewer than 10 args",
       "function": "initiate_policy",
       "expectError": "ARG_COUNT_MISMATCH",
-      "badArgCount": 8
+      "badArgCount": 9
     },
     {
       "id": "initiate_policy__enum_wrong_type",

@@ -81,6 +81,12 @@ pub fn check_policy(policy: &Policy) -> Result<(), Error> {
     if policy.end_ledger <= policy.start_ledger {
         return Err(Error::InvalidLedgerWindow);
     }
+    if let Some(d) = policy.deductible {
+        if d < 0 || d > policy.coverage {
+            // No free `contracterror` slots: treat misconfigured deductible as overflow-style limits.
+            return Err(Error::Overflow);
+        }
+    }
     Ok(())
 }
 

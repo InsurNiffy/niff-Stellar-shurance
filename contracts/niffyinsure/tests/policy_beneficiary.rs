@@ -63,6 +63,7 @@ fn initiate(
         &1_000_000_000i128,
         token_addr,
         &beneficiary,
+        &None,
     )
 }
 
@@ -80,6 +81,7 @@ fn inject_approved_claim(
         policy_id: policy.policy_id,
         claimant: holder.clone(),
         amount,
+        deductible: 0,
         asset: token_addr.clone(),
         details: String::from_str(env, "test"),
         image_urls: vec![env],

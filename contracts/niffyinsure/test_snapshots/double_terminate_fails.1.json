@@ -137,6 +137,12 @@
                     },
                     {
                       "key": {
+                        "symbol": "deductible"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "end_ledger"
                       },
                       "val": {
@@ -515,6 +521,18 @@
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "VoteDurLedgers"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 120960
                         }
                       },
                       {
