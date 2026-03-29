@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MetricsService } from '../metrics/metrics.service';
+import { getNetworkConfig } from '../config/network.config';
 import { POLICY_BATCH_GET_MAX } from '../chain/chain.constants';
 import {
   Account,
@@ -114,21 +115,15 @@ export class SorobanService {
   }
 
   private get rpcUrl(): string {
-    return this.configService.get<string>(
-      'SOROBAN_RPC_URL',
-      'https://soroban-testnet.stellar.org',
-    );
+    return getNetworkConfig().rpcUrl;
   }
 
   private get networkPassphrase(): string {
-    return this.configService.get<string>(
-      'STELLAR_NETWORK_PASSPHRASE',
-      'Test SDF Network ; September 2015',
-    );
+    return getNetworkConfig().networkPassphrase;
   }
 
   private get contractId(): string {
-    return this.configService.get<string>('CONTRACT_ID', '');
+    return getNetworkConfig().contractIds.niffyinsure;
   }
 
   private makeServer(): SorobanRpc.Server {
@@ -342,7 +337,7 @@ export class SorobanService {
     const ledgerInfo = await server.getLatestLedger();
 
     // Resolve asset: use caller-supplied address or fall back to the configured default token.
-    const assetAddress = args.asset ?? this.configService.get<string>('DEFAULT_TOKEN_CONTRACT_ID', '');
+    const assetAddress = args.asset ?? getNetworkConfig().contractIds.defaultToken;
 
     const beneficiaryScv =
       args.beneficiary == null || args.beneficiary === ''
@@ -713,7 +708,7 @@ export class SorobanService {
     const ledgerInfo = await server.getLatestLedger();
 
     const assetAddress =
-      args.asset ?? this.configService.get<string>('DEFAULT_TOKEN_CONTRACT_ID', '');
+      args.asset ?? getNetworkConfig().contractIds.defaultToken;
 
     // Simulate premium first to include it in the response for UI display.
     const premiumResult = await this.simulateGeneratePremium({

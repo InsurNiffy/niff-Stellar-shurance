@@ -12,11 +12,24 @@ export const validationSchema = Joi.object({
   STELLAR_NETWORK: Joi.string()
     .valid('testnet', 'mainnet', 'futurenet')
     .default('testnet')
-    .description('Active Stellar network'),
-  SOROBAN_RPC_URL: Joi.string().required().description("Soroban RPC endpoint"),
-  STELLAR_NETWORK: Joi.string()
-    .default("testnet")
-    .description("Logical network id for indexer cursor isolation (e.g. testnet, public)"),
+    .description('Active Stellar network: testnet | mainnet | futurenet'),
+  SOROBAN_RPC_URL: Joi.string().uri().required().description('Soroban RPC endpoint for the active network'),
+  HORIZON_URL: Joi.string().uri().required().description('Horizon endpoint for the active network'),
+  STELLAR_NETWORK_PASSPHRASE: Joi.string()
+    .required()
+    .description('Must match the canonical passphrase for STELLAR_NETWORK or startup fails'),
+  CONTRACT_ID: Joi.string().allow('').default('').description('niffyinsure contract ID on the active network'),
+  DEFAULT_TOKEN_CONTRACT_ID: Joi.string().allow('').default('').description('Default SEP-41 token contract ID'),
+  // Per-network overrides (used in multi-network CI)
+  SOROBAN_RPC_URL_TESTNET: Joi.string().uri().allow('').description('Testnet RPC override'),
+  SOROBAN_RPC_URL_MAINNET: Joi.string().uri().allow('').description('Mainnet RPC override'),
+  SOROBAN_RPC_URL_FUTURENET: Joi.string().uri().allow('').description('Futurenet RPC override'),
+  HORIZON_URL_TESTNET: Joi.string().uri().allow('').description('Testnet Horizon override'),
+  HORIZON_URL_MAINNET: Joi.string().uri().allow('').description('Mainnet Horizon override'),
+  HORIZON_URL_FUTURENET: Joi.string().uri().allow('').description('Futurenet Horizon override'),
+  CONTRACT_ID_TESTNET: Joi.string().allow('').description('Testnet contract ID override'),
+  CONTRACT_ID_MAINNET: Joi.string().allow('').description('Mainnet contract ID override'),
+  CONTRACT_ID_FUTURENET: Joi.string().allow('').description('Futurenet contract ID override'),
   INDEXER_GAP_ALERT_THRESHOLD_LEDGERS: Joi.number()
     .integer()
     .min(1)

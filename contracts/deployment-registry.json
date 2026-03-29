@@ -1,11 +1,37 @@
 {
-  "contracts": [
-    {
-      "name": "niffyinsure",
-      "contractId": "${CONTRACT_ID}",
-      "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
-      "deployedAt": "2025-01-01T00:00:00Z",
-      "notes": "Replace CONTRACT_ID and NIFFYINSURE_EXPECTED_WASM_HASH with real values before first deploy. Run `sha256sum niffyinsure.wasm` after each release build and update this file."
+  "networks": {
+    "testnet": {
+      "contracts": [
+        {
+          "name": "niffyinsure",
+          "contractId": "${CONTRACT_ID_TESTNET}",
+          "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
+          "deployedAt": "",
+          "notes": "Testnet deployment. Set CONTRACT_ID_TESTNET env var. Run `sha256sum niffyinsure.wasm` after each build."
+        }
+      ]
+    },
+    "mainnet": {
+      "contracts": [
+        {
+          "name": "niffyinsure",
+          "contractId": "${CONTRACT_ID_MAINNET}",
+          "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
+          "deployedAt": "",
+          "notes": "Mainnet deployment. CONTRACT_ID_MAINNET is REQUIRED at startup — server refuses to start without it."
+        }
+      ]
+    },
+    "futurenet": {
+      "contracts": [
+        {
+          "name": "niffyinsure",
+          "contractId": "${CONTRACT_ID_FUTURENET}",
+          "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
+          "deployedAt": "",
+          "notes": "Futurenet deployment. Set CONTRACT_ID_FUTURENET env var."
+        }
+      ]
     }
-  ]
+  }
 }
