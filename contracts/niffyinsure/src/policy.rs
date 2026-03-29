@@ -41,6 +41,18 @@ pub enum PolicyError {
     NotFound = 111,
     /// Policy is already active.
     AlreadyActive = 112,
+    /// Keeper `process_expired`: policy is not yet at `end_ledger`.
+    NotYetExpired = 113,
+    /// `renew_policy` called before the renewal window opens.
+    NotInRenewalWindow = 114,
+    /// `renew_policy`: policy is inactive (terminated or deactivated).
+    PolicyInactive = 115,
+    /// `renew_policy`: an open claim exists for this policy.
+    OpenClaimBlocksRenewal = 116,
+    /// `renew_policy`: strike count blocks renewal (see `STRIKE_DEACTIVATION_THRESHOLD`).
+    TooManyStrikesForRenewal = 117,
+    /// Reserved / legacy: expired renewals now return [`crate::types::RenewPolicyOutcome::Lapsed`] `Ok`.
+    Expired = 118,
 }
 
 #[contracttype]
@@ -84,7 +96,6 @@ pub struct BeneficiaryUpdated {
 /// Event emitted by `renew_policy`.
 #[contractevent]
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct PolicyRenewed {
     #[topic]
     pub holder: Address,
@@ -92,6 +103,26 @@ pub struct PolicyRenewed {
     pub policy_id: u32,
     pub premium: i128,
     pub new_end_ledger: u32,
+}
+
+/// Emitted at most once per `(holder, policy_id, end_ledger)` term when expiry is detected.
+///
+/// **Timing:** `reported_at_ledger` is the ledger of the transaction that observes expiry.
+/// It may be **strictly greater** than `expiry_ledger` if no call ran exactly at expiry
+/// (keeper delay is normal). Indexers and notification services should **deduplicate on
+/// `policy_id`** (and holder) and must not assume the event fires on the expiry ledger itself.
+///
+/// **`renew_policy` on an expired policy:** the call returns [`crate::types::RenewPolicyOutcome::Lapsed`]
+/// in **`Ok`** (not `Err`) so this event and idempotency storage are not rolled back.
+#[contractevent(topics = ["niffyinsure", "policy_expired"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyExpired {
+    #[topic]
+    pub holder: Address,
+    #[topic]
+    pub policy_id: u32,
+    pub expiry_ledger: u32,
+    pub reported_at_ledger: u32,
 }
 
 pub fn generate_premium(
@@ -529,4 +560,144 @@ pub fn renew_policy(
     .publish(env);
 
     Ok(policy)
+}
+
+/// Emit [`PolicyExpired`] if `now >= end_ledger` and we have not yet recorded an event for this term.
+pub fn publish_policy_expired_if_due(env: &Env, policy: &Policy, now: u32) {
+    if !ledger::is_expired(now, policy.end_ledger) {
+        return;
+    }
+    if storage::get_policy_expired_event_end_ledger(env, &policy.holder, policy.policy_id)
+        == Some(policy.end_ledger)
+    {
+        return;
+    }
+    PolicyExpired {
+        holder: policy.holder.clone(),
+        policy_id: policy.policy_id,
+        expiry_ledger: policy.end_ledger,
+        reported_at_ledger: now,
+    }
+    .publish(env);
+    storage::set_policy_expired_event_end_ledger(
+        env,
+        &policy.holder,
+        policy.policy_id,
+        policy.end_ledger,
+    );
+    storage::bump_instance(env);
+}
+
+/// Keeper entrypoint: observe expiry for indexers / notification pipelines.
+///
+/// Reverts with [`PolicyError::NotYetExpired`] if `now < end_ledger`. If expiry was already
+/// notified for this policy term, succeeds without emitting a duplicate event.
+pub fn process_expired(env: &Env, holder: Address, policy_id: u32) -> Result<(), PolicyError> {
+    storage::bump_instance(env);
+    let policy = storage::get_policy(env, &holder, policy_id).ok_or(PolicyError::NotFound)?;
+    let now = env.ledger().sequence();
+    if !ledger::is_expired(now, policy.end_ledger) {
+        return Err(PolicyError::NotYetExpired);
+    }
+    publish_policy_expired_if_due(env, &policy, now);
+    Ok(())
+}
+
+/// Extend policy duration after premium payment (renewal window only).
+///
+/// If the policy is already expired, records [`PolicyExpired`] if not yet recorded for this
+/// term, then returns [`crate::types::RenewPolicyOutcome::Lapsed`] in **`Ok`** so storage and
+/// events persist (an `Err` would roll back the contract invocation).
+#[allow(clippy::too_many_arguments)]
+pub fn renew_policy(
+    env: &Env,
+    holder: Address,
+    policy_id: u32,
+    age_band: AgeBand,
+    coverage_type: CoverageType,
+    safety_score: u32,
+) -> Result<crate::types::RenewPolicyOutcome, PolicyError> {
+    storage::assert_bind_not_paused(env);
+    holder.require_auth();
+
+    let mut policy = storage::get_policy(env, &holder, policy_id).ok_or(PolicyError::NotFound)?;
+    let now = env.ledger().sequence();
+
+    if ledger::is_expired(now, policy.end_ledger) {
+        publish_policy_expired_if_due(env, &policy, now);
+        return Ok(crate::types::RenewPolicyOutcome::Lapsed);
+    }
+
+    if !policy.is_active {
+        return Err(PolicyError::PolicyInactive);
+    }
+
+    if storage::has_open_claim(env, &holder, policy_id) {
+        return Err(PolicyError::OpenClaimBlocksRenewal);
+    }
+
+    if policy.strike_count >= STRIKE_DEACTIVATION_THRESHOLD {
+        return Err(PolicyError::TooManyStrikesForRenewal);
+    }
+
+    if !ledger::is_in_renewal_window(
+        now,
+        policy.end_ledger,
+        ledger::RENEWAL_WINDOW_LEDGERS,
+    ) {
+        return Err(PolicyError::NotInRenewalWindow);
+    }
+
+    if safety_score > 100 {
+        return Err(PolicyError::InvalidRiskScore);
+    }
+
+    if !storage::is_allowed_asset(env, &policy.asset) {
+        return Err(PolicyError::AssetNotAllowed);
+    }
+
+    let input = RiskInput {
+        region: policy.region.clone(),
+        age_band: age_band.clone(),
+        coverage: coverage_type,
+        safety_score,
+    };
+
+    let quote =
+        crate::calculator::compute_quote(env, &input, policy.coverage, false, QUOTE_TTL_LEDGERS)
+            .map_err(|e| match e {
+                Error::CalculatorPaused => PolicyError::ContractPaused,
+                Error::CalculatorCallFailed | Error::CalculatorNotSet => PolicyError::PremiumOverflow,
+                _ => PolicyError::PremiumOverflow,
+            })?;
+
+    let premium_amount = quote.total_premium;
+    if premium_amount <= 0 {
+        return Err(PolicyError::InvalidPremium);
+    }
+
+    token::collect_premium(env, &holder, &policy.asset, premium_amount);
+
+    let new_end = policy
+        .end_ledger
+        .checked_add(ledger::POLICY_DURATION_LEDGERS)
+        .ok_or(PolicyError::LedgerOverflow)?;
+
+    policy.premium = premium_amount;
+    policy.end_ledger = new_end;
+
+    validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
+
+    storage::set_policy(env, &holder, policy_id, &policy);
+
+    PolicyRenewed {
+        version: POLICY_EVENT_VERSION,
+        holder: holder.clone(),
+        policy_id,
+        premium: premium_amount,
+        new_end_ledger: new_end,
+    }
+    .publish(env);
+
+    Ok(crate::types::RenewPolicyOutcome::Renewed(policy))
 }

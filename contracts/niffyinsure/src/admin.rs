@@ -37,6 +37,10 @@ pub enum AdminError {
     AssetNotAllowlisted = 108,
     /// Sweep would violate protected balance constraints.
     ProtectedBalanceViolation = 109,
+    /// Rolling claim cap outside allowed bounds.
+    RollingClaimCapOutOfBounds = 110,
+    /// Rolling claim window length outside allowed bounds.
+    RollingClaimWindowOutOfBounds = 111,
 }
 
 #[contractevent(topics = ["niffyinsure", "admin_proposed"])]

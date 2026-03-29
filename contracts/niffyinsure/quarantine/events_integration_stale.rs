@@ -1,8 +1,11 @@
-//! **Quarantined** (not built as a `tests/*.rs` target): expects legacy `niffyins` / `adm_paus`
-//! topics and an older Soroban `events().all()` shape. Update to current `#[contractevent]`
-//! topics (`niffyinsure`, `pause_toggled`, etc.) before moving back to `tests/events.rs`.
+#![cfg(all(test, feature = "legacy-event-schema-tests"))]
+//! **Quarantined** (not built as a `tests/*.rs` target unless wired via `[[test]]`): expects legacy
+//! `niffyins` / `adm_paus` topics and an older Soroban `events().all()` shape. Update to current
+//! `#[contractevent]` topics (`niffyinsure`, `pause_toggled`, etc.) before moving back to
+//! `tests/events.rs`.
 //!
-//! Event shape regression tests.
+//! Disabled by default: the contract now emits `niffyinsure` `contractevent` topics.
+//! Opt in with `cargo test --features legacy-event-schema-tests` after adding a `[[test]]` path if needed.
 //!
 //! Each test asserts the exact topic layout and payload fields for a lifecycle
 //! path. If an event struct changes shape, these tests fail CI intentionally —
@@ -13,8 +16,6 @@
 //! A panic in `from_val` means the payload type no longer matches the struct.
 //! A wrong field value means the emitter is passing incorrect data.
 //! A wrong topic count means the topic layout changed (breaking for indexers).
-
-#![cfg(test)]
 
 use niffyinsure::{
     events::{

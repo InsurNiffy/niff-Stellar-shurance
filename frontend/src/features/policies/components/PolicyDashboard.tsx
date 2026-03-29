@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { useWallet } from '@/hooks/use-wallet';
 import { useLatestLedger } from '@/hooks/use-latest-ledger';
 import { getConfig } from '@/config/env';
-import { usePolicies } from '../hooks/usePolicies';
+import { useOptimisticPolicies, PolicyConfirmationPoller } from '../hooks/useOptimisticPolicies';
 import { PolicyCard, PolicyRow } from './PolicyItem';
 import { PolicyListSkeleton, PolicyEmptyState, PolicyErrorState } from './PolicyStates';
 import { RenewModal } from './RenewModal';
@@ -29,8 +29,8 @@ export function PolicyDashboard() {
   const [renewTarget, setRenewTarget] = useState<PolicyDto | null>(null);
   const [terminateTarget, setTerminateTarget] = useState<PolicyDto | null>(null);
 
-  const { policies, total, pageIndex, hasNextPage, hasPrevPage, loading, error, goToPage, retry } =
-    usePolicies(address, network, status, sort);
+  const { policies, total, pageIndex, hasNextPage, hasPrevPage, loading, error, goToPage, retry, applyOptimisticPolicy, mergedPolicies, entries: optimisticEntries, confirm: confirmOptimistic, rollback: rollbackOptimistic } =
+    useOptimisticPolicies(address, network, status, sort);
 
   const handleRenew = useCallback((policy: PolicyDto) => setRenewTarget(policy), []);
   const handleTerminate = useCallback((policy: PolicyDto) => setTerminateTarget(policy), []);
@@ -99,15 +99,20 @@ export function PolicyDashboard() {
         <PolicyEmptyState filter={status === 'all' ? 'all' : status} />
       ) : layout === 'card' ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {policies.map((p) => (
-            <PolicyCard
-              key={`${p.holder}:${p.policy_id}`}
-              policy={p}
-              onRenew={handleRenew}
-              onTerminate={handleTerminate}
-              currentLedger={currentLedger}
-            />
-          ))}
+          {mergedPolicies.map((p) => {
+            const entry = optimisticEntries.get(String(p.policy_id));
+            return (
+              <PolicyCard
+                key={`${p.holder}:${p.policy_id}`}
+                policy={p}
+                onRenew={handleRenew}
+                onTerminate={handleTerminate}
+                currentLedger={currentLedger}
+                optimisticStatus={entry?.status}
+                optimisticError={entry?.error}
+              />
+            );
+          })}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -123,15 +128,20 @@ export function PolicyDashboard() {
               </tr>
             </thead>
             <tbody>
-              {policies.map((p) => (
-                <PolicyRow
-                  key={`${p.holder}:${p.policy_id}`}
-                  policy={p}
-                  onRenew={handleRenew}
-                  onTerminate={handleTerminate}
-                  currentLedger={currentLedger}
-                />
-              ))}
+              {mergedPolicies.map((p) => {
+                const entry = optimisticEntries.get(String(p.policy_id));
+                return (
+                  <PolicyRow
+                    key={`${p.holder}:${p.policy_id}`}
+                    policy={p}
+                    onRenew={handleRenew}
+                    onTerminate={handleTerminate}
+                    currentLedger={currentLedger}
+                    optimisticStatus={entry?.status}
+                    optimisticError={entry?.error}
+                  />
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -166,11 +176,41 @@ export function PolicyDashboard() {
 
       {/* ── Action modals ───────────────────────────────────────────── */}
       {renewTarget && (
-        <RenewModal policy={renewTarget} onClose={() => setRenewTarget(null)} />
+        <RenewModal
+          policy={renewTarget}
+          onClose={() => setRenewTarget(null)}
+          onSubmitted={(txHash) => {
+            applyOptimisticPolicy(renewTarget, txHash);
+            setRenewTarget(null);
+          }}
+        />
       )}
       {terminateTarget && (
-        <TerminateModal policy={terminateTarget} onClose={() => setTerminateTarget(null)} />
+        <TerminateModal
+          policy={terminateTarget}
+          onClose={() => setTerminateTarget(null)}
+          onSubmitted={(txHash) => {
+            applyOptimisticPolicy(terminateTarget, txHash);
+            setTerminateTarget(null);
+          }}
+        />
       )}
+
+      {/* Headless confirmation pollers — one per pending optimistic entry */}
+      {address && Array.from(optimisticEntries.values())
+        .filter((e) => e.status === 'pending')
+        .map((e) => (
+          <PolicyConfirmationPoller
+            key={e.key}
+            holder={address}
+            policyId={Number(e.key)}
+            createdAt={e.createdAt}
+            enabled
+            onConfirmed={confirmOptimistic}
+            onRollback={rollbackOptimistic}
+          />
+        ))
+      }
     </section>
   );
 }

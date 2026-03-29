@@ -8,13 +8,14 @@ import type { PolicyDto } from '../api';
 interface Props {
   policy: PolicyDto;
   onClose: () => void;
+  onSubmitted?: (txHash: string) => void;
 }
 
 /**
  * TerminateModal — warns the user that termination is irreversible and
  * requires an on-chain transaction. Calls the backend terminate endpoint.
  */
-export function TerminateModal({ policy, onClose }: Props) {
+export function TerminateModal({ policy, onClose, onSubmitted }: Props) {
   const { address, signTransaction } = useWallet();
   const { apiUrl } = getConfig();
   const [step, setStep] = useState<'confirm' | 'signing' | 'done' | 'error'>('confirm');
@@ -48,6 +49,7 @@ export function TerminateModal({ policy, onClose }: Props) {
       const { transactionHash } = (await submitRes.json()) as { transactionHash: string };
       setTxHash(transactionHash);
       setStep('done');
+      onSubmitted?.(transactionHash);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Termination failed');
       setStep('error');

@@ -26,6 +26,10 @@ export class MetricsService implements OnModuleInit {
   readonly httpRequestTotal: client.Counter<string>;
   readonly http5xxTotal: client.Counter<string>;
 
+  // ── Queue / DLQ metrics ───────────────────────────────────────────────────
+  readonly dlqDepth: client.Gauge<string>;
+  readonly dlqJobFailed: client.Counter<string>;
+
   // ── RPC metrics ───────────────────────────────────────────────────────────
   readonly rpcCallDuration: client.Histogram<string>;
   readonly rpcCallTotal: client.Counter<string>;
@@ -58,6 +62,20 @@ export class MetricsService implements OnModuleInit {
       name: 'http_5xx_errors_total',
       help: 'Total HTTP 5xx responses',
       labelNames: ['method', 'route'],
+      registers: [this.registry],
+    });
+
+    this.dlqDepth = new client.Gauge({
+      name: 'bullmq_dlq_depth',
+      help: 'Number of jobs currently in the dead-letter (failed) queue',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
+    this.dlqJobFailed = new client.Counter({
+      name: 'bullmq_dlq_jobs_total',
+      help: 'Total jobs moved to dead-letter queue after max retries',
+      labelNames: ['queue', 'job_name', 'failure_reason'],
       registers: [this.registry],
     });
 

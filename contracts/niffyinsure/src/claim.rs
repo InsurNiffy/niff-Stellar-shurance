@@ -66,7 +66,7 @@
 // or deadline-plurality approval, which is controlled by the DAO snapshot, not
 // the admin. The admin cannot flip a `Rejected` claim to `Approved`.
 use crate::{
-    ledger, storage,
+    ledger, rolling_claim_cap, storage,
     types::{
         Claim, ClaimProcessed, ClaimStatus, ClaimStatusHistoryEntry, TerminationReason, VoteOption,
         CLAIM_STATUS_HISTORY_MAX, STRIKE_DEACTIVATION_THRESHOLD,

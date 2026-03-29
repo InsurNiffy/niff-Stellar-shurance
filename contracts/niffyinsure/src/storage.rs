@@ -30,6 +30,10 @@ pub enum DataKey {
     ActivePolicyCount(Address),
     /// Optional per-transaction cap for emergency sweep operations (i128).
     SweepCap,
+    /// Max total **paid** claim amount per policy per rolling ledger window (gross `claim.amount`).
+    RollingClaimCap,
+    /// Ledger length of each rolling window (bucket alignment uses current ledger sequence).
+    RollingClaimWindowLedgers,
     // ── Reserved: future governance token (`governance_token` module) ────────
     /// Runtime toggle: only meaningful when crate is built with `governance-token`.
     /// Unset or `false` in MVP; no token logic runs unless feature + flag align.
@@ -535,4 +539,80 @@ pub fn get_appeal_vote(env: &Env, claim_id: u64, voter: &Address) -> Option<Vote
     env.storage()
         .persistent()
         .get(&DataKey::AppealVote(claim_id, voter.clone()))
+}
+
+// ── Rolling claim cap (instance + persistent) ─────────────────────────────────
+
+pub fn set_rolling_claim_cap(env: &Env, cap: i128) {
+    env.storage().instance().set(&DataKey::RollingClaimCap, &cap);
+}
+
+pub fn get_rolling_claim_cap(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RollingClaimCap)
+        .unwrap_or(i128::MAX)
+}
+
+pub fn set_rolling_claim_window_ledgers(env: &Env, w: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RollingClaimWindowLedgers, &w);
+}
+
+pub fn get_rolling_claim_window_ledgers(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RollingClaimWindowLedgers)
+        .unwrap_or(1_000_000)
+}
+
+pub fn get_rolling_claim_state(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+) -> Option<RollingClaimWindowState> {
+    env.storage().persistent().get(&DataKey::RollingClaimState(
+        holder.clone(),
+        policy_id,
+    ))
+}
+
+pub fn set_rolling_claim_state(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+    state: &RollingClaimWindowState,
+) {
+    let key = DataKey::RollingClaimState(holder.clone(), policy_id);
+    env.storage().persistent().set(&key, state);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+// ── Policy expiry notification (instance) ─────────────────────────────────────
+
+/// Last `end_ledger` for which `PolicyExpired` was emitted for this policy term.
+pub fn get_policy_expired_event_end_ledger(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+) -> Option<u32> {
+    env.storage().instance().get(&DataKey::PolicyExpiredEventEndLedger(
+        holder.clone(),
+        policy_id,
+    ))
+}
+
+pub fn set_policy_expired_event_end_ledger(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+    end_ledger: u32,
+) {
+    env.storage().instance().set(
+        &DataKey::PolicyExpiredEventEndLedger(holder.clone(), policy_id),
+        &end_ledger,
+    );
 }

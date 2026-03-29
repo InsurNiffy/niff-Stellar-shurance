@@ -364,6 +364,19 @@ pub struct Policy {
     pub strike_count: u32,
 }
 
+/// Return value of [`crate::policy::renew_policy`].
+///
+/// When the policy is already at or past `end_ledger`, the call **succeeds** with [`Lapsed`](Self::Lapsed)
+/// so that [`crate::policy::PolicyExpired`] and idempotency storage are committed (a failed `Result::Err`
+/// invocation would roll those writes back).
+#[contracttype]
+#[derive(Clone)]
+pub enum RenewPolicyOutcome {
+    Renewed(Policy),
+    /// Ledger is at or after `end_ledger`; expiry notice recorded if due; no premium taken.
+    Lapsed,
+}
+
 /// On-chain claim record.
 ///
 /// `filed_at` is the ledger sequence at which the claim was filed.
@@ -405,6 +418,18 @@ pub struct Claim {
     /// [`CLAIM_STATUS_HISTORY_MAX`]; on overflow the oldest entries are removed.
     /// May be incomplete if the cap is exceeded; `status` is authoritative.
     pub status_history: Vec<ClaimStatusHistoryEntry>,
+}
+
+/// Per-policy rolling window accumulator for **paid** claim amounts (same ledger window for all policies).
+///
+/// `window_start` is the first ledger of the bucket: `floor(now / window_len) * window_len`.
+/// `cumulative_paid` resets when the bucket changes. Indexers can derive **remaining** as
+/// `min(rolling_claim_cap - cumulative_paid, policy.coverage)` for UX (cap is global).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RollingClaimWindowState {
+    pub window_start: u32,
+    pub cumulative_paid: i128,
 }
 
 #[contracttype]

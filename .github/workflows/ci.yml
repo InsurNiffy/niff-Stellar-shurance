@@ -14,7 +14,7 @@ permissions:
 jobs:
   # ── Frontend quality gate ─────────────────────────────────────────────────
   frontend:
-    name: Frontend (lint → typecheck → build)
+    name: Frontend (lint → typecheck → build → test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,11 +40,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test
+        run: npm test
+
   # ── Soroban ABI golden-vector drift guard ────────────────────────────────
   golden-vectors:
     name: Soroban ABI golden vectors
     runs-on: ubuntu-latest
-    # Run whenever contracts or backend builder code changes
     if: |
       github.event_name == 'push' ||
       contains(toJson(github.event.pull_request.changed_files), 'contracts/') ||
@@ -73,77 +75,37 @@ jobs:
             exit 1
           fi
 
-  # ── Smart contract ────────────────────────────────────────────────────────
+  # ── Smart contract (Rust / Soroban) ──────────────────────────────────────
   contract:
     name: Contract (Rust / Soroban)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: '20'
-      - name: Determine package manager
-        id: pkgmgr
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
-          elif [ -f package-lock.json ]; then
-            echo "manager=npm" >> "$GITHUB_OUTPUT"
-          elif [ -f yarn.lock ]; then
-            echo "manager=yarn" >> "$GITHUB_OUTPUT"
-          else
-            echo "manager=npm" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Setup pnpm when needed
-        if: steps.pkgmgr.outputs.manager == 'pnpm'
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
-      - name: Cache node modules
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
         uses: actions/cache@v4
         with:
           path: |
-            node_modules
-            ~/.pnpm-store
-          key: ${{ runner.os }}-node-${{ steps.pkgmgr.outputs.manager }}-${{ hashFiles('**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-node-${{ steps.pkgmgr.outputs.manager }}-
-      - name: Cache .next cache
-        uses: actions/cache@v4
-        with:
-          path: .next/cache
-          key: ${{ runner.os }}-next-cache-${{ hashFiles('**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-next-cache-
-      - name: Install dependencies
-        run: |
-          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
-            pnpm install --frozen-lockfile
-          else
-            npm ci
-          fi
-      - name: Lint (fail on warnings)
-        run: |
-          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
-            pnpm eslint --max-warnings=0 .
-          else
-            npm run lint -- --max-warnings=0
-          fi
-      - name: TypeScript compile
-        run: |
-          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
-            pnpm tsc --noEmit
-          else
-            npm run build --if-present -- --noEmit
-          fi
-      - name: Build
-        run: |
-          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
-            pnpm build
-          else
-            npm run build
-          fi
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Run contract tests
+        run: cargo test --workspace --features testutils
+
+      - name: Build WASM (release)
+        run: cargo build --release --target wasm32-unknown-unknown --workspace
+
+  # ── Backend unit tests ────────────────────────────────────────────────────
   unit-tests:
-    name: Unit tests
+    name: Backend unit tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -157,7 +119,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Install Redis directly on the runner — avoids Docker Hub rate limits entirely
       - name: Start Redis
         run: |
           sudo apt-get update -qq
@@ -168,42 +129,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
       - name: Install dependencies
         run: npm ci
+
       - name: Run unit tests
         run: npm test
 
+  # ── Playwright E2E tests ──────────────────────────────────────────────────
   e2e-tests:
     name: Playwright E2E tests
     runs-on: ubuntu-latest
     needs: frontend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-      - name: Run Playwright tests
-        run: npx playwright test --reporter=html
-        continue-on-error: true
-      - name: Upload Playwright artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v3
-        with:
-          name: playwright-failure-${{ github.run_id }}
-          path: |
- feat/accessibility-audit
-            sbom-backend.json
-            sbom-frontend.json
-          retention-days: 90
-
-  # ── Frontend ──────────────────────────────────────────────────────────────
-  frontend:
-    name: Frontend (Next.js / TypeScript)
-    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
@@ -212,15 +149,27 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          node-version: '20'
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run check-docs
-      - run: npm run build
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        run: npx playwright test --reporter=html
+        continue-on-error: true
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-${{ github.run_id }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
 
   # ── Accessibility (axe) ───────────────────────────────────────────────────
   accessibility:
@@ -255,9 +204,3 @@ jobs:
           name: axe-report-${{ github.sha }}
           path: frontend/playwright-report/
           retention-days: 14
-
-            test-results
-            playwright-report
-            traces
-            .playwright/traces
-

@@ -44,6 +44,7 @@ export class ClaimsService {
   private readonly cacheTtl: number;
   private readonly ipfsGateway: string;
   private readonly maxAcceptableLag = 5;
+  private readonly indexerNetwork: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -55,6 +56,7 @@ export class ClaimsService {
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.ipfsGateway = this.config.get<string>('IPFS_GATEWAY', 'https://ipfs.io');
+    this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
   }
 
   async listClaims(params: ListClaimsParams): Promise<ClaimsListResponseDto> {
@@ -183,10 +185,16 @@ export class ClaimsService {
   }
 
   private async getLastLedger(): Promise<number> {
-    const indexerState = await this.prisma.indexerState.findFirst({
+    const cursor = await this.prisma.ledgerCursor.findUnique({
+      where: { network: this.indexerNetwork },
+    });
+    if (cursor) {
+      return cursor.lastProcessedLedger;
+    }
+    const legacy = await this.prisma.indexerState.findFirst({
       orderBy: { lastLedger: 'desc' },
     });
-    return indexerState?.lastLedger || 0;
+    return legacy?.lastLedger ?? 0;
   }
 
   private transformClaim(claim: ClaimWithVotes, lastLedger: number): ClaimDetailResponseDto {

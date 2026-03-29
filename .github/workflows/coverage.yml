@@ -1,0 +1,70 @@
+name: Coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  contract-coverage:
+    name: Contract coverage (≥ 95%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-cov-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-cov-
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run coverage
+        run: |
+          cargo llvm-cov \
+            --workspace \
+            --features testutils \
+            --lcov \
+            --output-path lcov.info
+
+      - name: Enforce 95% line coverage threshold
+        run: |
+          cargo llvm-cov \
+            --workspace \
+            --features testutils \
+            --summary-only 2>&1 | tee coverage-summary.txt
+
+          LINE_COV=$(grep -oP 'Lines\s+\K[\d.]+(?=%)' coverage-summary.txt | head -1)
+          echo "Line coverage: ${LINE_COV}%"
+
+          # Use awk for float comparison (bash can't do floats)
+          PASS=$(awk -v cov="$LINE_COV" 'BEGIN { print (cov >= 95.0) ? "yes" : "no" }')
+          if [ "$PASS" != "yes" ]; then
+            echo "::error::Coverage ${LINE_COV}% is below the required 95% threshold."
+            exit 1
+          fi
+          echo "Coverage check passed: ${LINE_COV}%"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-${{ github.sha }}
+          path: lcov.info
+          retention-days: 30

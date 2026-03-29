@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
@@ -74,63 +75,165 @@ const getStringArray = (value: unknown): string[] => {
 export class IndexerService {
   private readonly logger = new Logger(IndexerService.name);
   private readonly BATCH_SIZE = 50;
+  private readonly networkId: string;
+  private readonly gapThresholdLedgers: number;
+  private readonly gapCooldownMs: number;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly soroban: SorobanService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
+    this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
+    this.gapCooldownMs = this.config.get<number>('INDEXER_GAP_ALERT_COOLDOWN_MS', 3_600_000);
+  }
 
-  async processNextBatch() {
-    const state = await this.getState();
+  /** Bull reindex job: drain backlog for a network after cursor reset. */
+  async processUntilCaughtUp(network?: string): Promise<{ batches: number; events: number }> {
+    const net = network ?? this.networkId;
+    let batches = 0;
+    let events = 0;
+    for (;;) {
+      const r = await this.processNextBatchForNetwork(net);
+      batches += 1;
+      events += r.processed;
+      if (r.processed === 0) {
+        break;
+      }
+      if (batches > 10_000) {
+        this.logger.warn(`processUntilCaughtUp stopped after ${batches} batches (safety cap)`);
+        break;
+      }
+    }
+    this.logger.log(`Reindex catch-up finished for ${net}: ${events} events in ${batches} batches`);
+    return { batches, events };
+  }
+
+  async processNextBatch(): Promise<{ processed: number; lag: number }> {
+    return this.processNextBatchForNetwork(this.networkId);
+  }
+
+  async processNextBatchForNetwork(network: string): Promise<{ processed: number; lag: number }> {
+    const cursorRow = await this.ensureCursor(network);
+    const lastProcessed = cursorRow.lastProcessedLedger;
     const latestLedger = await this.soroban.getLatestLedger();
 
-    if (state.lastLedger >= latestLedger) {
+    const gap = latestLedger - lastProcessed;
+    if (gap > this.gapThresholdLedgers) {
+      await this.maybeEmitGapAlert(network, gap, lastProcessed, latestLedger);
+    }
+
+    if (lastProcessed >= latestLedger) {
       return { processed: 0, lag: 0 };
     }
 
-    const startLedger = state.lastLedger + 1;
-    this.logger.debug(`Fetching events starting from ledger ${startLedger}`);
+    const startLedger = lastProcessed + 1;
+    this.logger.debug(`[${network}] Fetching events from ledger ${startLedger}`);
 
     const response = await this.soroban.getEvents(startLedger, this.BATCH_SIZE);
     const events = response.events || [];
 
     if (events.length === 0) {
-      const newLastLedger = Math.min(startLedger + 100, latestLedger);
-      await this.updateState(newLastLedger);
-      return { processed: 0, lag: latestLedger - newLastLedger };
+      const newLast = Math.min(startLedger + 100, latestLedger);
+      await this.prisma.$transaction(async (tx) => {
+        await this.advanceCursorInTx(tx, network, newLast);
+      });
+      return { processed: 0, lag: latestLedger - newLast };
     }
 
     let processedCount = 0;
     for (let i = 0; i < events.length; i++) {
-      await this.processEvent(events[i], i);
+      await this.processEventForNetwork(network, events[i], i);
       processedCount++;
     }
 
-    const maxLedger = Math.max(...events.map((e: any) => e.ledger));
-    await this.updateState(maxLedger);
-
-    return { processed: processedCount, lag: latestLedger - maxLedger };
+    const maxLedger = Math.max(...events.map((e: SorobanEvent) => e.ledger));
+    const lag = latestLedger - maxLedger;
+    return { processed: processedCount, lag };
   }
 
-  private async getState() {
-    let state = await this.prisma.indexerState.findFirst();
-    if (!state) {
-      state = await this.prisma.indexerState.create({ data: { lastLedger: 0 } });
+  private async ensureCursor(network: string): Promise<{ lastProcessedLedger: number }> {
+    let row = await this.prisma.ledgerCursor.findUnique({ where: { network } });
+    if (row) {
+      return row;
     }
-    return state;
+
+    const legacy = await this.prisma.indexerState.findFirst({
+      orderBy: { id: 'asc' },
+    });
+    const initial = legacy?.lastLedger ?? 0;
+    row = await this.prisma.ledgerCursor.create({
+      data: { network, lastProcessedLedger: initial },
+    });
+    this.logger.log(`Initialized ledger cursor for ${network} from legacy state: ${initial}`);
+    return row;
   }
 
-  private async updateState(lastLedger: number) {
-    await this.prisma.indexerState.updateMany({
-      data: { lastLedger, updatedAt: new Date() },
+  /**
+   * Advance cursor to at least `ledger` (monotonic). Caller must run inside a transaction
+   * that also persists the events/projections for that ledger.
+   */
+  private async advanceCursorInTx(tx: IndexerTx, network: string, ledger: number): Promise<void> {
+    const cur = await tx.ledgerCursor.findUnique({ where: { network } });
+    const next = Math.max(cur?.lastProcessedLedger ?? 0, ledger);
+    await tx.ledgerCursor.upsert({
+      where: { network },
+      create: { network, lastProcessedLedger: next },
+      update: { lastProcessedLedger: next },
     });
   }
 
-  private async processEvent(event: SorobanEvent, index: number) {
-    const txHash = event.txHash;
-    const eventIndex = index;
+  private async maybeEmitGapAlert(
+    network: string,
+    gapSize: number,
+    lastProcessedLedger: number,
+    latestLedger: number,
+  ): Promise<void> {
+    const now = new Date();
+    const dedup = await this.prisma.ledgerGapAlertDedup.findUnique({
+      where: { network },
+    });
 
-    // Idempotency check handled by unique constraint on rawEvent table
+    if (dedup) {
+      const elapsed = now.getTime() - dedup.lastFiredAt.getTime();
+      if (elapsed < this.gapCooldownMs) {
+        return;
+      }
+    }
+
+    this.logger.warn(
+      JSON.stringify({
+        alert: 'indexer_ledger_gap',
+        network,
+        gapLedgers: gapSize,
+        lastProcessedLedger,
+        latestLedger,
+        threshold: this.gapThresholdLedgers,
+      }),
+    );
+
+    await this.prisma.ledgerGapAlertDedup.upsert({
+      where: { network },
+      create: {
+        network,
+        lastFiredAt: now,
+        lastGapSize: gapSize,
+        lastProcessedLedger,
+        latestLedger,
+      },
+      update: {
+        lastFiredAt: now,
+        lastGapSize: gapSize,
+        lastProcessedLedger,
+        latestLedger,
+      },
+    });
+  }
+
+  private async processEventForNetwork(network: string, event: SorobanEvent, index: number) {
+    const txHash = event.txHash;
+
     const topics: StellarNativeValue[] = event.topic.map((topic) => {
       try {
         return scValToNative(topic) as StellarNativeValue;
@@ -142,12 +245,11 @@ export class IndexerService {
     const contractId = event.contractId?.toString() ?? '';
 
     await this.prisma.$transaction(async (tx) => {
-      // Idempotent raw-event store — unique constraint on (txHash, eventIndex).
       await tx.rawEvent.upsert({
         where: { txHash_eventIndex: { txHash, eventIndex: index } },
         create: {
           txHash,
-          eventIndex,
+          eventIndex: index,
           contractId,
           ledger: event.ledger,
           ledgerClosedAt: new Date(event.ledgerClosedAt),
@@ -180,6 +282,8 @@ export class IndexerService {
       ) {
         await this.handleClaimProcessed(tx, dataNative, event);
       }
+
+      await this.advanceCursorInTx(tx, network, event.ledger);
     });
   }
 
@@ -208,7 +312,7 @@ export class IndexerService {
         isActive: true,
         endLedger: getNumberValue(data.end_ledger),
         updatedAt: new Date(),
-      }
+      },
     });
   }
 
@@ -219,26 +323,21 @@ export class IndexerService {
       data: {
         endLedger: getNumberValue(data.new_end_ledger),
         updatedAt: new Date(),
-      }
+      },
     });
   }
 
   private async handleClaimFiled(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
     const claimId = getNumberValue(data.claim_id);
-    const holder = getStringValue(data.holder ?? data.claimant);
-    const policyId = getNumberValue(data.policy_id);
-    const policyDbId = `${holder}:${policyId}`;
-    const grossAmount =
-      data.claim_amount !== undefined && data.claim_amount !== null
-        ? getStringValue(data.claim_amount)
-        : getStringValue(data.amount);
+    const policyDbId = `${getStringValue(data.claimant)}:${getNumberValue(data.policy_id)}`;
+
     await tx.claim.upsert({
       where: { id: claimId },
       create: {
         id: claimId,
         policyId: policyDbId,
-        creatorAddress: holder,
-        amount: grossAmount,
+        creatorAddress: getStringValue(data.claimant),
+        amount: getStringValue(data.amount),
         asset: getStringValue(data.asset),
         description: getStringValue(data.details),
         imageUrls: getStringArray(data.image_urls),
@@ -246,10 +345,11 @@ export class IndexerService {
         approveVotes: 0,
         rejectVotes: 0,
         createdAtLedger: event.ledger,
+        updatedAtLedger: event.ledger,
         txHash: event.txHash,
       },
       update: {
-        amount: grossAmount,
+        amount: getStringValue(data.amount),
         description: getStringValue(data.details),
         imageUrls: getStringArray(data.image_urls),
       },
@@ -264,7 +364,7 @@ export class IndexerService {
   ) {
     const claimId = Number(topics[1]);
     const voter = topics[2]?.toString();
-    const option = getStringValue(data.vote ?? data); // VoteOption enum: "Approve" or "Reject"
+    const option = getStringValue(data.vote ?? data);
 
     if (!voter) {
       this.logger.warn(`Skipping vote event for claim ${claimId}: missing voter topic`);
@@ -282,8 +382,9 @@ export class IndexerService {
       },
       update: {
         vote: option === 'Approve' ? 'APPROVE' : 'REJECT',
-      }
+      },
     });
+
     await tx.claim.update({
       where: { id: claimId },
       data: {
@@ -301,7 +402,7 @@ export class IndexerService {
         status: 'PAID',
         paidAt: new Date(event.ledgerClosedAt),
         updatedAtLedger: event.ledger,
-      }
+      },
     });
   }
 }

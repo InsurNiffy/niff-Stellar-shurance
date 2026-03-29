@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { SECS_PER_LEDGER } from '@/lib/schemas/vote';
+import { PendingBadge } from '@/components/ui/PendingBadge';
+import type { OptimisticStatus } from '@/lib/optimistic';
 import type { PolicyDto } from '../api';
 
 /** Format stroops → locale-aware XLM string (7 decimals). */
@@ -26,13 +28,15 @@ interface PolicyCardProps {
   onRenew: (policy: PolicyDto) => void;
   onTerminate: (policy: PolicyDto) => void;
   currentLedger: number | null;
+  optimisticStatus?: OptimisticStatus;
+  optimisticError?: string;
 }
 
 /**
  * Card layout — used on mobile and when the user selects card view.
  * Actions are disabled with tooltip text when contract rules forbid them.
  */
-export function PolicyCard({ policy, onRenew, onTerminate, currentLedger }: PolicyCardProps) {
+export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, optimisticStatus, optimisticError }: PolicyCardProps) {
   const { coverage_summary: cs, expiry_countdown: ec } = policy;
 
   // Renewal gate: policy must be active and within 30 days (~518_400 ledgers) of expiry
@@ -80,6 +84,9 @@ export function PolicyCard({ policy, onRenew, onTerminate, currentLedger }: Poli
         >
           {statusLabel}
         </span>
+        {optimisticStatus && optimisticStatus !== 'confirmed' && (
+          <PendingBadge status={optimisticStatus} error={optimisticError} />
+        )}
       </div>
 
       {/* Amounts */}
@@ -142,7 +149,7 @@ export function PolicyCard({ policy, onRenew, onTerminate, currentLedger }: Poli
 /**
  * Row layout — used in table view on desktop.
  */
-export function PolicyRow({ policy, onRenew, onTerminate, currentLedger }: PolicyCardProps) {
+export function PolicyRow({ policy, onRenew, onTerminate, currentLedger, optimisticStatus, optimisticError }: PolicyCardProps) {
   const { coverage_summary: cs, expiry_countdown: ec } = policy;
 
   const RENEWAL_WINDOW_LEDGERS = 518_400;
@@ -183,6 +190,9 @@ export function PolicyRow({ policy, onRenew, onTerminate, currentLedger }: Polic
         >
           {statusLabel}
         </span>
+        {optimisticStatus && optimisticStatus !== 'confirmed' && (
+          <PendingBadge status={optimisticStatus} error={optimisticError} />
+        )}
       </td>
       <td className="px-4 py-3 text-sm text-right tabular-nums">
         {formatXlm(cs.coverage_amount)} {cs.currency}

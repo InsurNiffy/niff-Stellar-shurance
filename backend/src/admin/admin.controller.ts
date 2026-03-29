@@ -12,6 +12,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { Request } from 'express';
@@ -25,6 +26,7 @@ import { FeatureFlagDto } from './dto/feature-flag.dto';
 import { SetRateLimitDto, EnableOverrideDto } from './dto/rate-limit.dto';
 import { PrivacyService, PrivacyRequestType } from '../maintenance/privacy.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { QueueMonitorService } from '../queues/queue-monitor.service';
 
 class PrivacyRequestDto {
   @IsString() subjectWalletAddress!: string;
@@ -48,6 +50,7 @@ export class AdminController {
     private readonly auditService: AuditService,
     private readonly privacyService: PrivacyService,
     private readonly rateLimitService: RateLimitService,
+    private readonly queueMonitor: QueueMonitorService,
   ) {}
 
   /**
@@ -64,14 +67,16 @@ export class AdminController {
   @ApiOperation({ summary: 'Enqueue a ledger reindex job from a given ledger' })
   async reindex(@Body() dto: ReindexDto, @Req() req: AdminRequest) {
     const actor = req.user?.walletAddress ?? 'unknown';
-    const jobId = await this.adminService.enqueueReindex(dto.fromLedger);
+    const network =
+      dto.network ?? this.configService.get<string>('STELLAR_NETWORK', 'testnet');
+    const jobId = await this.adminService.enqueueReindex(dto.fromLedger, network);
     await this.auditService.write({
       actor,
       action: 'reindex',
-      payload: { fromLedger: dto.fromLedger, jobId },
+      payload: { fromLedger: dto.fromLedger, network, jobId },
       ipAddress: req.ip,
     });
-    return { jobId, fromLedger: dto.fromLedger, status: 'queued' };
+    return { jobId, fromLedger: dto.fromLedger, network, status: 'queued' };
   }
 
   /**
@@ -229,5 +234,25 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return { policyId, overrideActive: false };
+  }
+
+  /** POST /admin/queues/:queue/jobs/:jobId/retry — replay a DLQ job */
+  @Post('queues/:queue/jobs/:jobId/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Replay a failed (DLQ) job by id' })
+  async retryDlqJob(
+    @Param('queue') queue: string,
+    @Param('jobId') jobId: string,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.queueMonitor.replayJob(queue, jobId);
+    await this.auditService.write({
+      actor,
+      action: 'dlq_job_replayed',
+      payload: { queue, jobId },
+      ipAddress: req.ip,
+    });
+    return { queue, jobId, status: 'retried' };
   }
 }

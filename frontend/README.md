@@ -90,6 +90,48 @@ On failure, the Playwright job uploads traces and screenshots to the
 npx playwright show-report path/to/downloaded/playwright-report
 ```
 
+## React Query configuration
+
+All React Query settings are centralized in `src/lib/query/queryClientConfig.ts`. Per-component overrides are discouraged — add a new named constant to `STALE_TIMES` instead.
+
+### Stale times
+
+| Query type | Stale time | Rationale |
+|---|---|---|
+| `policies` | 30 s | Changes only on user-initiated transactions |
+| `claims` | 10 s | Any holder can file; moderate freshness needed |
+| `votes` | 5 s | Active voting windows are time-sensitive |
+| `ledger` | 5 s | New ledger every ~5 s |
+| `default` | 15 s | Catch-all for uncategorized queries |
+
+### Retry policy
+
+- Max **3 retries** for transient errors (network failures, 5xx, 429).
+- **No retry** for 4xx client errors (except 429 with Retry-After).
+- Exponential backoff: 1 s → 2 s → 4 s, capped at 30 s.
+
+### Background refetch
+
+- `refetchOnWindowFocus: false` globally. Enable per-query only for time-sensitive queries (e.g. active votes) by passing `refetchOnWindowFocus: true`.
+- `refetchOnReconnect: true` — always resync after coming back online.
+- `refetchIntervalInBackground: false` — respects the Page Visibility API; no polling on hidden tabs.
+
+### Offline support
+
+Use `useNetworkAwareQuery` (`src/lib/query/useNetworkAwareQuery.ts`) instead of `useQuery` for any query that uses `refetchInterval`. It automatically pauses interval-based refetch when the browser is offline or the tab is hidden, preventing battery drain on mobile.
+
+```ts
+import { useNetworkAwareQuery, STALE_TIMES } from '@/lib/query';
+
+const { data } = useNetworkAwareQuery({
+  queryKey: ['votes', claimId],
+  queryFn: () => fetchVoteTallies(claimId),
+  staleTime: STALE_TIMES.votes,
+  refetchInterval: 5_000,
+  refetchOnWindowFocus: true, // enabled for time-sensitive vote data
+});
+```
+
 ## Analytics
 
 Analytics uses [Plausible](https://plausible.io) (cookieless, no PII).
