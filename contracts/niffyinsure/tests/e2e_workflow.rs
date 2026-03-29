@@ -170,8 +170,10 @@ fn e2e_finalize_after_deadline() {
 
     let holder = Address::generate(&env);
     let voter1 = Address::generate(&env);
+    let voter2 = Address::generate(&env);
     fund_holder(&env, &client, &token, &holder);
     seed_voter(&client, &voter1);
+    seed_voter(&client, &voter2);
 
     // Initiate policy
     let policy = client.initiate_policy(

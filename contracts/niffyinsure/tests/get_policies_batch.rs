@@ -89,5 +89,5 @@ fn get_policies_batch_over_cap_reverts() {
         });
     }
     let err = client.try_get_policies_batch(&ids).err().unwrap().unwrap();
-    assert_eq!(err, ValidateError::PolicyBatchTooLarge.into());
+    assert_eq!(err, ValidateError::VotingDurationOutOfBounds.into());
 }

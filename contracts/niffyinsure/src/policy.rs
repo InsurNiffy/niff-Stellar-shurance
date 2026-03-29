@@ -224,7 +224,9 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::DuplicateVote => "duplicate vote detected",
         Error::CalculatorNotSet => "no external calculator configured",
         Error::CalculatorCallFailed => "cross-contract call to premium calculator failed",
-        Error::CalculatorPaused => "premium calculator is paused; policy bind rejected",
+        Error::CalculatorPaused => {
+            "premium calculator is paused; policy bind rejected; or claims_paused blocks finalize_claim / process_deadline"
+        }
         Error::VotingWindowClosed => "voting window has closed; use finalize_claim",
         Error::VotingWindowStillOpen => "voting window is still open; cannot finalize yet",
         Error::NotEligibleVoter => {

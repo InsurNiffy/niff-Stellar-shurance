@@ -567,6 +567,30 @@ pub fn finalize_claim(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
     Ok(status)
 }
 
+pub fn finalize_claim(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
+    // Check pause: finalization is blocked if claims_paused is true
+    storage::assert_claims_not_paused(env);
+    finalize_claim_inner(env, claim_id)
+}
+
+/// Permissionless keeper: same outcome as [`finalize_claim`] when voting has ended, but returns
+/// [`Error::CalculatorPaused`] if `claims_paused` is set instead of panicking.
+///
+/// Only [`ClaimStatus::Processing`] claims are eligible so keepers cannot advance appeal or other flows.
+pub fn process_deadline(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
+    if storage::get_pause_flags(env).claims_paused {
+        return Err(Error::CalculatorPaused);
+    }
+    let claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
+    if claim.status.is_terminal() {
+        return Err(Error::ClaimAlreadyTerminal);
+    }
+    if claim.status != ClaimStatus::Processing {
+        return Err(Error::ClaimNotProcessing);
+    }
+    finalize_claim_inner(env, claim_id)
+}
+
 // ── process_claim (admin payout trigger) ─────────────────────────────────────
 
 /// Trigger the payout for an approved claim.

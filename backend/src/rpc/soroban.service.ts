@@ -205,7 +205,7 @@ export class SorobanService {
     return (
       e.includes('policybatch') ||
       e.includes('policy_batch') ||
-      // ContractError tag 49 = PolicyBatchTooLarge (niffyinsure validate::Error)
+      // ContractError tag 49 = VotingDurationOutOfBounds (also used for get_policies_batch over cap)
       /\b49\b/.test(error)
     );
   }

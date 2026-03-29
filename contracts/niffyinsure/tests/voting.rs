@@ -170,8 +170,10 @@ fn finalize_tie_resolves_to_rejected() {
     client.admin_set_quorum_bps(&10_000u32);
     let v1 = Address::generate(&env);
     let v2 = Address::generate(&env);
+    let v3 = Address::generate(&env);
     seed(&client, &v1, 1_000_000, 500_000);
     seed(&client, &v2, 1_000_000, 500_000);
+    seed(&client, &v3, 1_000_000, 500_000);
     let cid = file(&client, &v1, 100_000, &env);
     client.vote_on_claim(&v1, &cid, &VoteOption::Approve);
     client.vote_on_claim(&v2, &cid, &VoteOption::Reject);

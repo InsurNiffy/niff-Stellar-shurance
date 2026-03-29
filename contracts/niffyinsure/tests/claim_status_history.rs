@@ -139,9 +139,11 @@ fn status_history_finalize_reject_sequence() {
     let holder = Address::generate(&env);
     let voter1 = Address::generate(&env);
     let voter2 = Address::generate(&env);
+    let voter3 = Address::generate(&env);
     fund_holder(&env, &client, &token, &holder);
     seed_voter(&client, &voter1);
     seed_voter(&client, &voter2);
+    seed_voter(&client, &voter3);
 
     let policy = client.initiate_policy(
         &holder,
@@ -165,7 +167,6 @@ fn status_history_finalize_reject_sequence() {
 
     // Split vote — quorum not met until deadline
     client.vote_on_claim(&voter1, &claim_id, &VoteOption::Approve);
-    client.vote_on_claim(&voter2, &claim_id, &VoteOption::Reject);
 
     env.ledger().with_mut(|l| {
         l.sequence_number = INITIAL_LEDGER + VOTE_WINDOW_LEDGERS + 1;

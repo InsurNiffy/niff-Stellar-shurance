@@ -164,3 +164,25 @@ Checklist:
 | Privacy request SLA | `privacy_requests.completed_at - created_at` | Per request; reviewed quarterly |
 | Backup/restore drill | Ops calendar + this runbook sign-off | Quarterly |
 | Audit log integrity | `admin_audit_logs` (append-only, no UPDATE/DELETE grants) | Continuous |
+
+---
+
+## 6. Permissionless keepers (`process_expired` / `process_deadline`)
+
+### What they do
+- **`process_expired(holder, policy_id)`** — After ledger `>= end_ledger + grace_period_ledgers`, marks the policy inactive (if still active, no open claim), updates voter registry like a lapse, and emits `policy_expired`. **No signer required.** `holder` is only the storage key (same as `get_policy`).
+- **`process_deadline(claim_id)`** — Same finalization rules as `finalize_claim` once `now > voting_deadline_ledger`, but only while the claim is still in base **`Processing`**; returns `CalculatorPaused` if `claims_paused` is set instead of panicking. **No signer required.**
+
+Neither entrypoint can approve a claim without quorum math, change vote tallies, or pay out; they only apply deterministic transitions when on-chain conditions already hold.
+
+### Recommended cadence
+- **Claims:** Poll or stream ledgers; for each open claim with `voting_deadline_ledger < current_ledger`, submit `process_deadline`. Typical spacing: every ledger, or every 1–5 ledgers if batching simulations (~5 s target per ledger on Mainnet).
+- **Policies:** For each tracked `(holder, policy_id)` (from indexer), call `process_expired` once `current_ledger >= end_ledger + grace`. Daily or weekly scans are enough if the indexer backfills; tighter cadence improves UI accuracy for “lapsed” state.
+
+### Incentives
+There is **no protocol reward** for keepers; operators run them to support product liveness (deadlines, lapsed flags) and their own UX. Use a dedicated funded account only for network fees.
+
+### Failure modes
+- `process_expired`: reverts with `PolicyLapseNotReached` until grace end; `OpenClaimsMustFinalize` if a claim is still open on that policy.
+- `process_deadline`: reverts with `VotingWindowStillOpen` until after the voting deadline ledger; `ClaimAlreadyTerminal` if already finalized; `ClaimNotProcessing` if the claim left `Processing` without being terminal (e.g. appeal flows); `CalculatorPaused` while claims are paused (unlike `finalize_claim`, which panics on pause).
+

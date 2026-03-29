@@ -21,6 +21,8 @@ pub enum PolicyError {
     LedgerOverflow = 8,
     InvalidTerminationReason = 9,
     HolderMismatch = 10,
+    /// Permissionless `process_expired`: ledger is before `end_ledger + grace_period_ledgers`.
+    PolicyLapseNotReached = 11,
 }
 
 #[allow(dead_code)]
@@ -113,6 +115,68 @@ pub fn admin_terminate_policy(
     }
 
     terminate_inner(env, &holder, policy_id, reason, true, allow_open_claims)
+}
+
+/// Permissionless keeper: mark a policy inactive after the renewal + grace window has ended.
+///
+/// Policies are keyed by `(holder, policy_id)`; `holder` is a **lookup key only** (no auth).
+/// Eligible when `now >= end_ledger + grace_period_ledgers`, the policy is still active, and
+/// there is no open claim on that policy. Idempotent: if already inactive, returns `Ok(())`
+/// and emits nothing.
+///
+/// Uses [`TerminationReason::LapsedNonPayment`] and emits [`PolicyExpired`] (distinct from
+/// holder/admin [`PolicyTerminated`]).
+pub fn process_expired(env: &Env, holder: Address, policy_id: u32) -> Result<(), PolicyError> {
+    let mut policy = storage::get_policy(env, &holder, policy_id).ok_or(PolicyError::PolicyNotFound)?;
+
+    if !policy.is_active {
+        return Ok(());
+    }
+
+    let now = env.ledger().sequence();
+    let grace = storage::get_grace_period_ledgers(env);
+    let lapse_ledger = policy
+        .end_ledger
+        .checked_add(grace)
+        .ok_or(PolicyError::LedgerOverflow)?;
+
+    if now < lapse_ledger {
+        return Err(PolicyError::PolicyLapseNotReached);
+    }
+
+    if storage::has_open_claim(env, &holder, policy_id) {
+        return Err(PolicyError::OpenClaimsMustFinalize);
+    }
+
+    policy.is_active = false;
+    policy.terminated_at_ledger = now;
+    policy.termination_reason = TerminationReason::LapsedNonPayment;
+    policy.terminated_by_admin = false;
+
+    storage::set_policy(env, &holder, policy_id, &policy);
+    storage::decrement_holder_active_policies(env, &holder);
+    if storage::get_holder_active_policy_count(env, &holder) == 0 {
+        storage::voters_remove_holder(env, &holder);
+    }
+
+    PolicyExpired {
+        holder: holder.clone(),
+        policy_id,
+        at_ledger: now,
+    }
+    .publish(env);
+
+    Ok(())
+}
+
+#[contractevent(topics = ["niffyinsure", "policy_expired"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyExpired {
+    #[topic]
+    pub holder: Address,
+    #[topic]
+    pub policy_id: u32,
+    pub at_ledger: u32,
 }
 
 fn terminate_inner(
