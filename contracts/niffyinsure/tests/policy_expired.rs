@@ -268,7 +268,7 @@ fn initiate_then_process_expired_after_natural_duration() {
         &CoverageType::Standard,
         &80u32,
         &1_000_000i128,
-        &token,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
     let end = policy.end_ledger;
 

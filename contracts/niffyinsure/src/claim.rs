@@ -249,9 +249,13 @@ pub fn file_claim(
     amount: i128,
     details: &String,
     evidence: &Vec<ClaimEvidenceEntry>,
+    expected_nonce: Option<u64>,
 ) -> Result<u64, Error> {
     // Check pause: claims are blocked if claims_paused is true
     storage::assert_claims_not_paused(env);
+
+    // Opt-in replay protection.
+    storage::check_and_bump_nonce(env, holder, expected_nonce)?;
 
     let policy = storage::get_policy(env, holder, policy_id).ok_or(Error::PolicyNotFound)?;
 

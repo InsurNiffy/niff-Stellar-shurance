@@ -60,6 +60,9 @@ pub enum Error {
     /// Claim voter snapshot persistent entry is missing or expired (Soroban TTL).
     /// Keepers should call `refresh_snapshot` before eviction during open votes.
     VoterSnapshotExpired = 51,
+    /// Supplied `expected_nonce` does not match the holder's current on-chain nonce.
+    /// Read the current value via `get_nonce(holder)` before retrying.
+    NonceMismatch = 52,
 }
 
 pub fn validate_quorum_bps(bps: u32) -> Result<(), Error> {

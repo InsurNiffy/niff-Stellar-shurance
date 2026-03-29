@@ -90,7 +90,7 @@ fn process_expired_reverts_when_open_claim() {
 
     let details = String::from_str(&env, "open");
     let urls = vec![&env];
-    let _cid = client.file_claim(&holder, &1u32, &50_000i128, &details, &urls);
+    let _cid = client.file_claim(&holder, &1u32, &50_000i128, &details, &urls, &None);
 
     let lapse = end.saturating_add(DEFAULT_GRACE_PERIOD_LEDGERS);
     env.ledger().with_mut(|l| l.sequence_number = lapse);
@@ -116,7 +116,7 @@ fn process_deadline_finalizes_like_finalize_claim() {
 
     let details = String::from_str(&env, "x");
     let urls = vec![&env];
-    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls, &None);
 
     let deadline = client.get_claim(&cid).voting_deadline_ledger;
     env.ledger().with_mut(|l| l.sequence_number = deadline.saturating_add(1));
@@ -136,7 +136,7 @@ fn process_deadline_reverts_while_voting_open() {
 
     let details = String::from_str(&env, "x");
     let urls = vec![&env];
-    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls, &None);
 
     let deadline = client.get_claim(&cid).voting_deadline_ledger;
     env.ledger().with_mut(|l| l.sequence_number = deadline);
@@ -156,7 +156,7 @@ fn process_deadline_reverts_when_already_terminal() {
 
     let details = String::from_str(&env, "x");
     let urls = vec![&env];
-    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls, &None);
 
     client.vote_on_claim(&h1, &cid, &VoteOption::Approve);
     client.vote_on_claim(&h2, &cid, &VoteOption::Approve);
@@ -176,7 +176,7 @@ fn process_deadline_returns_calculator_paused_when_claims_paused() {
 
     let details = String::from_str(&env, "x");
     let urls = vec![&env];
-    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls, &None);
 
     let deadline = client.get_claim(&cid).voting_deadline_ledger;
     env.ledger().with_mut(|l| l.sequence_number = deadline.saturating_add(1));

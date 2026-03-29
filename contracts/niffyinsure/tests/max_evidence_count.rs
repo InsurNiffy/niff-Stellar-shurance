@@ -131,6 +131,7 @@ fn file_claim_at_limit_succeeds() {
         &100_000i128,
         &String::from_str(&env, "test claim"),
         &evidence,
+        &None,
     );
     assert!(result.is_ok());
 }
@@ -146,6 +147,7 @@ fn file_claim_over_default_limit_reverts() {
         &100_000i128,
         &String::from_str(&env, "test claim"),
         &evidence,
+        &None,
     );
     assert!(result.is_err());
 }
@@ -162,6 +164,7 @@ fn file_claim_at_raised_limit_succeeds() {
         &100_000i128,
         &String::from_str(&env, "test claim"),
         &evidence,
+        &None,
     );
     assert!(result.is_ok());
 }
@@ -178,6 +181,7 @@ fn file_claim_over_raised_limit_reverts() {
         &100_000i128,
         &String::from_str(&env, "test claim"),
         &evidence,
+        &None,
     );
     assert!(result.is_err());
 }
@@ -198,6 +202,7 @@ fn reducing_limit_does_not_invalidate_existing_claims() {
             &100_000i128,
             &String::from_str(&env, "test claim"),
             &evidence,
+            &None,
         )
         .unwrap();
 

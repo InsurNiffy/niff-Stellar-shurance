@@ -88,6 +88,9 @@ pub enum DataKey {
     /// Value of `LastClaimLedger(claimant)` **before** this claim's filing updated it.
     /// Removed when the claim leaves `Processing` without withdraw, or consumed by `withdraw_claim`.
     ClaimRateLimitPrev(u64),
+    /// Per-holder replay-protection nonce. Incremented on each successful mutating call
+    /// when the caller supplies `expected_nonce`. Supplementary to Stellar sequence numbers.
+    HolderNonce(Address),
 }
 
 // ── Instance bump ─────────────────────────────────────────────────────────────
@@ -637,7 +640,7 @@ pub fn set_sweep_cap(env: &Env, cap: Option<i128>) {
     }
 }
 
-/// Get configured sweep cap (None if not set).
+/// Get current sweep cap (None if not set).
 pub fn get_sweep_cap(env: &Env) -> Option<i128> {
     env.storage().instance().get(&DataKey::SweepCap)
 }
@@ -753,4 +756,48 @@ pub fn set_policy_expired_event_end_ledger(
         &DataKey::PolicyExpiredEventEndLedger(holder.clone(), policy_id),
         &end_ledger,
     );
+}
+
+// ── Per-holder replay-protection nonce (persistent) ──────────────────────────
+//
+// Supplementary to Stellar's native sequence numbers. Opt-in: callers that
+// don't supply `expected_nonce` skip the check entirely. Storage is per-holder
+// persistent entry — one u64 per unique holder, no unbounded growth beyond the
+// holder set itself (which is already tracked in `Voters`).
+
+pub fn get_holder_nonce(env: &Env, holder: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::HolderNonce(holder.clone()))
+        .unwrap_or(0u64)
+}
+
+/// Increment and persist the nonce, returning the new value.
+pub fn increment_holder_nonce(env: &Env, holder: &Address) -> u64 {
+    let next = get_holder_nonce(env, holder)
+        .checked_add(1)
+        .unwrap_or_else(|| panic!("holder nonce overflow"));
+    let key = DataKey::HolderNonce(holder.clone());
+    env.storage().persistent().set(&key, &next);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    next
+}
+
+/// Check `expected` against the current nonce; return `Err` on mismatch.
+/// No-op (returns `Ok`) when `expected` is `None`.
+pub fn check_and_bump_nonce(
+    env: &Env,
+    holder: &Address,
+    expected: Option<u64>,
+) -> Result<(), crate::validate::Error> {
+    if let Some(exp) = expected {
+        let current = get_holder_nonce(env, holder);
+        if exp != current {
+            return Err(crate::validate::Error::NonceMismatch);
+        }
+    }
+    increment_holder_nonce(env, holder);
+    Ok(())
 }

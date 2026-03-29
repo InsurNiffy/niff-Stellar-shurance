@@ -64,8 +64,7 @@ fn initiate(
         &10u32,
         &1_000_000_000i128,
         token_addr,
-        &beneficiary,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: beneficiary, deductible: None, expected_nonce: None },
     )
 }
 

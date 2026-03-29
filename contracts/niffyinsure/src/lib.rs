@@ -164,6 +164,7 @@ impl NiffyInsure {
             42 => validate::Error::RateLimitExceeded,
             49 => validate::Error::VotingDurationOutOfBounds,
             51 => validate::Error::VoterSnapshotExpired,
+            52 => validate::Error::NonceMismatch,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -201,9 +202,10 @@ impl NiffyInsure {
         amount: i128,
         details: soroban_sdk::String,
         evidence: Vec<types::ClaimEvidenceEntry>,
+        expected_nonce: Option<u64>,
     ) -> Result<u64, validate::Error> {
         holder.require_auth();
-        claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence)
+        claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence, expected_nonce)
     }
 
     /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
@@ -467,8 +469,7 @@ impl NiffyInsure {
         safety_score: u32,
         base_amount: i128,
         asset: Address,
-        beneficiary: Option<Address>,
-        deductible: Option<i128>,
+        opts: types::InitiatePolicyOptions,
     ) -> Result<types::Policy, policy::PolicyError> {
         policy::initiate_policy(
             &env,
@@ -480,8 +481,9 @@ impl NiffyInsure {
             safety_score,
             base_amount,
             asset,
-            beneficiary,
-            deductible,
+            opts.beneficiary,
+            opts.deductible,
+            opts.expected_nonce,
         )
     }
 
@@ -568,6 +570,14 @@ impl NiffyInsure {
     /// Read-only: number of active policies for a holder (= vote weight).
     pub fn get_active_policy_count(env: Env, holder: Address) -> u32 {
         storage::get_active_policy_count(&env, &holder)
+    }
+
+    /// Read-only: current replay-protection nonce for `holder`.
+    /// Pass this value as `expected_nonce` in the next `initiate_policy` or `file_claim`
+    /// call to enable nonce checking. Nonce starts at 0 and increments on each
+    /// successful mutating call where `expected_nonce` was supplied.
+    pub fn get_nonce(env: Env, holder: Address) -> u64 {
+        storage::get_holder_nonce(&env, &holder)
     }
 
     /// If set, the `end_ledger` for which a [`policy::PolicyExpired`] event was already recorded

@@ -85,8 +85,7 @@ fn e2e_full_lifecycle_approve() {
         &80,        // safety_score
         &1_000_000, // base_amount (coverage)
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
     assert!(policy.is_active);
     let policy_id = policy.policy_id;
@@ -142,14 +141,13 @@ fn e2e_full_lifecycle_reject() {
         &90,
         &500_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
     let policy_id = policy.policy_id;
 
     let details = String::from_str(&env, "Rejected claim");
     let ev = common::empty_evidence(&env);
-    let claim_id = client.file_claim(&holder, &policy_id, &25_000, &details, &ev);
+    let claim_id = client.file_claim(&holder, &policy_id, &25_000, &details, &ev, &None);
 
     // Vote to reject (2/3 majority)
     client.vote_on_claim(&voter1, &claim_id, &VoteOption::Reject);
@@ -185,8 +183,7 @@ fn e2e_finalize_after_deadline() {
         &70,
         &2_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
     let policy_id = policy.policy_id;
 
@@ -195,7 +192,7 @@ fn e2e_finalize_after_deadline() {
 
     let details = String::from_str(&env, "Claim for review");
     let ev = common::empty_evidence(&env);
-    let claim_id = client.file_claim(&holder, &policy_id, &100_000, &details, &ev);
+    let claim_id = client.file_claim(&holder, &policy_id, &100_000, &details, &ev, &None);
 
     // Vote once — participation quorum not satisfied yet
     client.vote_on_claim(&voter1, &claim_id, &VoteOption::Approve);
@@ -239,8 +236,7 @@ fn e2e_pause_blocks_initiate() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
     assert!(result.is_err());
 }
@@ -262,8 +258,7 @@ fn e2e_pause_blocks_file_claim() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     // Pause
@@ -272,7 +267,7 @@ fn e2e_pause_blocks_file_claim() {
     // File claim should fail
     let details = String::from_str(&env, "Test");
     let ev = common::empty_evidence(&env);
-    let result = client.try_file_claim(&holder, &policy.policy_id, &50_000, &details, &ev);
+    let result = client.try_file_claim(&holder, &policy.policy_id, &50_000, &details, &ev, &None);
     assert!(result.is_err());
 }
 
@@ -294,13 +289,12 @@ fn e2e_pause_blocks_vote() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "Test");
     let ev = common::empty_evidence(&env);
-    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev);
+    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev, &None);
 
     // Pause
     client.pause(&admin, &0);
@@ -333,8 +327,7 @@ fn e2e_unpause_restores_operations() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
     assert!(policy.is_active);
 }
@@ -361,13 +354,12 @@ fn e2e_pause_allows_payout() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "Test");
     let ev = common::empty_evidence(&env);
-    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev);
+    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev, &None);
 
     client.vote_on_claim(&voter1, &claim_id, &VoteOption::Approve);
     client.vote_on_claim(&voter2, &claim_id, &VoteOption::Approve);
@@ -402,8 +394,7 @@ fn e2e_bind_pause_allows_claims() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     // Pause only binding
@@ -417,7 +408,7 @@ fn e2e_bind_pause_allows_claims() {
     // File claim should work
     let details = String::from_str(&env, "Test");
     let ev = common::empty_evidence(&env);
-    let _result = client.try_file_claim(&holder, &1, &50_000, &details, &ev);
+    let _result = client.try_file_claim(&holder, &1, &50_000, &details, &ev, &None);
     // Note: This might still fail if claim validation fails, but not due to pause
 }
 
@@ -447,8 +438,7 @@ fn e2e_claims_pause_allows_binding() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
     assert!(policy.is_active);
 }
@@ -496,13 +486,12 @@ fn e2e_non_admin_cannot_process_claim() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "Test");
     let ev = common::empty_evidence(&env);
-    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev);
+    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev, &None);
     client.vote_on_claim(&holder, &claim_id, &VoteOption::Approve);
 
     // Try to process as non-admin
@@ -528,8 +517,7 @@ fn e2e_claim_exceeds_coverage() {
         &80,
         &100_000, // coverage
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     // Try to claim more than coverage
@@ -541,6 +529,7 @@ fn e2e_claim_exceeds_coverage() {
         &200_000, // exceeds coverage!
         &details,
         &ev,
+        &None,
     );
     assert!(result.is_err());
 }
@@ -561,8 +550,7 @@ fn e2e_claim_on_inactive_policy() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     // Terminate the policy (if terminate_policy exists)
@@ -575,7 +563,7 @@ fn e2e_claim_on_inactive_policy() {
 
     let details = String::from_str(&env, "Test");
     let ev = common::empty_evidence(&env);
-    let result = client.try_file_claim(&holder, &policy.policy_id, &50_000, &details, &ev);
+    let result = client.try_file_claim(&holder, &policy.policy_id, &50_000, &details, &ev, &None);
     assert!(result.is_err());
 }
 
@@ -606,13 +594,12 @@ fn e2e_double_vote_fails() {
         &80,
         &1_000_000,
         &token,
-        &None,
-        &None,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "Test");
     let ev = common::empty_evidence(&env);
-    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev);
+    let claim_id = client.file_claim(&holder, &policy.policy_id, &50_000, &details, &ev, &None);
 
     // Vote once
     client.vote_on_claim(&holder, &claim_id, &VoteOption::Approve);

@@ -35,7 +35,7 @@ fn withdraw_before_votes_succeeds() {
     seed(&client, &holder, 1_000_000, 10_000);
     let details = String::from_str(&env, "filed in error");
     let urls = vec![&env];
-    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls, &None);
     client.withdraw_claim(&holder, &cid);
     let c = client.get_claim(&cid);
     assert_eq!(c.status, ClaimStatus::Withdrawn);
@@ -50,7 +50,7 @@ fn withdraw_after_first_vote_reverts() {
     seed(&client, &h2, 1_000_000, 10_000);
     let details = String::from_str(&env, "x");
     let urls = vec![&env];
-    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&h1, &1u32, &100_000i128, &details, &urls, &None);
     client.admin_set_quorum_bps(&10_000u32);
     let _ = client.vote_on_claim(&h1, &cid, &VoteOption::Approve);
     assert!(client.try_withdraw_claim(&h1, &cid).is_err());
@@ -64,7 +64,7 @@ fn withdraw_unauthorized_reverts() {
     seed(&client, &holder, 1_000_000, 10_000);
     let details = String::from_str(&env, "x");
     let urls = vec![&env];
-    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls, &None);
     assert!(client.try_withdraw_claim(&other, &cid).is_err());
 }
 
@@ -89,13 +89,13 @@ fn withdraw_restores_rate_limit_anchor_for_refile() {
 
     let details = String::from_str(&env, "first");
     let urls = vec![&env];
-    let cid1 = client.file_claim(&holder, &1u32, &50_000i128, &details, &urls);
+    let cid1 = client.file_claim(&holder, &1u32, &50_000i128, &details, &urls, &None);
     assert_eq!(cid1, 1u64);
 
     client.withdraw_claim(&holder, &cid1);
 
     let details2 = String::from_str(&env, "refile");
-    let cid2 = client.file_claim(&holder, &1u32, &60_000i128, &details2, &urls);
+    let cid2 = client.file_claim(&holder, &1u32, &60_000i128, &details2, &urls, &None);
     assert_eq!(cid2, 2u64);
 }
 
@@ -106,7 +106,7 @@ fn withdrawn_claim_cannot_be_finalized_or_paid() {
     seed(&client, &holder, 1_000_000, 10_000);
     let details = String::from_str(&env, "x");
     let urls = vec![&env];
-    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls);
+    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls, &None);
     client.withdraw_claim(&holder, &cid);
 
     env.ledger().with_mut(|l| l.sequence_number += RATE_LIMIT_WINDOW_LEDGERS + 10);
