@@ -16,6 +16,7 @@ import { ClaimList } from "./ClaimList";
 import { FilterBar } from "./FilterBar";
 import { PaginationControls } from "./PaginationControls";
 import { SkeletonRow } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { ClaimFilters, TallyUpdate } from "./types";
 
 
@@ -202,12 +203,11 @@ export function ClaimsBoard() {
         )}
 
         {!loading && !error && localClaims.length === 0 && (
-          <div
-            role="status"
-            className="rounded-md border border-gray-200 bg-gray-50 px-4 py-12 text-center text-sm text-gray-500"
-          >
-            No claims match the current filters.
-          </div>
+          <EmptyState
+            variant="claims"
+            headline="No claims found"
+            description="There are no claims matching the current filters. Try adjusting your search or check back later."
+          />
         )}
 
         {!loading && !error && localClaims.length > 0 && (
