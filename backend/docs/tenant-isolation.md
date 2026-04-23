@@ -108,6 +108,52 @@ Consult qualified legal counsel before onboarding tenants who process EU/UK
 personal data. Each tenant's users should be informed of the sub-processor
 relationship in the tenant's own privacy policy.
 
+## Tenant Context Propagation Path
+
+The full request-to-query propagation path is:
+
+```
+HTTP Request
+    ↓
+TenantMiddleware  ── resolves tenantId from header / subdomain
+    ↓
+TenantContextService (REQUEST-scoped)  ── stores tenantId for the request
+    ↓
+Service Layer (e.g. ClaimsService)  ── reads tenantId from TenantContextService
+    ↓
+tenant-filter helper (claimTenantWhere / policyTenantWhere / voteTenantWhere)
+    ↓
+Prisma Query  ── WHERE clause includes tenantId filter
+```
+
+### Key enforcement points
+
+1. **Middleware**: `TenantMiddleware` runs on every request and populates `TenantContextService`.
+2. **Query helpers**: Every repository query MUST call `claimTenantWhere()`, `policyTenantWhere()`, or `voteTenantWhere()` to merge the tenant filter.
+3. **Ownership assertion**: After `findUnique` / `findFirst`, `assertTenantOwnership()` verifies the record belongs to the request tenant (returns 404 to avoid leaking existence).
+
+## CI Check
+
+A automated CI check (`npm run ci:tenant-check`) scans all TypeScript source files
+and fails if any Prisma query on `claim` or `policy` does not use the tenant-filter
+helpers. This prevents new queries from accidentally bypassing tenant isolation.
+
+```yaml
+# Example GitHub Actions step
+- name: Tenant isolation check
+  run: npm run ci:tenant-check
+```
+
+## Single-tenant deployments
+
+When `TENANT_RESOLUTION_ENABLED=false` (default):
+
+- `TenantMiddleware` is a no-op
+- `tenantId` is always `null`
+- `tenantFilter(null)` returns `{}` — no filter added
+- All queries behave identically to pre-tenant code paths
+- No performance overhead
+
 ## Limitations
 
 - Soroban contract events are not tenant-scoped. The indexer assigns `tenantId`

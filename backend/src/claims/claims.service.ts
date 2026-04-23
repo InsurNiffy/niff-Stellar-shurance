@@ -147,7 +147,7 @@ export class ClaimsService {
 
     const lastLedger = await this.getLastLedger();
     const claim = await this.prisma.claim.findFirst({
-      where: { id, deletedAt: null },
+      where: claimTenantWhere(tenantId, { id }),
       include: {
         votes: {
           where: { deletedAt: null },
@@ -295,8 +295,9 @@ export class ClaimsService {
     const numericIds = claimIds.map(Number).filter((n) => !isNaN(n));
     if (numericIds.length === 0) return [];
 
+    const tenantId = this.tenantCtx.tenantId;
     const claims = await this.prisma.claim.findMany({
-      where: { id: { in: numericIds }, deletedAt: null },
+      where: claimTenantWhere(tenantId, { id: { in: numericIds } }),
       select: { id: true, status: true, updatedAt: true },
     });
 

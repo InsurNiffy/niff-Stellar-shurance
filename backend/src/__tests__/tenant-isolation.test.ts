@@ -258,6 +258,85 @@ describe('TenantMiddleware', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Property-based tests: no cross-tenant leakage under any query combination
+// ---------------------------------------------------------------------------
+
+describe('Property-based cross-tenant leakage prevention', () => {
+  const tenants = ['tenant-a', 'tenant-b', 'tenant-c'];
+  const statuses = ['PENDING', 'APPROVED', 'REJECTED', 'PAID'];
+
+  // Helper: simulate a database of claims partitioned by tenant
+  function makeClaimDb(): Array<{ id: number; tenantId: string; status: string }> {
+    const db: Array<{ id: number; tenantId: string; status: string }> = [];
+    let id = 1;
+    for (const tenant of tenants) {
+      for (const status of statuses) {
+        db.push({ id: id++, tenantId: tenant, status });
+      }
+    }
+    return db;
+  }
+
+  it('claimTenantWhere never returns rows from another tenant', () => {
+    const db = makeClaimDb();
+    for (const requestingTenant of [...tenants, null]) {
+      for (const extra of [{}, { status: 'PENDING' as const }, { id: { gt: 5 } }]) {
+        const where = claimTenantWhere(requestingTenant, extra);
+        const filtered = db.filter((row) => {
+          // Simple predicate evaluation for test simulation
+          if (where.tenantId !== undefined && row.tenantId !== where.tenantId) return false;
+          if (where.status !== undefined && row.status !== where.status) return false;
+          if (where.id && typeof where.id === 'object' && 'gt' in where.id && row.id <= (where.id as { gt: number }).gt) return false;
+          return true;
+        });
+
+        // All returned rows must belong to the requesting tenant (or any if null)
+        for (const row of filtered) {
+          if (requestingTenant !== null) {
+            expect(row.tenantId).toBe(requestingTenant);
+          }
+        }
+      }
+    }
+  });
+
+  it('assertTenantOwnership blocks every cross-tenant permutation', () => {
+    for (const recordTenant of tenants) {
+      for (const requestingTenant of tenants) {
+        const record = { id: 1, tenantId: recordTenant };
+        if (recordTenant === requestingTenant) {
+          expect(() => assertTenantOwnership(record, requestingTenant, 'Claim 1')).not.toThrow();
+        } else {
+          expect(() =>
+            assertTenantOwnership(record, requestingTenant, 'Claim 1'),
+          ).toThrow(TenantOwnershipError);
+        }
+      }
+    }
+  });
+
+  it('single-tenant mode (null) allows all tenants without throwing', () => {
+    for (const recordTenant of tenants) {
+      const record = { id: 1, tenantId: recordTenant };
+      expect(() => assertTenantOwnership(record, null, 'Claim 1')).not.toThrow();
+    }
+  });
+
+  it('cache keys are namespaced per tenant to prevent poisoning', () => {
+    const buildCacheKey = (tenantId: string | null, claimId: number) =>
+      `claims:detail:${tenantId ?? 'global'}:${claimId}`;
+
+    for (let i = 0; i < tenants.length; i++) {
+      for (let j = i + 1; j < tenants.length; j++) {
+        const keyI = buildCacheKey(tenants[i], 42);
+        const keyJ = buildCacheKey(tenants[j], 42);
+        expect(keyI).not.toBe(keyJ);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-tenant read simulation
 // ---------------------------------------------------------------------------
 

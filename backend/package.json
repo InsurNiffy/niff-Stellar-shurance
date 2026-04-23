@@ -35,7 +35,8 @@
     "env:example:generate": "ts-node scripts/generate-env-example.ts",
     "env:example:check": "ts-node scripts/check-env-example.ts",
     "secrets:generate:jwt": "ts-node scripts/generate-jwt-key.ts",
-    "ops:replay-indexer": "ts-node scripts/replay-indexer.ts"
+    "ops:replay-indexer": "ts-node scripts/replay-indexer.ts",
+    "ci:tenant-check": "ts-node scripts/check-tenant-queries.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.13.0",

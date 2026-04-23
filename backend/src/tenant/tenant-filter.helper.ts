@@ -86,3 +86,72 @@ export function policyTenantWhere(
   const active = opts?.includeDeleted ? {} : { deletedAt: null };
   return { ...tenantFilter(tenantId), ...active, ...extra };
 }
+
+/**
+ * Builds a Prisma VoteWhereInput scoped transitively via the parent claim.
+ * Votes themselves do not have a tenantId column; isolation is enforced
+ * by joining through the claim relation.
+ */
+export function voteTenantWhere(
+  tenantId: string | null,
+  extra: Prisma.VoteWhereInput = {},
+): Prisma.VoteWhereInput {
+  if (!tenantId) return extra;
+  // Transitively scope votes through their claim's tenantId
+  return {
+    claim: { tenantId },
+    ...extra,
+  };
+}
+
+// ── CI lint helpers ────────────────────────────────────────────────────────
+
+/**
+ * Known tenant-scoped Prisma model names that MUST be filtered by tenant.
+ */
+export const TENANT_SCOPED_MODELS = ['claim', 'policy'] as const;
+
+/**
+ * Checks whether a raw TypeScript code snippet contains a Prisma query
+ * on a tenant-scoped model that does NOT use the tenant-filter helpers.
+ *
+ * This is a lightweight regex-based check intended for CI linting.
+ * It will catch obvious bypasses but may miss sophisticated evasion.
+ *
+ * @param code - Source code to inspect (single file contents)
+ * @returns Array of violation descriptions with line hints
+ */
+export function queryBypassesTenantFilter(code: string): string[] {
+  const violations: string[] = [];
+  const lines = code.split('\n');
+
+  // Pattern: prisma.<model>.findMany/findFirst/findUnique({ where: { ... } })
+  // where the where object does NOT contain claimTenantWhere / policyTenantWhere
+  const queryRegex = /prisma\.(claim|policy)\.(findMany|findFirst|findUnique|count|update|updateMany|delete|deleteMany)\s*\(\s*\{/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = queryRegex.exec(code)) !== null) {
+    const modelName = match[1].toLowerCase();
+    const methodName = match[2];
+    const startIndex = match.index;
+
+    // Extract the line number
+    const lineNumber = code.substring(0, startIndex).split('\n').length;
+
+    // Look ahead for tenant-filter helper usage within the next 500 chars
+    const lookahead = code.substring(startIndex, startIndex + 500);
+    const hasTenantFilter =
+      lookahead.includes('claimTenantWhere') ||
+      lookahead.includes('policyTenantWhere') ||
+      lookahead.includes('tenantFilter');
+
+    if (!hasTenantFilter) {
+      violations.push(
+        `Line ${lineNumber}: ${modelName}.${methodName} query may bypass tenant filter ` +
+        `(no claimTenantWhere / policyTenantWhere / tenantFilter detected in call)`,
+      );
+    }
+  }
+
+  return violations;
+}
