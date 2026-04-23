@@ -30,6 +30,11 @@ export class MetricsService implements OnModuleInit {
   readonly dlqDepth: client.Gauge<string>;
   readonly dlqJobFailed: client.Counter<string>;
 
+  // ── Indexer / observability metrics ───────────────────────────────────────
+  readonly indexerLag: client.Gauge<string>;
+  readonly solvencyBufferStroops: client.Gauge<string>;
+  readonly solvencyBufferThresholdStroops: client.Gauge<string>;
+
   // ── RPC metrics ───────────────────────────────────────────────────────────
   readonly rpcCallDuration: client.Histogram<string>;
   readonly rpcCallTotal: client.Counter<string>;
@@ -83,6 +88,34 @@ export class MetricsService implements OnModuleInit {
     });
 
     this.dlqJobFailed = new client.Counter({
+      name: 'bullmq_dlq_jobs_total',
+      help: 'Total jobs moved to dead-letter queue after max retries',
+      labelNames: ['queue', 'job_name', 'failure_reason'],
+      registers: [this.registry],
+    });
+
+    this.indexerLag = new client.Gauge({
+      name: 'indexer_lag_ledgers',
+      help: 'Current indexer lag in ledger count behind the network head',
+      labelNames: ['network'],
+      registers: [this.registry],
+    });
+
+    this.solvencyBufferStroops = new client.Gauge({
+      name: 'solvency_buffer_stroops',
+      help: 'Contract solvency buffer in stroops (balance minus approved obligations)',
+      labelNames: ['tenant'],
+      registers: [this.registry],
+    });
+
+    this.solvencyBufferThresholdStroops = new client.Gauge({
+      name: 'solvency_buffer_threshold_stroops',
+      help: 'Configured solvency buffer threshold in stroops',
+      labelNames: ['tenant'],
+      registers: [this.registry],
+    });
+
+    this.rpcCallDuration = new client.Histogram({
       name: 'bullmq_dlq_jobs_total',
       help: 'Total jobs moved to dead-letter queue after max retries',
       labelNames: ['queue', 'job_name', 'failure_reason'],
@@ -191,6 +224,21 @@ export class MetricsService implements OnModuleInit {
 
   recordQuoteSimulationCache(result: 'hit' | 'miss' | 'bypass') {
     this.quoteSimulationCacheTotal.inc({ result });
+  }
+
+  recordIndexerLag(opts: { network: string; lag: number }) {
+    this.indexerLag.set({ network: opts.network }, opts.lag);
+  }
+
+  recordSolvencyBuffer(opts: { tenant: string; bufferStroops: bigint }) {
+    this.solvencyBufferStroops.set({ tenant: opts.tenant }, Number(opts.bufferStroops));
+  }
+
+  recordSolvencyThreshold(opts: { tenant: string; thresholdStroops: bigint }) {
+    this.solvencyBufferThresholdStroops.set(
+      { tenant: opts.tenant },
+      Number(opts.thresholdStroops),
+    );
   }
 
   recordDbPool(opts: { active: number; idle: number; waiting: number }) {

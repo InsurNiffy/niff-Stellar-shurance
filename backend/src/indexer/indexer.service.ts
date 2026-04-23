@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { parseEvent } from '../events/events.schema';
 import {
   selectParser,
@@ -90,6 +91,7 @@ export class IndexerService {
     private readonly prisma: PrismaService,
     private readonly soroban: SorobanService,
     private readonly config: ConfigService,
+    @Optional() private readonly metrics?: MetricsService,
   ) {
     this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
@@ -140,7 +142,10 @@ export class IndexerService {
       await this.maybeEmitGapAlert(network, gap, lastProcessed, latestLedger);
     }
 
+    this.metrics?.recordIndexerLag({ network, lag: gap });
+
     if (lastProcessed >= latestLedger) {
+      this.metrics?.recordIndexerLag({ network, lag: 0 });
       return { processed: 0, lag: 0 };
     }
 
@@ -166,6 +171,7 @@ export class IndexerService {
 
     const maxLedger = Math.max(...events.map((e: SorobanEvent) => e.ledger));
     const lag = latestLedger - maxLedger;
+    this.metrics?.recordIndexerLag({ network, lag });
     return { processed: processedCount, lag };
   }
 
