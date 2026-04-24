@@ -56,6 +56,8 @@ export interface OnChainClaimSummary {
   claim_id: bigint;
   policy_id: number;
   amount: bigint;
+  /** Deductible snapshot from filing (stroops); net payout = amount - deductible. */
+  deductible: bigint;
   /** 'Processing' | 'Pending' | 'Approved' | 'Paid' | 'Rejected' | 'Withdrawn' | … */
   status: string;
   filed_at: number;
