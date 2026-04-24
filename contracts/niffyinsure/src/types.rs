@@ -105,7 +105,9 @@ pub enum CoverageTier {
     Premium,
 }
 
-/// Claim lifecycle state machine.
+/// Alias for [`CoverageTier`] used in the renewal entrypoint and legacy test helpers.
+/// Both names refer to the same on-chain enum; prefer `CoverageTier` in new code.
+pub type CoverageType = CoverageTier;
 ///
 /// Base-flow transitions:
 ///   Processing  → Approved      (participation quorum met + more approve than reject votes cast)
