@@ -297,6 +297,60 @@ stellar account set-options \
 
 ## Legal & Compliance Requirements
 
+### Regulatory Classification
+
+The emergency sweep is classified as an **administrative recovery of non-custodial funds**.
+It is NOT a payment service, money transmission, or investment activity under the following frameworks:
+
+| Jurisdiction | Classification | Key Basis |
+|---|---|---|
+| United States | Non-custodial administrative recovery | Not a "transmission" of user funds; no FinCEN MSB trigger |
+| European Union | Protocol maintenance (MiCA Art. 76) | Not a payment service; no PSD2 trigger |
+| United Kingdom | Administrative function | Not a regulated payment; FCA cryptoasset registration may apply |
+
+> ⚠️ These classifications are preliminary. Each deployment **MUST** obtain independent
+> legal sign-off. See `SWEEP_LEGAL_COMPLIANCE.md` for the full sign-off record.
+
+### Two-Step Confirmation Requirement (Issue #007)
+
+All sweep operations **MUST** use the two-step admin confirmation flow:
+
+**Step 1 — Propose** (first admin signer):
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source <ADMIN_SIGNER_1> \
+  --network mainnet \
+  -- \
+  propose_admin_action \
+  --action '{"TokenSweep":{"asset":"<ASSET_ADDRESS>","recipient":"<RECIPIENT>","amount":<AMOUNT>,"reason_code":<CODE>}}'
+```
+
+**Step 2 — Confirm** (second admin signer, ≠ proposer, after notice period):
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source <ADMIN_SIGNER_2> \
+  --network mainnet \
+  -- \
+  confirm_admin_action
+```
+
+**Notice period:** The contract enforces a configurable on-chain delay between proposal
+and execution (`SweepNoticePeriodLedgers`). The recommended mainnet value is **2880 ledgers
+(~4 hours at 5 s/ledger)**. Set via:
+```bash
+stellar contract invoke -- set_sweep_notice_period --ledgers 2880
+```
+
+**Cancellation** (proposer only, before expiry):
+```bash
+stellar contract invoke -- cancel_admin_action
+```
+
+> The single-step `sweep_token` entrypoint remains available for emergency use but
+> **SHOULD NOT** be used in normal operations. Prefer the two-step flow for all sweeps.
+
 ### Before Mainnet Enablement
 
 - [ ] Legal review of sweep function and custody implications

@@ -27,7 +27,8 @@ use soroban_sdk::{contract, contractevent, contractimpl, panic_with_error, Addre
 #[contract]
 pub struct NiffyInsure;
 pub use admin::{AdminAction, AdminError, PendingAdminAction};
-pub use policy::{PolicyError, RenewalError};
+pub use policy::RenewalError;
+pub use policy_lifecycle::PolicyError;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[soroban_sdk::contracterror]
@@ -169,8 +170,10 @@ impl NiffyInsure {
             41 => validate::Error::NotEligibleVoter,
             42 => validate::Error::RateLimitExceeded,
             49 => validate::Error::VotingDurationOutOfBounds,
+            50 => validate::Error::PolicyBatchTooLarge,
             51 => validate::Error::VoterSnapshotExpired,
             52 => validate::Error::NonceMismatch,
+            53 => validate::Error::ClaimNotProcessing,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -212,26 +215,6 @@ impl NiffyInsure {
     ) -> Result<u64, validate::Error> {
         holder.require_auth();
         claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence, expected_nonce)
-    }
-
-    /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
-    pub fn withdraw_claim(
-        env: Env,
-        claimant: Address,
-        claim_id: u64,
-    ) -> Result<(), validate::Error> {
-        claimant.require_auth();
-        claim::withdraw_claim(&env, &claimant, claim_id)
-    }
-
-    /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
-    pub fn withdraw_claim(
-        env: Env,
-        claimant: Address,
-        claim_id: u64,
-    ) -> Result<(), validate::Error> {
-        claimant.require_auth();
-        claim::withdraw_claim(&env, &claimant, claim_id)
     }
 
     /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
@@ -518,7 +501,7 @@ impl NiffyInsure {
     /// Matches [`types::PAGE_SIZE_MAX`]: each entry is an independent storage read, so
     /// large batches multiply metered reads and can exceed the default Soroban
     /// instruction budget during simulation. Dashboards and indexers must chunk
-    /// requests. **More than 20 keys reverts** with [`validate::Error::VotingDurationOutOfBounds`]
+    /// requests. **More than 20 keys reverts** with [`validate::Error::PolicyBatchTooLarge`]
     /// (unlike `list_policies`, which clamps `limit` instead of erroring).
     ///
     /// The cap is checked **before** any policy storage access (no unbounded iteration).
@@ -527,7 +510,7 @@ impl NiffyInsure {
         ids: Vec<types::PolicyLookupKey>,
     ) -> Vec<Option<types::Policy>> {
         if ids.len() > types::POLICY_BATCH_GET_MAX {
-            panic_with_error!(&env, validate::Error::VotingDurationOutOfBounds);
+            panic_with_error!(&env, validate::Error::PolicyBatchTooLarge);
         }
         let mut out: Vec<Option<types::Policy>> = Vec::new(&env);
         for i in 0..ids.len() {
@@ -734,6 +717,18 @@ pub fn set_token(env: Env, new_token: Address) {
     /// Get current sweep cap (None if not set).
     pub fn get_sweep_cap(env: Env) -> Option<i128> {
         storage::get_sweep_cap(&env)
+    }
+
+    /// Set the on-chain notice period (in ledgers) that must elapse between a sweep
+    /// proposal and its execution. 0 = disabled. Admin-only.
+    /// Recommended mainnet value: 2880 (~4 hours at 5s/ledger).
+    pub fn set_sweep_notice_period(env: Env, ledgers: u32) {
+        admin::set_sweep_notice_period(&env, ledgers);
+    }
+
+    /// Get the current sweep notice period in ledgers (0 = disabled).
+    pub fn get_sweep_notice_period(env: Env) -> u32 {
+        storage::get_sweep_notice_period_ledgers(&env)
     }
 
     /// Admin-only: set the maximum number of evidence entries per claim.

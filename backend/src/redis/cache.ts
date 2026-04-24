@@ -9,6 +9,23 @@
 import { getRedisClient, RedisUnavailableError } from "./client";
 import { TTL } from "./config";
 
+// ── Metrics integration ───────────────────────────────────────────────────────
+// Lazily injected to avoid circular deps. Set by MetricsModule on bootstrap.
+let _metricsService: { recordRedisCache(result: 'hit' | 'miss', ns: string): void } | null = null;
+
+export function setRedisCacheMetricsService(
+  svc: { recordRedisCache(result: 'hit' | 'miss', ns: string): void },
+): void {
+  _metricsService = svc;
+}
+
+/** Derive a low-cardinality namespace label from a cache key. */
+function namespaceOf(key: string): string {
+  // key format: "cache:policy:…", "nonce:…", "ratelimit:…", "idempotency:…"
+  const seg = key.split(':')[0];
+  return seg || 'other';
+}
+
 // ── Generic get/set/del ───────────────────────────────────────────────────────
 
 /**
@@ -18,10 +35,15 @@ import { TTL } from "./config";
 export async function cacheGet<T>(key: string): Promise<T | null> {
   try {
     const raw = await getRedisClient().get(key);
-    if (raw === null) return null;
+    if (raw === null) {
+      _metricsService?.recordRedisCache('miss', namespaceOf(key));
+      return null;
+    }
+    _metricsService?.recordRedisCache('hit', namespaceOf(key));
     return JSON.parse(raw) as T;
   } catch {
     // Degrade gracefully — cache miss is always safe
+    _metricsService?.recordRedisCache('miss', namespaceOf(key));
     return null;
   }
 }

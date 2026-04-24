@@ -28,6 +28,15 @@
 import Redis from "ioredis";
 import { buildRedisConfig } from "./config";
 
+// ── Metrics integration ───────────────────────────────────────────────────────
+let _metricsService: { recordRedisConnectionError(): void } | null = null;
+
+export function setRedisClientMetricsService(
+  svc: { recordRedisConnectionError(): void },
+): void {
+  _metricsService = svc;
+}
+
 export class RedisUnavailableError extends Error {
   constructor(cause?: unknown) {
     super("Redis is unavailable");
@@ -90,6 +99,7 @@ export function getRedisClient(): Redis {
     if (!isTestEnv) {
       console.error("[redis] connection error:", err.message);
     }
+    _metricsService?.recordRedisConnectionError();
   });
 
   _client.on("connect", () => {

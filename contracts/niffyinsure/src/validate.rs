@@ -63,6 +63,8 @@ pub enum Error {
     /// Supplied `expected_nonce` does not match the holder's current on-chain nonce.
     /// Read the current value via `get_nonce(holder)` before retrying.
     NonceMismatch = 52,
+    /// Keeper `process_deadline` called on a claim not in `Processing` status.
+    ClaimNotProcessing = 53,
 }
 
 pub fn validate_quorum_bps(bps: u32) -> Result<(), Error> {
@@ -190,10 +192,10 @@ pub enum OracleError {
     TriggerFutureTimestamp,
     /// Trigger ledger sequence is too old.
     TriggerLedgerExpired,
-    /// Signature verification failed.
+    /// Ed25519 signature verification failed.
     InvalidSignature,
-    /// Non-empty signature in pre-crypto-review build.
-    SignatureNotImplemented,
+    /// Oracle source has no registered public key.
+    SourceNotRegistered,
     /// Policy does not exist for this trigger.
     PolicyNotFound,
     /// Policy is not active.
@@ -210,21 +212,21 @@ pub enum OracleError {
     PayloadTooLarge,
     /// Invalid payload encoding for event type.
     InvalidPayloadEncoding,
+    /// Nonce is not strictly greater than the last accepted nonce (replay attack).
+    ReplayedNonce,
+    /// Quorum threshold not met (not enough valid signatures).
+    QuorumNotMet,
 }
 
 // ── Oracle trigger validators (experimental only) ────────────────────────────
 
-/// Validates that an oracle trigger is safe to process.
+/// Validates an oracle trigger including Ed25519 signature verification and nonce replay protection.
 ///
-/// This function MUST be called before accepting any oracle trigger.
-/// It performs non-cryptographic validation only.
+/// Signed message layout (big-endian concatenation):
+///   policy_id (4 bytes) || timestamp (8 bytes) || nonce (8 bytes) || payload (variable)
 ///
-/// ⚠️  CRYPTOGRAPHIC VALIDATION (signature verification) IS NOT IMPLEMENTED.
-/// This stub validates structural properties only.  Signature verification
-/// must be designed and audited before triggers can be accepted from oracles.
-///
-/// CRITICAL: Do NOT parse untrusted signatures without a complete crypto
-/// design review.  See DESIGN-ORACLE.md for requirements.
+/// The oracle source must have a registered Ed25519 public key via `set_oracle_pub_key`.
+/// The nonce must be strictly greater than the last accepted nonce for this source.
 #[cfg(feature = "experimental")]
 pub fn check_oracle_trigger(
     env: &Env,
@@ -233,55 +235,64 @@ pub fn check_oracle_trigger(
     max_trigger_age_ledgers: u32,
 ) -> Result<(), OracleError> {
     use crate::storage;
+    use soroban_sdk::{Address, Bytes};
 
-    // 1. Check that oracle triggers are globally enabled
+    // 1. Oracle globally enabled
     if !storage::is_oracle_enabled(env) {
         return Err(OracleError::OracleDisabled);
     }
 
-    // 2. Check trigger ledger hasn't expired
-    if current_ledger > trigger.trigger_ledger + max_trigger_age_ledgers {
+    // 2. Ledger freshness
+    if current_ledger > trigger.trigger_ledger.saturating_add(max_trigger_age_ledgers) {
         return Err(OracleError::TriggerLedgerExpired);
     }
 
-    // 3. Check that signature is empty (crypto not implemented yet)
-    //
-    // ⚠️  SECURITY CRITICAL: This check ensures we cannot accidentally
-    // accept signed data before crypto review is complete.
-    //
-    // CRYPTOGRAPHIC DESIGN NOTE:
-    // When implementing signature verification, replace this check with
-    // actual Ed25519/EdDSA verification against the oracle's public key.
-    // The signature field will be non-empty and must be verified before
-    // accepting the trigger.
-    if !trigger.signature.is_empty() {
-        // Log warning in production: non-empty signature received before
-        // crypto design review.  Reject to maintain safety invariant.
-        return Err(OracleError::SignatureNotImplemented);
-    }
-
-    // 4. Check payload is non-empty (for defined event types)
-    if trigger.payload.is_empty() && !matches!(trigger.event_type, TriggerEventType::Undefined) {
-        return Err(OracleError::EmptyPayload);
-    }
-
-    // 5. Check event type is defined
-    if matches!(trigger.event_type, TriggerEventType::Undefined) {
-        // Undefined event types should only exist in pre-configuration phase
-        // After configuration, this should return an error
-        return Err(OracleError::InvalidPayloadEncoding);
-    }
-
-    // 6. Check source is defined
+    // 3. Source must be defined
     if matches!(trigger.source, OracleSource::Undefined) {
         return Err(OracleError::SourceNotWhitelisted);
     }
 
-    // TODO (post-crypto-review): Implement the following checks:
-    // - Oracle key rotation verification
-    // - Nonce/replay protection validation
-    // - Multi-oracle quorum verification (if applicable)
-    // - Game-theoretic incentive alignment checks
+    // 4. Event type must be defined
+    if matches!(trigger.event_type, TriggerEventType::Undefined) {
+        return Err(OracleError::InvalidPayloadEncoding);
+    }
+
+    // 5. Payload non-empty for defined event types
+    if trigger.payload.is_empty() {
+        return Err(OracleError::EmptyPayload);
+    }
+
+    // 6. Resolve source address from OracleSource variant
+    let source_addr: Address = match &trigger.source {
+        OracleSource::Registered(addr) => addr.clone(),
+        OracleSource::Undefined => return Err(OracleError::SourceNotWhitelisted),
+    };
+
+    // 7. Look up registered public key
+    let pub_key = storage::get_oracle_pub_key(env, &source_addr)
+        .ok_or(OracleError::SourceNotRegistered)?;
+
+    // 8. Build signed message: policy_id(4) || timestamp(8) || nonce(8) || payload
+    let mut msg = Bytes::new(env);
+    msg.extend_from_array(&trigger.policy_id.to_be_bytes());
+    msg.extend_from_array(&trigger.timestamp.to_be_bytes());
+    msg.extend_from_array(&trigger.nonce.to_be_bytes());
+    msg.append(&trigger.payload);
+
+    // 9. Ed25519 signature verification — panics on invalid sig (Soroban convention)
+    env.crypto().ed25519_verify(&pub_key, &msg, &trigger.signature);
+
+    // 10. Nonce replay protection (strictly increasing)
+    storage::advance_oracle_nonce(env, &source_addr, trigger.nonce)?;
+
+    // 11. Quorum check — for single-sig sources quorum is 1 (already satisfied above)
+    let quorum = storage::get_oracle_quorum(env, &source_addr);
+    if quorum > 1 {
+        // Multi-oracle quorum: quorum > 1 requires aggregated signatures.
+        // Current implementation supports single-sig; reject if quorum > 1 is configured
+        // until multi-sig aggregation is implemented.
+        return Err(OracleError::QuorumNotMet);
+    }
 
     Ok(())
 }
@@ -324,6 +335,10 @@ pub fn check_trigger_status_transition(
 #[derive(Debug, PartialEq)]
 pub enum OracleError {
     OracleDisabled,
+    ReplayedNonce,
+    QuorumNotMet,
+    InvalidSignature,
+    SourceNotRegistered,
 }
 
 /// Stub: Panics in default builds to prevent oracle trigger validation.

@@ -7,6 +7,8 @@
 //!   - Gap attempt (skipping a nonce value) reverts
 //!   - Nonce is independent per holder
 //!   - Omitting expected_nonce (None) always succeeds regardless of current nonce
+//!   - Nonce unchanged after failed file_claim on non-zero nonce
+//!   - Nonce increments correctly across interleaved initiate_policy + file_claim calls
 
 #![cfg(test)]
 
@@ -203,4 +205,62 @@ fn file_claim_correct_nonce_increments() {
     let claim_id = client.file_claim(&holder, &1u32, &100_000i128, &details, &ev, &Some(0u64));
     assert_eq!(claim_id, 1u64);
     assert_eq!(client.get_nonce(&holder), 1u64);
+}
+
+// ── Wrong nonce on file_claim does not change a non-zero nonce ────────────────
+//
+// Regression: ensure the nonce is not partially written before the mismatch
+// check fires, even when the holder already has a nonce > 0.
+
+#[test]
+fn file_claim_wrong_nonce_does_not_mutate_nonzero_nonce() {
+    let (env, client, _, token) = setup();
+    let holder = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    // Advance nonce to 2 via two successful initiate_policy calls.
+    initiate(&client, &holder, &token, Some(0)); // nonce → 1
+    initiate(&client, &holder, &token, Some(1)); // nonce → 2
+    assert_eq!(client.get_nonce(&holder), 2u64);
+
+    client.test_seed_policy(&holder, &3u32, &1_000_000i128, &200u32);
+    client.test_seed_policy(&voter, &1u32, &1_000_000i128, &200u32);
+
+    // Supply stale nonce 0 — must revert and leave nonce at 2.
+    let details = String::from_str(&env, "stale nonce test");
+    let ev = common::empty_evidence(&env);
+    let result = client.try_file_claim(&holder, &3u32, &100_000i128, &details, &ev, &Some(0u64));
+    assert!(result.is_err(), "stale nonce must revert");
+    assert_eq!(client.get_nonce(&holder), 2u64, "nonce must remain 2 after failed call");
+}
+
+// ── Nonce increments correctly across interleaved initiate + file_claim ───────
+//
+// Both mutating entrypoints share the same per-holder counter; this test
+// confirms the counter is a single monotonic sequence, not two separate ones.
+
+#[test]
+fn nonce_shared_across_initiate_and_file_claim() {
+    let (env, client, _, token) = setup();
+    let holder = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    // nonce 0 → initiate_policy
+    initiate(&client, &holder, &token, Some(0)); // nonce → 1
+    assert_eq!(client.get_nonce(&holder), 1u64);
+
+    // Seed a second policy directly so we can file a claim without a second initiate.
+    client.test_seed_policy(&holder, &2u32, &1_000_000i128, &200u32);
+    client.test_seed_policy(&voter, &1u32, &1_000_000i128, &200u32);
+
+    // nonce 1 → file_claim (continues the same sequence)
+    let details = String::from_str(&env, "interleaved nonce test");
+    let ev = common::empty_evidence(&env);
+    let claim_id = client.file_claim(&holder, &2u32, &100_000i128, &details, &ev, &Some(1u64));
+    assert_eq!(claim_id, 1u64);
+    assert_eq!(client.get_nonce(&holder), 2u64);
+
+    // nonce 2 → another initiate_policy
+    initiate(&client, &holder, &token, Some(2)); // nonce → 3
+    assert_eq!(client.get_nonce(&holder), 3u64);
 }

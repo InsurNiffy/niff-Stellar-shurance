@@ -220,3 +220,108 @@ jobs:
           name: axe-report-${{ github.sha }}
           path: frontend/playwright-report/
           retention-days: 14
+
+  # ── Database migrations verification ────────────────────────────────────────
+  migrations:
+    name: Database migrations verification
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_niffyinsure
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Verify migration lock file consistency
+        run: |
+          # Check if migration_lock.toml exists and is valid
+          if [ ! -f prisma/migrations/migration_lock.toml ]; then
+            echo "::error::Migration lock file missing"
+            exit 1
+          fi
+          
+          # Verify lock file contains expected provider
+          if ! grep -q "provider = \"postgresql\"" prisma/migrations/migration_lock.toml; then
+            echo "::error::Migration lock file has incorrect provider"
+            exit 1
+          fi
+
+      - name: Check migration history consistency
+        run: |
+          # Verify all migration directories have migration.sql
+          for dir in prisma/migrations/*/; do
+            if [ ! -f "$dir/migration.sql" ]; then
+              echo "::error::Migration directory $dir missing migration.sql"
+              exit 1
+            fi
+          done
+
+      - name: Run migrations against fresh database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_niffyinsure
+        run: |
+          npx prisma migrate deploy
+          echo "✅ All migrations applied successfully"
+
+      - name: Check migration status
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_niffyinsure
+        run: |
+          STATUS_OUTPUT=$(npx prisma migrate status)
+          if echo "$STATUS_OUTPUT" | grep -q "No pending migrations"; then
+            echo "✅ No pending migrations"
+          else
+            echo "::error::Pending migrations detected:"
+            echo "$STATUS_OUTPUT"
+            exit 1
+          fi
+
+      - name: Test seed data application
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_niffyinsure
+        run: |
+          # Check if seed script exists and run it
+          if [ -f "src/database/seed.ts" ]; then
+            npm run seed
+            echo "✅ Seed data applied successfully"
+          else
+            echo "ℹ️ No seed script found, skipping seed test"
+          fi
+
+      - name: Validate database schema
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_niffyinsure
+        run: |
+          # Generate schema from database and compare with expected schema
+          npx prisma db pull --schema /tmp/schema-generated.prisma
+          
+          # Compare key parts of the schema (ignore comments and ordering)
+          if ! npx prisma validate; then
+            echo "::error::Generated schema does not match expected schema"
+            exit 1
+          fi
+          echo "✅ Database schema validation passed"

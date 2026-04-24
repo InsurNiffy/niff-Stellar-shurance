@@ -107,3 +107,42 @@ groups:
             the dead-letter set. Check bullmq_dlq_jobs_total for job_name and
             failure_reason labels to triage. Replay via:
             POST /api/admin/queues/{{ $labels.queue }}/jobs/:jobId/retry
+
+      # ── Redis cache hit rate alert ─────────────────────────────────────────
+      # Alert when the cache hit rate drops below 50 % over a 10-minute window.
+      - alert: RedisCacheHitRateLow
+        expr: |
+          (
+            sum(rate(redis_cache_hits_total{app="niffyinsure-api"}[10m]))
+            /
+            (
+              sum(rate(redis_cache_hits_total{app="niffyinsure-api"}[10m]))
+              + sum(rate(redis_cache_misses_total{app="niffyinsure-api"}[10m]))
+            )
+          ) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Redis cache hit rate below 50 %"
+          description: >
+            The overall Redis cache hit rate has been below 50 % for 10 minutes.
+            This may indicate cache eviction pressure, a cold-start after a
+            Redis restart, or an unexpected traffic pattern. Check Redis memory
+            usage and consider increasing maxmemory or TTLs.
+
+      # ── Redis connection errors alert ──────────────────────────────────────
+      - alert: RedisConnectionErrors
+        expr: |
+          sum(rate(redis_connection_errors_total{app="niffyinsure-api"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Redis connection errors detected"
+          description: >
+            Redis connection errors have been observed for at least 2 minutes.
+            Rate limiting is failing open and nonce-based auth will be rejected.
+            Restore Redis connectivity immediately.

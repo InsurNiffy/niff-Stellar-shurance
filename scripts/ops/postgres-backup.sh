@@ -25,6 +25,7 @@ require_env "BACKUP_KMS_KEY_ID"
 require_cmd "aws"
 require_cmd "jq"
 require_cmd "pg_dump"
+require_cmd "psql"
 require_cmd "sha256sum"
 
 backup_environment="${BACKUP_ENVIRONMENT:-production}"
@@ -47,7 +48,17 @@ dump_file="${tmpdir}/postgres.dump"
 metadata_file="${tmpdir}/postgres.metadata.json"
 inventory_file="${tmpdir}/inventory.json"
 
+count_table() {
+  local table_name="$1"
+  psql "${DATABASE_URL}" -Atqc \
+    "SELECT CASE WHEN to_regclass('public.${table_name}') IS NULL THEN 0 ELSE (SELECT COUNT(*) FROM public.${table_name}) END;"
+}
+
 echo "Creating PostgreSQL backup for ${backup_environment} at ${timestamp_iso}"
+policy_count="$(count_table "policies")"
+claim_count="$(count_table "claims")"
+raw_event_count="$(count_table "raw_events")"
+
 pg_dump \
   --dbname="${DATABASE_URL}" \
   --format=custom \
@@ -78,6 +89,9 @@ jq -n \
   --arg kmsKeyId "${BACKUP_KMS_KEY_ID}" \
   --argjson retentionDays "${retention_days}" \
   --argjson sizeBytes "${dump_size_bytes}" \
+  --argjson policyCount "${policy_count}" \
+  --argjson claimCount "${claim_count}" \
+  --argjson rawEventCount "${raw_event_count}" \
   '{
     backupBucket: $bucket,
     backupEnvironment: $environment,
@@ -88,7 +102,12 @@ jq -n \
     sha256: $sha256,
     kmsKeyId: $kmsKeyId,
     retentionDays: $retentionDays,
-    sizeBytes: $sizeBytes
+    sizeBytes: $sizeBytes,
+    rowCounts: {
+      policies: $policyCount,
+      claims: $claimCount,
+      rawEvents: $rawEventCount
+    }
   }' > "${metadata_file}"
 
 aws s3 cp "${metadata_file}" "s3://${BACKUP_BUCKET}/${metadata_key}" \
@@ -132,6 +151,9 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- Metadata object: \`s3://${BACKUP_BUCKET}/${metadata_key}\`"
     echo "- SHA-256: \`${dump_sha256}\`"
     echo "- Size (bytes): \`${dump_size_bytes}\`"
+    echo "- Policies: \`${policy_count}\`"
+    echo "- Claims: \`${claim_count}\`"
+    echo "- Raw events: \`${raw_event_count}\`"
     echo "- Retention days: \`${retention_days}\`"
     echo "- Pruned objects this run: \`${deleted_count}\`"
   } >> "${GITHUB_STEP_SUMMARY}"

@@ -49,6 +49,9 @@ pub enum DataKey {
     PendingAdminAction,
     /// Optional per-transaction cap for emergency sweep operations (i128).
     SweepCap,
+    /// Minimum ledgers that must elapse between sweep proposal and execution (notice period).
+    /// 0 = disabled. Default: 0 (off). Recommended mainnet value: ~2880 (~4 hours @ 5s/ledger).
+    SweepNoticePeriodLedgers,
     /// Configurable ledger window for pending admin actions (default: 100 ledgers ~30min).
     AdminActionWindowLedgers,
     ActivePolicyCount(Address),
@@ -95,6 +98,21 @@ pub enum DataKey {
     /// Per-holder replay-protection nonce. Incremented on each successful mutating call
     /// when the caller supplies `expected_nonce`. Supplementary to Stellar sequence numbers.
     HolderNonce(Address),
+    // ── Oracle / parametric trigger (experimental) ────────────────────────
+    /// Monotonically increasing trigger ID counter.
+    TriggerCounter,
+    /// Full trigger record keyed by trigger_id.
+    OracleTrigger(u64),
+    /// Current status of a trigger.
+    TriggerStatus(u64),
+    /// Whether oracle triggers are globally enabled (admin toggle).
+    OracleEnabled,
+    /// Registered Ed25519 public key (32 bytes) for an oracle source address.
+    OraclePubKey(Address),
+    /// Last accepted nonce per oracle source address (replay protection).
+    OracleNonce(Address),
+    /// Required quorum count for a given oracle source (0 = single-sig).
+    OracleQuorum(Address),
 }
 
 // ── Instance bump ─────────────────────────────────────────────────────────────
@@ -699,6 +717,23 @@ pub fn get_sweep_cap(env: &Env) -> Option<i128> {
     env.storage().instance().get(&DataKey::SweepCap)
 }
 
+// ── Sweep notice period (instance) ───────────────────────────────────────────
+
+/// Set the on-chain notice period (ledgers) required between sweep proposal and execution.
+pub fn set_sweep_notice_period_ledgers(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::SweepNoticePeriodLedgers, &ledgers);
+}
+
+/// Get the current sweep notice period in ledgers (0 = disabled).
+pub fn get_sweep_notice_period_ledgers(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::SweepNoticePeriodLedgers)
+        .unwrap_or(0u32)
+}
+
 // ── Max evidence count (instance) ────────────────────────────────────────────
 
 /// Absolute hard maximum the admin setter will never exceed.
@@ -854,4 +889,153 @@ pub fn check_and_bump_nonce(
     }
     increment_holder_nonce(env, holder);
     Ok(())
+}
+
+// ── Oracle / parametric trigger storage (experimental) ───────────────────────
+
+#[cfg(feature = "experimental")]
+pub fn next_trigger_id(env: &Env) -> u64 {
+    let key = DataKey::TriggerCounter;
+    let next: u64 = env.storage().instance().get(&key).unwrap_or(0u64) + 1;
+    env.storage().instance().set(&key, &next);
+    next
+}
+
+#[cfg(feature = "experimental")]
+pub fn set_oracle_trigger(env: &Env, trigger_id: u64, trigger: &crate::types::OracleTrigger) {
+    let key = DataKey::OracleTrigger(trigger_id);
+    env.storage().persistent().set(&key, trigger);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+#[cfg(feature = "experimental")]
+pub fn get_oracle_trigger(env: &Env, trigger_id: u64) -> Option<crate::types::OracleTrigger> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OracleTrigger(trigger_id))
+}
+
+#[cfg(feature = "experimental")]
+pub fn set_trigger_status(env: &Env, trigger_id: u64, status: crate::types::TriggerStatus) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TriggerStatus(trigger_id), &status);
+}
+
+#[cfg(feature = "experimental")]
+pub fn get_trigger_status(env: &Env, trigger_id: u64) -> Option<crate::types::TriggerStatus> {
+    env.storage()
+        .instance()
+        .get(&DataKey::TriggerStatus(trigger_id))
+}
+
+#[cfg(feature = "experimental")]
+pub fn set_oracle_enabled(env: &Env, enabled: bool) {
+    env.storage().instance().set(&DataKey::OracleEnabled, &enabled);
+}
+
+#[cfg(feature = "experimental")]
+pub fn is_oracle_enabled(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::OracleEnabled)
+        .unwrap_or(false)
+}
+
+/// Register an Ed25519 public key for an oracle source address.
+#[cfg(feature = "experimental")]
+pub fn set_oracle_pub_key(env: &Env, source: &Address, pub_key: &soroban_sdk::BytesN<32>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::OraclePubKey(source.clone()), pub_key);
+}
+
+#[cfg(feature = "experimental")]
+pub fn get_oracle_pub_key(env: &Env, source: &Address) -> Option<soroban_sdk::BytesN<32>> {
+    env.storage()
+        .instance()
+        .get(&DataKey::OraclePubKey(source.clone()))
+}
+
+/// Get the last accepted nonce for an oracle source (0 if never used).
+#[cfg(feature = "experimental")]
+pub fn get_oracle_nonce(env: &Env, source: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OracleNonce(source.clone()))
+        .unwrap_or(0u64)
+}
+
+/// Advance the oracle nonce. Returns Err if `nonce` is not strictly greater than current.
+#[cfg(feature = "experimental")]
+pub fn advance_oracle_nonce(
+    env: &Env,
+    source: &Address,
+    nonce: u64,
+) -> Result<(), crate::validate::OracleError> {
+    let current = get_oracle_nonce(env, source);
+    if nonce <= current {
+        return Err(crate::validate::OracleError::ReplayedNonce);
+    }
+    let key = DataKey::OracleNonce(source.clone());
+    env.storage().persistent().set(&key, &nonce);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    Ok(())
+}
+
+/// Required number of oracle signatures for a source (0 or 1 = single-sig).
+#[cfg(feature = "experimental")]
+pub fn get_oracle_quorum(env: &Env, source: &Address) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::OracleQuorum(source.clone()))
+        .unwrap_or(1u32)
+}
+
+#[cfg(feature = "experimental")]
+pub fn set_oracle_quorum(env: &Env, source: &Address, quorum: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleQuorum(source.clone()), &quorum);
+}
+
+// ── Non-experimental stubs (panic guards) ────────────────────────────────────
+
+#[cfg(not(feature = "experimental"))]
+pub fn next_trigger_id(_env: &Env) -> u64 {
+    panic!("ORACLE_TRIGGERS_DISABLED")
+}
+
+#[cfg(not(feature = "experimental"))]
+pub fn set_oracle_trigger(_env: &Env, _id: u64, _trigger: &crate::types::OracleTrigger) {
+    panic!("ORACLE_TRIGGERS_DISABLED")
+}
+
+#[cfg(not(feature = "experimental"))]
+pub fn get_oracle_trigger(_env: &Env, _id: u64) -> Option<crate::types::OracleTrigger> {
+    panic!("ORACLE_TRIGGERS_DISABLED")
+}
+
+#[cfg(not(feature = "experimental"))]
+pub fn set_trigger_status(_env: &Env, _id: u64, _status: crate::types::TriggerStatus) {
+    panic!("ORACLE_TRIGGERS_DISABLED")
+}
+
+#[cfg(not(feature = "experimental"))]
+pub fn get_trigger_status(_env: &Env, _id: u64) -> Option<crate::types::TriggerStatus> {
+    panic!("ORACLE_TRIGGERS_DISABLED")
+}
+
+#[cfg(not(feature = "experimental"))]
+pub fn is_oracle_enabled(_env: &Env) -> bool {
+    panic!("ORACLE_TRIGGERS_DISABLED")
+}
+
+#[cfg(not(feature = "experimental"))]
+pub fn set_oracle_enabled(_env: &Env, _enabled: bool) {
+    panic!("ORACLE_TRIGGERS_DISABLED")
 }

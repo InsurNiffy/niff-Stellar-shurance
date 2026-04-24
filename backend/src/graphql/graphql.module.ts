@@ -21,6 +21,7 @@ import { GraphqlRateLimitGuard } from './graphql-rate-limit.guard';
 import { GraphqlWalletAuthGuard } from './graphql-wallet-auth.guard';
 import { PersistedQueryMiddleware } from './persisted-query.middleware';
 import { PolicyResolver } from './policy.resolver';
+import { VotePubSubService } from './vote-pubsub.service';
 import type { GraphqlRequest } from './graphql.context';
 
 @Module({
@@ -67,6 +68,16 @@ import type { GraphqlRequest } from './graphql.context';
           csrfPrevention: true,
           introspection: allowIntrospection,
           includeStacktraceInErrorResponses: false,
+          subscriptions: {
+            'graphql-ws': {
+              path: graphqlPath,
+              onConnect: async (ctx) => {
+                // Auth is enforced per-subscription via GraphqlWalletAuthGuard.
+                // Store connectionParams on context so guards can read the token.
+                return { connectionParams: ctx.connectionParams };
+              },
+            },
+          },
           context: ({
             req,
             res,
@@ -89,6 +100,7 @@ import type { GraphqlRequest } from './graphql.context';
     GraphqlRateLimitGuard,
     GraphqlWalletAuthGuard,
     PersistedQueryMiddleware,
+    VotePubSubService,
   ],
 })
 export class GraphqlApiModule implements NestModule {

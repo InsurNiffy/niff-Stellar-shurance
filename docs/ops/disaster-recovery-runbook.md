@@ -30,7 +30,9 @@
 - Method: `pg_dump --format=custom --compress=9`
 - Encryption at rest: S3 `SSE-KMS` using `BACKUP_KMS_KEY_ID`
 - Retention: repo variable `BACKUP_RETENTION_DAYS` plus per-run pruning
+- Storage location: `s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_ENVIRONMENT/postgres-<timestamp>.dump` with adjacent `.metadata.json`
 - Evidence: uploaded metadata artifact and S3-side metadata JSON
+- Restore verification: every successful backup is restored into an ephemeral PostgreSQL service and checked against metadata row counts
 - Failure alert: optional `OPS_ALERT_WEBHOOK_URL` webhook
 
 ### Quarterly restore drill
@@ -41,6 +43,18 @@
 - Verifies required tables and captures row-count evidence
 - Replays the indexer from `DRILL_REINDEX_FROM_LEDGER` using [`backend/scripts/replay-indexer.ts`](../../backend/scripts/replay-indexer.ts)
 - Uploads evidence artifacts for 365 days
+- Files a GitHub issue from the drill ticket template on scheduled runs and on manual runs unless `create_ticket` is disabled
+
+### Quarterly owner rotation
+
+| Quarter | Primary owner | Secondary owner | Required filing |
+|---|---|---|---|
+| Q1 | Backend on-call lead | DBA/Ops lead | GitHub issue from workflow + drill log row |
+| Q2 | DBA/Ops lead | Backend on-call lead | GitHub issue from workflow + drill log row |
+| Q3 | Platform Engineering lead | Incident Commander delegate | GitHub issue from workflow + drill log row |
+| Q4 | Incident Commander delegate | Platform Engineering lead | GitHub issue from workflow + drill log row |
+
+The primary owner reviews the uploaded artifact, records observed RTO/RPO in [`recovery-drill-log.md`](./recovery-drill-log.md), and opens follow-up issues for any access, restore, replay, or smoke-test gaps within 48 hours.
 
 ## IAM and access-path requirements
 

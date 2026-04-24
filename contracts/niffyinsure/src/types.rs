@@ -530,11 +530,9 @@ pub struct PremiumQuote {
 pub enum OracleSource {
     /// Stub: no trusted source defined yet.
     Undefined,
-    // Future variants (examples only — NOT implemented):
-    // WeatherStation(Address),
-    // FlightTracker(Address),
-    // PriceFeed { asset: String, threshold: i128 },
-    // MultiSigOracle(Vec<Address>),
+    /// A registered oracle identified by its on-chain address.
+    /// The address must have a corresponding Ed25519 public key registered via `set_oracle_pub_key`.
+    Registered(Address),
 }
 
 /// Placeholder enum for trigger event types.
@@ -552,11 +550,8 @@ pub enum OracleSource {
 pub enum TriggerEventType {
     /// Stub: no trigger type defined yet.
     Undefined,
-    // Future variants (examples only — NOT implemented):
-    // WeatherEvent { event_code: u32, threshold_value: i128 },
-    // FlightCancellation { flight_id: String },
-    // PriceDeviation { asset: String, deviation_bps: u32 },
-    // Custom { namespace: String, predicate: Vec<u8> },
+    /// A weather-related parametric trigger (e.g., storm, flood, drought).
+    WeatherEvent,
 }
 
 /// On-chain oracle trigger record.
@@ -590,16 +585,14 @@ pub struct OracleTrigger {
     pub timestamp: u64,
     /// Ledger sequence when this trigger was recorded.
     pub trigger_ledger: u32,
-    /// Reserved for future Ed25519/EdDSA signature verification.
+    /// Replay protection nonce (must be strictly increasing per source).
+    pub nonce: u64,
+    /// Ed25519 signature over (policy_id || event_type || payload || timestamp || nonce).
     ///
     /// CRITICAL SECURITY NOTE:
-    /// This field MUST be empty in all current builds.  Signature
-    /// verification is NOT implemented.  Any non-empty signature
-    /// should be treated as INVALID until crypto review completes.
-    ///
-    /// DO NOT PARSE: This field may contain arbitrary data that could
-    /// trigger parsing vulnerabilities if interpreted without validation.
-    pub signature: Bytes,
+    /// Signature verification is now implemented. The signature must be valid
+    /// Ed25519 signature from the registered oracle public key for this source.
+    pub signature: BytesN<64>,
 }
 
 #[cfg(not(feature = "experimental"))]
@@ -612,7 +605,8 @@ pub struct OracleTrigger {
     pub payload: Bytes,
     pub timestamp: u64,
     pub trigger_ledger: u32,
-    pub signature: Bytes,
+    pub nonce: u64,
+    pub signature: BytesN<64>,
 }
 
 /// Status of an oracle trigger in the resolution pipeline.

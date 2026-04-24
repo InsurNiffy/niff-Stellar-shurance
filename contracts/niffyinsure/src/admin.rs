@@ -49,6 +49,8 @@ pub enum AdminError {
     CannotSelfConfirm = 114,
     /// Admin action window out of bounds.
     InvalidAdminActionWindow = 115,
+    /// Sweep notice period has not elapsed since the proposal.
+    SweepNoticePeriodActive = 116,
 }
 
 /// Types for two-step high-risk admin actions (treasury rotation, token sweeps)
@@ -384,6 +386,10 @@ pub fn sweep_token(env: &Env, asset: Address, recipient: Address, amount: i128, 
 }
 
 fn sweep_token_inner(env: &Env, asset: Address, recipient: Address, amount: i128, reason_code: u32) {
+    // Validation: amount must be > 0
+    if amount <= 0 {
+        panic_with_error!(env, AdminError::InvalidSweepAmount);
+    }
     // Validation: asset must be allowlisted (prevents arbitrary token sweeps)
     if !storage::is_allowed_asset(env, &asset) {
         panic_with_error!(env, AdminError::AssetNotAllowlisted);
@@ -392,6 +398,19 @@ fn sweep_token_inner(env: &Env, asset: Address, recipient: Address, amount: i128
     if let Some(cap) = storage::get_sweep_cap(env) {
         if amount > cap {
             panic_with_error!(env, AdminError::SweepCapExceeded);
+        }
+    }
+    // On-chain notice period: the pending action must have been proposed at least
+    // `sweep_notice_period_ledgers` ago before execution is allowed.
+    let notice_period = storage::get_sweep_notice_period_ledgers(env);
+    if notice_period > 0 {
+        let pending = storage::get_pending_admin_action(env)
+            .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdminAction));
+        let proposed_at = pending.expiry_ledger
+            .saturating_sub(storage::get_admin_action_window_ledgers(env));
+        let earliest_execution = proposed_at.saturating_add(notice_period);
+        if env.ledger().sequence() < earliest_execution {
+            panic_with_error!(env, AdminError::SweepNoticePeriodActive);
         }
     }
 
@@ -463,6 +482,14 @@ fn calculate_protected_balance(env: &Env, asset: &Address) -> i128 {
 pub fn set_sweep_cap(env: &Env, cap: Option<i128>) {
     let _admin = require_admin(env);
     storage::set_sweep_cap(env, cap);
+}
+
+/// Set the on-chain notice period (in ledgers) that must elapse between a sweep
+/// proposal and its execution. Set to 0 to disable (not recommended for mainnet).
+/// Admin must authorize.
+pub fn set_sweep_notice_period(env: &Env, ledgers: u32) {
+    let _admin = require_admin(env);
+    storage::set_sweep_notice_period_ledgers(env, ledgers);
 }
 
 #[contractevent(topics = ["niffyinsure", "max_evidence_count_updated"])]

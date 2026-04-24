@@ -20,7 +20,7 @@ type ClaimsByPolicyKey = {
 export class PolicyResolver {
   private readonly claimsByPolicyLoaders = new WeakMap<
     GraphqlRequest,
-    DataLoader<ClaimsByPolicyKey, ClaimNode[]>
+    DataLoader<ClaimsByPolicyKey, ClaimNode[], string>
   >();
   private readonly nestedClaimsDefaultLimit: number;
   private readonly nestedClaimsMaxLimit: number;
@@ -99,13 +99,13 @@ export class PolicyResolver {
 
   private getClaimsByPolicyLoader(
     req: GraphqlRequest,
-  ): DataLoader<ClaimsByPolicyKey, ClaimNode[]> {
+  ): DataLoader<ClaimsByPolicyKey, ClaimNode[], string> {
     const existing = this.claimsByPolicyLoaders.get(req);
     if (existing) {
       return existing;
     }
 
-    const loader = new DataLoader<ClaimsByPolicyKey, ClaimNode[]>(
+    const loader = new DataLoader<ClaimsByPolicyKey, ClaimNode[], string>(
       async (keys) => {
         const groups = new Map<number, string[]>();
         for (const key of keys) {
@@ -179,8 +179,8 @@ export class PolicyResolver {
       deadlineOpen: claim.deadline.isOpen,
       remainingSeconds: claim.deadline.remainingSeconds,
       isFinalized: claim.consistency.isFinalized,
-      indexerLag: claim.consistency.indexerLag,
-      lastIndexedLedger: claim.consistency.lastIndexedLedger,
+      indexerLag: claim.consistency.indexerLag ?? 0,
+      lastIndexedLedger: claim.consistency.lastIndexedLedger ?? 0,
       isStale: claim.consistency.isStale,
       tallyReconciled: claim.consistency.tallyReconciled,
       userVote: claim.userVote,

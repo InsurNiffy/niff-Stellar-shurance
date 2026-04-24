@@ -20,7 +20,7 @@
 
 #![cfg(feature = "experimental")]
 
-use soroban_sdk::{Bytes, Env};
+use soroban_sdk::{Address, BytesN, Bytes, Env};
 
 use crate::storage;
 use crate::types::{OracleSource, OracleTrigger, TriggerStatus};
@@ -54,7 +54,8 @@ pub fn submit_trigger(
     source: OracleSource,
     payload: Bytes,
     timestamp: u64,
-    signature: Bytes,
+    nonce: u64,
+    signature: BytesN<64>,
 ) -> Result<u64, OracleError> {
     // 1. Validate payload size to prevent storage griefing
     if payload.len() > MAX_TRIGGER_PAYLOAD_SIZE {
@@ -70,10 +71,11 @@ pub fn submit_trigger(
         payload,
         timestamp,
         trigger_ledger: current_ledger,
+        nonce,
         signature,
     };
 
-    // 3. Validate the trigger (non-cryptographic checks only)
+    // 3. Validate the trigger (includes Ed25519 verification + nonce replay protection)
     check_oracle_trigger(
         env,
         &trigger,
@@ -201,4 +203,20 @@ pub fn set_oracle_enabled(env: &Env, enabled: bool) {
 /// Check if oracle triggers are currently enabled.
 pub fn is_oracle_enabled(env: &Env) -> bool {
     storage::is_oracle_enabled(env)
+}
+
+/// Admin: register an Ed25519 public key for an oracle source address.
+/// Must be called before any trigger from this source can be accepted.
+pub fn register_oracle_key(env: &Env, source: &Address, pub_key: &BytesN<32>) {
+    storage::set_oracle_pub_key(env, source, pub_key);
+}
+
+/// Admin: set the quorum threshold for a source (1 = single-sig, >1 = multi-oracle).
+pub fn set_oracle_quorum(env: &Env, source: &Address, quorum: u32) {
+    storage::set_oracle_quorum(env, source, quorum);
+}
+
+/// Read the current accepted nonce for a source (for off-chain nonce tracking).
+pub fn get_oracle_nonce(env: &Env, source: &Address) -> u64 {
+    storage::get_oracle_nonce(env, source)
 }

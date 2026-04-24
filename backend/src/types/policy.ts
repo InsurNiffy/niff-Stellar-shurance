@@ -7,7 +7,15 @@
 export type PolicyType = "Auto" | "Health" | "Property";
 export type RegionTier = "Low" | "Medium" | "High";
 export type CoverageTier = "Basic" | "Standard" | "Premium";
-export type ClaimStatus = "Processing" | "Approved" | "Rejected";
+export type ClaimStatus =
+  | "Processing"
+  | "Approved"
+  | "Rejected"
+  | "Paid"
+  | "Withdrawn"
+  | "UnderAppeal"
+  | "AppealApproved"
+  | "AppealRejected";
 
 /** On-chain Policy record (internal representation). */
 export interface Policy {
@@ -56,4 +64,10 @@ export interface Claim {
   /** Last ledger inclusive for voting; frozen at claim filing (matches contract). */
   voting_deadline_ledger?: number;
   filed_at_ledger?: number;
+  /**
+   * Append-only `(status, ledger)` log mirroring `Claim.status_history` on-chain.
+   * Capped at `CLAIM_STATUS_HISTORY_MAX` (24); oldest entries dropped on overflow.
+   * Use `status` for canonical state — history may be incomplete for very old claims.
+   */
+  status_history?: Array<{ status: ClaimStatus; ledger: number }>;
 }

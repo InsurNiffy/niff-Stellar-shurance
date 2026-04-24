@@ -6,7 +6,7 @@
  * PII minimisation: only claim_id, policy_id, outcome in templates.
  * Default: email opt-in, Discord/Telegram opt-out.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type {
@@ -14,6 +14,18 @@ import type {
   NotificationRecord,
   UserPreferences,
 } from './notification.types';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  NOTIFICATION_TYPE_TO_PREFERENCE_KEY,
+  NotificationPreferenceRecord,
+  NotificationPreferences,
+  NotificationPreferenceUpdate,
+  NotificationType,
+} from './notification-preference.types';
+import {
+  NOTIFICATION_PREFERENCES_REPOSITORY,
+  NotificationPreferencesRepository,
+} from './notification-preferences.repository';
 import {
   buildClaimFinalizedEmail,
   buildClaimFinalizedDiscord,
@@ -30,7 +42,11 @@ export class NotificationsService {
 
   private transport: nodemailer.Transporter | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    @Inject(NOTIFICATION_PREFERENCES_REPOSITORY)
+    private readonly preferencesRepository: NotificationPreferencesRepository,
+  ) {}
 
   private getTransport(): nodemailer.Transporter {
     if (this.transport) return this.transport;
@@ -63,6 +79,44 @@ export class NotificationsService {
   updatePreferences(prefs: UserPreferences): UserPreferences {
     this.prefs.set(prefs.claimantPublicKey, prefs);
     return prefs;
+  }
+
+  async getUserNotificationPreferences(
+    userId: string,
+  ): Promise<NotificationPreferences> {
+    const storedPreferences = await this.preferencesRepository.findByUserId(userId);
+    return this.resolveNotificationPreferences(storedPreferences);
+  }
+
+  async updateUserNotificationPreferences(
+    userId: string,
+    updates: NotificationPreferenceUpdate,
+  ): Promise<NotificationPreferences> {
+    const currentRecord = await this.preferencesRepository.findByUserId(userId);
+    const resolvedPreferences = this.resolveNotificationPreferences(currentRecord);
+
+    const nextPreferences: NotificationPreferences = {
+      renewalRemindersEnabled:
+        updates.renewalRemindersEnabled ?? resolvedPreferences.renewalRemindersEnabled,
+      claimUpdatesEnabled:
+        updates.claimUpdatesEnabled ?? resolvedPreferences.claimUpdatesEnabled,
+    };
+
+    await this.preferencesRepository.upsert({
+      userId,
+      renewalRemindersEnabled: nextPreferences.renewalRemindersEnabled,
+      claimUpdatesEnabled: nextPreferences.claimUpdatesEnabled,
+    });
+
+    return nextPreferences;
+  }
+
+  async shouldSendNotification(
+    userId: string,
+    notificationType: NotificationType,
+  ): Promise<boolean> {
+    const preferences = await this.getUserNotificationPreferences(userId);
+    return preferences[NOTIFICATION_TYPE_TO_PREFERENCE_KEY[notificationType]];
   }
 
   async sendClaimNotifications(
@@ -142,6 +196,19 @@ export class NotificationsService {
   /** Exposed for tests. */
   _clearSentSet() {
     this.sentSet.clear();
+  }
+
+  private resolveNotificationPreferences(
+    record: NotificationPreferenceRecord | null,
+  ): NotificationPreferences {
+    return {
+      renewalRemindersEnabled:
+        record?.renewalRemindersEnabled ??
+        DEFAULT_NOTIFICATION_PREFERENCES.renewalRemindersEnabled,
+      claimUpdatesEnabled:
+        record?.claimUpdatesEnabled ??
+        DEFAULT_NOTIFICATION_PREFERENCES.claimUpdatesEnabled,
+    };
   }
 }
 
