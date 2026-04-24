@@ -6,7 +6,7 @@
     "start": "node dist/index.js",
     "build": "tsc",
     "lint": "eslint src --ext .ts",
-    "test": "jest --passWithNoTests"
+    "test": "npm run build && jest --passWithNoTests --runInBand"
   },
   "dependencies": {
     "express": "^4.21.2"
