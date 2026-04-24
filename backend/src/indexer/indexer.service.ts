@@ -323,6 +323,8 @@ export class IndexerService {
         (mainTopic === 'niffyinsure' && subTopic === 'claim_paid')
       ) {
         await this.handleClaimProcessed(tx, dataNative, event);
+      } else if (mainTopic === 'niffyins' && subTopic === 'tbl_upd') {
+        await this.handlePremiumTableUpdated();
       }
 
       await this.advanceCursorInTx(tx, network, event.ledger);
@@ -487,5 +489,15 @@ export class IndexerService {
       updatedAt: new Date(event.ledgerClosedAt).toISOString(),
       ledger: event.ledger,
     });
+  }
+
+  /**
+   * On-chain `tbl_upd` means the premium multiplier table was updated.
+   * Flush the entire quote simulation cache so subsequent requests
+   * re-simulate against the new on-chain multipliers.
+   */
+  private async handlePremiumTableUpdated(): Promise<void> {
+    await this.quoteSimulationCache?.invalidateAll();
+    this.logger.log('Quote simulation cache invalidated after tbl_upd event');
   }
 }
