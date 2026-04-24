@@ -49,6 +49,9 @@ pub enum DataKey {
     PendingAdminAction,
     /// Optional per-transaction cap for emergency sweep operations (i128).
     SweepCap,
+    /// Minimum ledgers that must elapse between sweep proposal and execution (notice period).
+    /// 0 = disabled. Default: 0 (off). Recommended mainnet value: ~2880 (~4 hours @ 5s/ledger).
+    SweepNoticePeriodLedgers,
     /// Configurable ledger window for pending admin actions (default: 100 ledgers ~30min).
     AdminActionWindowLedgers,
     ActivePolicyCount(Address),
@@ -712,6 +715,23 @@ pub fn set_sweep_cap(env: &Env, cap: Option<i128>) {
 /// Get current sweep cap (None if not set).
 pub fn get_sweep_cap(env: &Env) -> Option<i128> {
     env.storage().instance().get(&DataKey::SweepCap)
+}
+
+// ── Sweep notice period (instance) ───────────────────────────────────────────
+
+/// Set the on-chain notice period (ledgers) required between sweep proposal and execution.
+pub fn set_sweep_notice_period_ledgers(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::SweepNoticePeriodLedgers, &ledgers);
+}
+
+/// Get the current sweep notice period in ledgers (0 = disabled).
+pub fn get_sweep_notice_period_ledgers(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::SweepNoticePeriodLedgers)
+        .unwrap_or(0u32)
 }
 
 // ── Max evidence count (instance) ────────────────────────────────────────────

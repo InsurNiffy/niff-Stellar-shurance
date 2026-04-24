@@ -719,6 +719,18 @@ pub fn set_token(env: Env, new_token: Address) {
         storage::get_sweep_cap(&env)
     }
 
+    /// Set the on-chain notice period (in ledgers) that must elapse between a sweep
+    /// proposal and its execution. 0 = disabled. Admin-only.
+    /// Recommended mainnet value: 2880 (~4 hours at 5s/ledger).
+    pub fn set_sweep_notice_period(env: Env, ledgers: u32) {
+        admin::set_sweep_notice_period(&env, ledgers);
+    }
+
+    /// Get the current sweep notice period in ledgers (0 = disabled).
+    pub fn get_sweep_notice_period(env: Env) -> u32 {
+        storage::get_sweep_notice_period_ledgers(&env)
+    }
+
     /// Admin-only: set the maximum number of evidence entries per claim.
     /// Hard max is [`storage::MAX_EVIDENCE_COUNT_HARD_MAX`] (20).
     /// Reductions do NOT retroactively invalidate existing claims.
