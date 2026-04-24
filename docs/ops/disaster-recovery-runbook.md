@@ -30,7 +30,9 @@
 - Method: `pg_dump --format=custom --compress=9`
 - Encryption at rest: S3 `SSE-KMS` using `BACKUP_KMS_KEY_ID`
 - Retention: repo variable `BACKUP_RETENTION_DAYS` plus per-run pruning
+- Storage location: `s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_ENVIRONMENT/postgres-<timestamp>.dump` with adjacent `.metadata.json`
 - Evidence: uploaded metadata artifact and S3-side metadata JSON
+- Restore verification: every successful backup is restored into an ephemeral PostgreSQL service and checked against metadata row counts
 - Failure alert: optional `OPS_ALERT_WEBHOOK_URL` webhook
 
 ### Quarterly restore drill

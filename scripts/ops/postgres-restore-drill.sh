@@ -29,6 +29,7 @@ require_cmd "sha256sum"
 
 restore_environment="${RESTORE_ENVIRONMENT:-production}"
 output_dir="${DRILL_OUTPUT_DIR:-drill-evidence}"
+max_row_count_delta="${RESTORE_MAX_ROW_COUNT_DELTA:-0}"
 prefix="${BACKUP_PREFIX#/}"
 prefix="${prefix%/}"
 requested_object_key="${BACKUP_OBJECT_KEY:-}"
@@ -128,6 +129,33 @@ latest_cursor_json="$(
     "SELECT COALESCE(json_agg(row_to_json(t))::text, '[]') FROM (SELECT network, last_processed_ledger FROM ledger_cursors ORDER BY network) t;"
 )"
 
+row_count_status="not_checked"
+if [[ -s "${metadata_file}" ]]; then
+  expected_policy_count="$(jq -r '.rowCounts.policies // empty' "${metadata_file}")"
+  expected_claim_count="$(jq -r '.rowCounts.claims // empty' "${metadata_file}")"
+  expected_raw_event_count="$(jq -r '.rowCounts.rawEvents // empty' "${metadata_file}")"
+
+  if [[ -n "${expected_policy_count}" && -n "${expected_claim_count}" && -n "${expected_raw_event_count}" ]]; then
+    row_count_status="matched"
+    for pair in \
+      "policies:${expected_policy_count}:${policy_count}" \
+      "claims:${expected_claim_count}:${claim_count}" \
+      "raw_events:${expected_raw_event_count}:${raw_event_count}"
+    do
+      IFS=":" read -r table_name expected actual <<< "${pair}"
+      delta=$(( actual - expected ))
+      if (( delta < 0 )); then
+        delta=$(( -delta ))
+      fi
+      if (( delta > max_row_count_delta )); then
+        echo "error: ${table_name} row count delta ${delta} exceeds threshold ${max_row_count_delta} (expected ${expected}, restored ${actual})" >&2
+        row_count_status="diverged"
+        exit 1
+      fi
+    done
+  fi
+fi
+
 completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 jq -n \
@@ -142,6 +170,8 @@ jq -n \
   --argjson rawEventCount "${raw_event_count}" \
   --argjson latestRawEventLedger "${latest_raw_event_ledger}" \
   --argjson ledgerCursors "${latest_cursor_json}" \
+  --arg rowCountStatus "${row_count_status}" \
+  --argjson maxRowCountDelta "${max_row_count_delta}" \
   '{
     startedAt: $startedAt,
     completedAt: $completedAt,
@@ -153,7 +183,9 @@ jq -n \
     claimCount: $claimCount,
     rawEventCount: $rawEventCount,
     latestRawEventLedger: $latestRawEventLedger,
-    ledgerCursors: $ledgerCursors
+    ledgerCursors: $ledgerCursors,
+    rowCountStatus: $rowCountStatus,
+    maxRowCountDelta: $maxRowCountDelta
   }' > "${evidence_file}"
 
 cp "${metadata_file}" "${output_dir}/$(basename "${metadata_file}")" 2>/dev/null || true
@@ -170,6 +202,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- Claims: \`${claim_count}\`"
     echo "- Raw events: \`${raw_event_count}\`"
     echo "- Latest raw-event ledger: \`${latest_raw_event_ledger}\`"
+    echo "- Row-count verification: \`${row_count_status}\`"
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
 
