@@ -332,6 +332,14 @@ export class IndexerService {
     const policyId = getNumberValue(data.policy_id);
     const id = `${holder}:${policyId}`;
 
+    // Extract the SEP-41 asset contract ID bound at policy initiation.
+    // Present in all new PolicyInitiated events; null for legacy policies
+    // created before multi-asset support was added.
+    const assetContractId =
+      data.asset != null && data.asset !== ''
+        ? getStringValue(data.asset)
+        : null;
+
     await tx.policy.upsert({
       where: { id },
       create: {
@@ -345,12 +353,16 @@ export class IndexerService {
         isActive: true,
         startLedger: getNumberValue(data.start_ledger),
         endLedger: getNumberValue(data.end_ledger),
+        assetContractId,
         txHash: event.txHash,
         eventIndex: 0,
       },
       update: {
         isActive: true,
         endLedger: getNumberValue(data.end_ledger),
+        // Only update assetContractId if the event carries one; never overwrite
+        // a known asset with null (re-index safety for legacy rows).
+        ...(assetContractId != null ? { assetContractId } : {}),
         updatedAt: new Date(),
       },
     });

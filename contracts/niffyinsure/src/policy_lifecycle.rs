@@ -98,8 +98,25 @@ pub fn terminate_policy(
     terminate_inner(env, &holder, policy_id, reason, false, false)
 }
 
-/// Admin termination (audited). `allow_open_claims` documents explicit acceptance
-/// that in-flight claims may lack a normal resolution path — indexers read the flag.
+/// Admin termination (audited).
+///
+/// # ⚠️  GOVERNANCE RISK: `allow_open_claims = true`
+///
+/// When `allow_open_claims = true`, this function terminates the policy even if
+/// a claim is currently in `Processing`. The in-flight claim vote **can still
+/// complete** after termination, but the following edge cases apply:
+///
+/// - `on_reject` will find `policy.is_active = false` and **skip** the
+///   `PolicyDeactivated` branch (no double-deactivation). `StrikeIncremented`
+///   and `ClaimRejected` still fire for auditability.
+/// - The `PolicyTerminated` event carries `open_claim_bypass = 1` and
+///   `open_claims > 0` as the on-chain warning signal for operators/indexers.
+/// - Approved claims on a terminated policy can still be paid out via
+///   `process_claim` — the payout guard checks claim status, not policy status.
+///
+/// **Operator guidance:** Only use `allow_open_claims = true` after confirming
+/// with the DAO that the in-flight claim can be resolved independently. See the
+/// admin runbook for the full risk matrix and recommended mitigations.
 pub fn admin_terminate_policy(
     env: &Env,
     admin: Address,
