@@ -41,6 +41,18 @@
 - Verifies required tables and captures row-count evidence
 - Replays the indexer from `DRILL_REINDEX_FROM_LEDGER` using [`backend/scripts/replay-indexer.ts`](../../backend/scripts/replay-indexer.ts)
 - Uploads evidence artifacts for 365 days
+- Files a GitHub issue from the drill ticket template on scheduled runs and on manual runs unless `create_ticket` is disabled
+
+### Quarterly owner rotation
+
+| Quarter | Primary owner | Secondary owner | Required filing |
+|---|---|---|---|
+| Q1 | Backend on-call lead | DBA/Ops lead | GitHub issue from workflow + drill log row |
+| Q2 | DBA/Ops lead | Backend on-call lead | GitHub issue from workflow + drill log row |
+| Q3 | Platform Engineering lead | Incident Commander delegate | GitHub issue from workflow + drill log row |
+| Q4 | Incident Commander delegate | Platform Engineering lead | GitHub issue from workflow + drill log row |
+
+The primary owner reviews the uploaded artifact, records observed RTO/RPO in [`recovery-drill-log.md`](./recovery-drill-log.md), and opens follow-up issues for any access, restore, replay, or smoke-test gaps within 48 hours.
 
 ## IAM and access-path requirements
 
