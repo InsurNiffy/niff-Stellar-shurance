@@ -311,6 +311,18 @@ pub struct RiskInput {
     pub safety_score: u32,
 }
 
+/// Bundles the optional/extra fields for `initiate_policy` to stay within
+/// Soroban's 10-parameter ABI limit. All fields are optional in MVP.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitiatePolicyOptions {
+    pub beneficiary: Option<Address>,
+    pub deductible: Option<i128>,
+    /// Opt-in replay-protection nonce. Pass `None` to skip the check.
+    /// Supplementary to Stellar sequence numbers — not a replacement.
+    pub expected_nonce: Option<u64>,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiplierTable {

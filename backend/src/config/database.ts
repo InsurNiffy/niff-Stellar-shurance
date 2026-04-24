@@ -22,7 +22,7 @@ export const AppDataSource = new DataSource({
   password: config.database.password || "niff_password",
   database: config.database.name || "niff_stellar",
   synchronize: false,
-  logging: process.env.NODE_ENV === "development",
+  logging: config.env === "development",
   entities: [
     User,
     Policy,

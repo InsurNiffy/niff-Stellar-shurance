@@ -1,6 +1,7 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
+import { MetricsService } from '../metrics/metrics.service';
 
 /**
  * PrismaService — wraps PrismaClient with explicit connection pool settings.
@@ -32,12 +33,20 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PrismaService.name);
+  private readonly slowQueryThresholdMs: number;
+  private readonly poolMax: number;
+  /** Count of queries currently in-flight — used to approximate active pool connections. */
+  private activeQueries = 0;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    @Optional() private readonly metrics?: MetricsService,
+  ) {
     const poolMax = config.get<number>('DB_POOL_MAX', 10);
     const poolMin = config.get<number>('DB_POOL_MIN', 2);
     const idleTimeout = config.get<number>('DB_POOL_IDLE_TIMEOUT_MS', 30_000);
     const connTimeout = config.get<number>('DB_POOL_CONNECTION_TIMEOUT_MS', 5_000);
+    const slowQueryThresholdMs = config.get<number>('DB_SLOW_QUERY_MS', 250);
 
     super({
       datasources: {
@@ -53,6 +62,36 @@ export class PrismaService
           : ['warn', 'error'],
     });
 
+    this.slowQueryThresholdMs = slowQueryThresholdMs;
+    this.poolMax = poolMax;
+
+    this.$use(async (params, next) => {
+      this.activeQueries++;
+      this.emitPoolMetrics();
+
+      const startedAt = Date.now();
+      try {
+        const result = await next(params);
+        const durationMs = Date.now() - startedAt;
+
+        if (durationMs >= this.slowQueryThresholdMs) {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'prisma_slow_query',
+              model: params.model,
+              action: params.action,
+              durationMs,
+            }),
+          );
+        }
+
+        return result;
+      } finally {
+        this.activeQueries = Math.max(0, this.activeQueries - 1);
+        this.emitPoolMetrics();
+      }
+    });
+
     // Expose pool config for observability (logged at startup).
     this.logger.log(
       JSON.stringify({
@@ -61,12 +100,26 @@ export class PrismaService
         poolMin,
         idleTimeoutMs: idleTimeout,
         connTimeoutMs: connTimeout,
+        slowQueryThresholdMs,
       }),
     );
   }
 
+  /** Emit current pool gauge values to Prometheus. */
+  private emitPoolMetrics(): void {
+    if (!this.metrics) return;
+    const active = this.activeQueries;
+    // idle = warm connections not currently executing (approximated from pool max)
+    const idle = Math.max(0, this.poolMax - active);
+    // waiting = requests beyond pool capacity (approximated; Prisma queues internally)
+    const waiting = Math.max(0, active - this.poolMax);
+    this.metrics.recordDbPool({ active, idle, waiting });
+  }
+
   async onModuleInit() {
     await this.$connect();
+    // Emit initial zero-state metrics so gauges appear in the first scrape.
+    this.emitPoolMetrics();
   }
 
   async onModuleDestroy() {

@@ -1,0 +1,161 @@
+name: Recovery Drill
+
+# Required GitHub configuration:
+#   Repository variables:
+#     BACKUP_AWS_REGION
+#     BACKUP_BUCKET
+#     BACKUP_PREFIX
+#     BACKUP_ENVIRONMENT
+#     DRILL_STELLAR_NETWORK              e.g. testnet
+#     DRILL_STELLAR_NETWORK_PASSPHRASE   network passphrase for the drill target
+#     DRILL_SOROBAN_RPC_URL              Soroban RPC endpoint used for replay
+#     DRILL_CONTRACT_ID                  Contract ID whose events must be replayed
+#     DRILL_REINDEX_FROM_LEDGER          Quarterly replay anchor ledger
+#   Repository secrets:
+#     RESTORE_AWS_ROLE_ARN               Read-only or read-mostly restore role
+#     OPS_ALERT_WEBHOOK_URL              Optional alert destination
+
+on:
+  schedule:
+    - cron: '0 10 1-7 1,4,7,10 1'
+  workflow_dispatch:
+    inputs:
+      backup_object_key:
+        description: 'Optional exact S3 object key to restore; defaults to latest dump'
+        required: false
+        type: string
+      from_ledger:
+        description: 'Optional replay anchor ledger; defaults to DRILL_REINDEX_FROM_LEDGER'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: recovery-drill-${{ vars.BACKUP_ENVIRONMENT || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  restore-and-replay:
+    name: Restore latest backup and replay indexer
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: recovery_drill
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d recovery_drill"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      AWS_REGION: ${{ vars.BACKUP_AWS_REGION }}
+      BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+      BACKUP_PREFIX: ${{ vars.BACKUP_PREFIX || 'postgres-backups' }}
+      RESTORE_ENVIRONMENT: ${{ vars.BACKUP_ENVIRONMENT || 'production' }}
+      BACKUP_OBJECT_KEY: ${{ github.event.inputs.backup_object_key }}
+      RESTORE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/recovery_drill
+      DRILL_OUTPUT_DIR: ${{ github.workspace }}/drill-evidence
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/recovery_drill
+      REDIS_URL: redis://127.0.0.1:6379/0
+      STELLAR_NETWORK: ${{ vars.DRILL_STELLAR_NETWORK || 'testnet' }}
+      STELLAR_NETWORK_PASSPHRASE: ${{ vars.DRILL_STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015' }}
+      SOROBAN_RPC_URL: ${{ vars.DRILL_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org' }}
+      CONTRACT_ID: ${{ vars.DRILL_CONTRACT_ID }}
+      DRILL_REINDEX_FROM_LEDGER: ${{ github.event.inputs.from_ledger || vars.DRILL_REINDEX_FROM_LEDGER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate drill configuration
+        run: |
+          for name in AWS_REGION BACKUP_BUCKET BACKUP_PREFIX RESTORE_DATABASE_URL CONTRACT_ID DRILL_REINDEX_FROM_LEDGER SOROBAN_RPC_URL STELLAR_NETWORK_PASSPHRASE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required value: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Install PostgreSQL client and jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client jq
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.RESTORE_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.BACKUP_AWS_REGION }}
+
+      - name: Restore latest backup into fresh Postgres
+        run: ./scripts/ops/postgres-restore-drill.sh
+
+      - name: Set up Node.js for replay
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Replay indexer from ledger anchor
+        working-directory: backend
+        run: |
+          npm run ops:replay-indexer -- \
+            --from-ledger "${DRILL_REINDEX_FROM_LEDGER}" \
+            --network "${STELLAR_NETWORK}" \
+            --output "${DRILL_OUTPUT_DIR}/indexer-replay.json"
+
+      - name: Upload drill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-drill-${{ github.run_id }}
+          path: drill-evidence/
+          retention-days: 365
+
+      - name: Notify ops on drill failure
+        if: failure() && secrets.OPS_ALERT_WEBHOOK_URL != ''
+        env:
+          OPS_ALERT_WEBHOOK_URL: ${{ secrets.OPS_ALERT_WEBHOOK_URL }}
+        run: |
+          payload="$(jq -n \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg environment "$RESTORE_ENVIRONMENT" \
+            --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{
+              text: ("Recovery drill failed for " + $repository + " (" + $environment + ")."),
+              workflow: $workflow,
+              runId: $runId,
+              repository: $repository,
+              environment: $environment,
+              runUrl: $url
+            }')"
+          curl -fsSL -X POST "$OPS_ALERT_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            --data "$payload"

@@ -1,6 +1,7 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
+import { trace, context as otelContext, SpanStatusCode } from '@opentelemetry/api';
 import { MetricsService } from '../../metrics/metrics.service';
 import { AppLoggerService, redactHeaders } from '../logger/app-logger.service';
 
@@ -33,6 +34,12 @@ export class RequestContextMiddleware implements NestMiddleware {
 
     // Echo back so clients can correlate
     res.setHeader('x-request-id', requestId);
+
+    // Propagate requestId as a span attribute on the active OTel span (if any)
+    const activeSpan = trace.getActiveSpan()
+    if (activeSpan) {
+      activeSpan.setAttribute('request.id', requestId)
+    }
 
     const start = Date.now();
 

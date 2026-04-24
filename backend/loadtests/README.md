@@ -54,6 +54,10 @@ environment variable — never hardcode tokens in scripts.
 BASE_URL=https://staging.niffyinsur.com \
   k6 run loadtests/claims-list.js
 
+# GraphQL nested policy -> claims baseline
+BASE_URL=https://staging.niffyinsur.com/api \
+  k6 run loadtests/graphql-policy-claim-nested.js
+
 # Authenticated write flow (claim submission)
 BASE_URL=https://staging.niffyinsur.com \
 TEST_JWT=<token> \
@@ -86,6 +90,7 @@ Dated reports are stored in `docs/perf/`. Each report includes:
 
 Re-run after:
 - Major DB schema changes or new indexes
+- GraphQL schema / DataLoader changes
 - NestJS / Prisma upgrades
 - Soroban RPC client refactors
 - Connection pool or cache TTL changes

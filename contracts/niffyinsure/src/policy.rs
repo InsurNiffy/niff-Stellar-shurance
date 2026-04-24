@@ -28,7 +28,7 @@ pub enum PolicyError {
     /// Policy struct failed internal validation.
     PolicyValidation = 106,
     /// Deductible missing, negative, or greater than coverage cap.
-    InvalidDeductible = 113,
+    InvalidDeductible = 120,
     /// Caller is not authorized.
     Unauthorized = 107,
     /// Age out of range (1..=120).
@@ -53,6 +53,8 @@ pub enum PolicyError {
     TooManyStrikesForRenewal = 117,
     /// Reserved / legacy: expired renewals now return [`crate::types::RenewPolicyOutcome::Lapsed`] `Ok`.
     Expired = 118,
+    /// Supplied `expected_nonce` does not match the holder's current on-chain nonce.
+    NonceMismatch = 119,
 }
 
 #[contracttype]
@@ -240,6 +242,9 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::VoterSnapshotExpired => {
             "claim voter snapshot expired or missing; run refresh_snapshot before voting ends"
         },
+        Error::NonceMismatch => {
+            "nonce mismatch: read current nonce via get_nonce(holder) and retry"
+        },
     };
     QuoteFailure {
         code: err as u32,
@@ -266,6 +271,7 @@ pub fn initiate_policy(
     asset: Address,
     beneficiary: Option<Address>,
     deductible: Option<i128>,
+    expected_nonce: Option<u64>,
 ) -> Result<Policy, PolicyError> {
     // Check granular pause: policy binding should be blocked if bind_paused
     storage::assert_bind_not_paused(env);
@@ -276,6 +282,10 @@ pub fn initiate_policy(
     }
 
     holder.require_auth();
+
+    // Opt-in replay protection: check and increment per-holder nonce if provided.
+    storage::check_and_bump_nonce(env, &holder, expected_nonce)
+        .map_err(|_| PolicyError::NonceMismatch)?;
 
     let input = RiskInput {
         region: region.clone(),

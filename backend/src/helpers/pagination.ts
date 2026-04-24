@@ -48,6 +48,7 @@
 
 import { createHmac } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
+import { getRuntimeEnv } from '../config/runtime-env';
 
 export class CursorError extends BadRequestException {
   constructor(message: string) {
@@ -68,7 +69,7 @@ export const MAX_LIMIT = 100;
  * If absent, cursors are still base64url-encoded but not signed.
  * Signing prevents clients from crafting arbitrary cursors to probe the DB.
  */
-const HMAC_SECRET = process.env.PAGINATION_HMAC_SECRET ?? '';
+const HMAC_SECRET = getRuntimeEnv().PAGINATION_HMAC_SECRET;
 
 // ---------------------------------------------------------------------------
 // Types

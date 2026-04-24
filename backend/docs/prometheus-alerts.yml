@@ -4,39 +4,39 @@ groups:
       # ── HTTP 5xx alert ────────────────────────────────────────────────────
       - alert: High5xxRate
         expr: |
-          sum(rate(http_5xx_errors_total{app="niffyinsure-api"}[5m])) > 0.5
-        for: 2m
+          sum(rate(http_5xx_errors_total{app="niffyinsure-api"}[10m])) > 1
+        for: 5m
         labels:
           severity: critical
           team: backend
         annotations:
           summary: "Elevated HTTP 5xx error rate"
           description: >
-            More than 0.5 5xx errors/s over the last 5 minutes.
-            Check logs with requestId correlation for root cause.
+            More than 1 5xx error/s over the last 10 minutes. Check requestId
+            correlated logs and recent deploys for root cause.
 
       # ── RPC error alert ───────────────────────────────────────────────────
       - alert: HighRpcErrorRate
         expr: |
-          sum(rate(rpc_errors_total{app="niffyinsure-api"}[5m])) > 0.2
-        for: 2m
+          sum(rate(rpc_errors_total{app="niffyinsure-api"}[10m])) > 0.5
+        for: 5m
         labels:
           severity: warning
           team: backend
         annotations:
           summary: "Elevated Soroban RPC error rate"
           description: >
-            More than 0.2 RPC errors/s. Possible Soroban RPC degradation
+            More than 0.5 RPC errors/s. Possible Soroban RPC degradation
             or contract deployment issue.
 
       # ── High latency alert ────────────────────────────────────────────────
       - alert: HighP99Latency
         expr: |
           histogram_quantile(0.99,
-            sum(rate(http_request_duration_seconds_bucket{app="niffyinsure-api"}[5m]))
+            sum(rate(http_request_duration_seconds_bucket{app="niffyinsure-api"}[10m]))
             by (le)
           ) > 3
-        for: 5m
+        for: 10m
         labels:
           severity: warning
           team: backend
@@ -44,24 +44,53 @@ groups:
           summary: "p99 HTTP latency above 3 s"
           description: >
             The 99th-percentile request latency has exceeded 3 seconds
-            for 5 consecutive minutes.
+            for 10 consecutive minutes.
 
       # ── RPC latency alert ─────────────────────────────────────────────────
       - alert: HighRpcP95Latency
         expr: |
           histogram_quantile(0.95,
-            sum(rate(rpc_call_duration_seconds_bucket{app="niffyinsure-api"}[5m]))
+            sum(rate(rpc_call_duration_seconds_bucket{app="niffyinsure-api"}[10m]))
             by (le, rpc_method)
-          ) > 10
-        for: 5m
+          ) > 8
+        for: 10m
         labels:
           severity: warning
           team: backend
         annotations:
-          summary: "Soroban RPC p95 latency above 10 s"
+          summary: "Soroban RPC p95 latency above 8 s"
           description: >
-            RPC method {{ $labels.rpc_method }} p95 latency exceeded 10 s.
+            RPC method {{ $labels.rpc_method }} p95 latency exceeded 8 seconds.
             Soroban network may be congested.
+
+      # ── Indexer lag alert ──────────────────────────────────────────────────
+      - alert: IndexerLagHigh
+        expr: |
+          max_over_time(indexer_lag_ledgers{app="niffyinsure-api"}[10m]) > 30
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Indexer lag above 30 ledgers"
+          description: >
+            The indexer has fallen behind the network head by more than 30
+            ledgers for at least 10 minutes. Check indexer health and queue
+            processing.
+
+      # ── Solvency buffer alert ─────────────────────────────────────────────
+      - alert: SolvencyBufferLow
+        expr: |
+          solvency_buffer_stroops{app="niffyinsure-api"} < solvency_buffer_threshold_stroops{app="niffyinsure-api"}
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Solvency buffer below configured threshold"
+          description: >
+            The contract solvency buffer has fallen below the configured safety
+            threshold. Investigate approved obligations and treasury balance.
 
       # ── Dead-letter queue depth alert ─────────────────────────────────────
       - alert: DlqDepthHigh

@@ -130,7 +130,7 @@ export class WalletAuthService {
     }
 
     const ttlSeconds = this.parseTtl(
-      this.configService.get<string>('JWT_TTL', '1h'),
+      this.configService.get<string>('JWT_EXPIRES_IN', '1h'),
     );
     const now = Math.floor(Date.now() / 1000);
     // scope='user' — explicitly not admin

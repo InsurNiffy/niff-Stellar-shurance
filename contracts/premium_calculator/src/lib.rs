@@ -56,6 +56,12 @@ impl PremiumCalculator {
         storage::get_table(&env).map(|t| t.version).unwrap_or(0)
     }
 
+    /// Returns the semver version string stamped at build time from `Cargo.toml`.
+    /// Read-only: no storage access, no auth required. Safe to call via simulation.
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
+    }
+
     /// Admin: replace the multiplier table. Version must be strictly greater.
     pub fn update_table(env: Env, new_table: MultiplierTable) -> Result<(), CalcError> {
         let admin = storage::get_admin(&env).ok_or(CalcError::NotInitialized)?;
@@ -163,4 +169,51 @@ fn mul_ratio(amount: i128, num: i128, den: i128) -> Result<i128, CalcError> {
 
 fn checked_sub(a: i128, b: i128) -> Result<i128, CalcError> {
     a.checked_sub(b).ok_or(CalcError::Overflow)
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    #[test]
+    fn version_returns_nonempty_semver_string() {
+        let env = Env::default();
+        let contract_id = env.register(PremiumCalculator, ());
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+
+        let v = client.version();
+        let v_str = v.to_string();
+        assert!(!v_str.is_empty(), "version() must not be empty");
+        assert_eq!(
+            v_str,
+            env!("CARGO_PKG_VERSION"),
+            "version() must match Cargo.toml"
+        );
+    }
+
+    #[test]
+    fn version_requires_no_auth_and_no_init() {
+        // Contract is not initialised — version() must succeed regardless.
+        let env = Env::default();
+        let contract_id = env.register(PremiumCalculator, ());
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let _ = client.version(); // must not panic
+    }
+
+    #[test]
+    fn version_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(PremiumCalculator, ());
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let v1 = client.version();
+        let v2 = client.version();
+        assert_eq!(v1, v2);
+    }
 }

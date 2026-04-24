@@ -1,5 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   FEATURE_FLAGS_DISABLED_STATUS_ENV,
 } from './constants';
@@ -12,9 +12,10 @@ export class FeatureFlagsService implements OnModuleInit {
   private featureMap: FeatureMap = {};
   private readonly disabledStatusCode: 403 | 404;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(private readonly config: ConfigService) {
+    this.featureMap = this.parseFlags(this.config.get<string>(FEATURE_FLAGS_JSON_ENV));
     this.disabledStatusCode =
-      process.env[FEATURE_FLAGS_DISABLED_STATUS_ENV] === '403' ? 403 : 404;
+      this.config.get<string>(FEATURE_FLAGS_DISABLED_STATUS_ENV) === '403' ? 403 : 404;
   }
 
   async onModuleInit() {

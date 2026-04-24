@@ -8,6 +8,10 @@
 
 ## 1. Wasm Drift Detection
 
+See also **[secrets-management-runbook.md](./secrets-management-runbook.md)** for
+secret ownership, rotation cadence, JWT key generation, and leak-response
+steps.
+
 ### What it does
 `WasmDriftService` runs every 6 hours. It fetches the on-chain wasm hash for each
 contract listed in `contracts/deployment-registry.json`, compares it to the
@@ -142,7 +146,7 @@ psql $DATABASE_URL -c "SELECT id, description FROM claims WHERE creator_address 
 
 ## 4. Quarterly Restore / Backup Drill
 
-Cross-link: see backup issue for full restore procedure.
+Cross-link: see **[disaster-recovery-runbook.md](./disaster-recovery-runbook.md)** for RPO/RTO targets, the full restore procedure, Redis loss windows, IAM scope, and quarterly ticket template.
 
 Ops calendar entry: **first Monday of each quarter**.
 
@@ -151,7 +155,7 @@ Checklist:
 - [ ] Verify `wasm_drift_alerts` and `privacy_requests` tables present and populated
 - [ ] Re-run wasm drift check against staging contract
 - [ ] Confirm audit log is append-only (attempt UPDATE/DELETE → expect permission denied)
-- [ ] Record drill completion in ops calendar with timestamp and engineer sign-off
+- [ ] Record drill completion in ops calendar, [`recovery-drill-log.md`](./recovery-drill-log.md), and the quarterly drill ticket with timestamp and engineer sign-off
 
 ---
 
@@ -185,4 +189,3 @@ There is **no protocol reward** for keepers; operators run them to support produ
 ### Failure modes
 - `process_expired`: reverts with `PolicyLapseNotReached` until grace end; `OpenClaimsMustFinalize` if a claim is still open on that policy.
 - `process_deadline`: reverts with `VotingWindowStillOpen` until after the voting deadline ledger; `ClaimAlreadyTerminal` if already finalized; `ClaimNotProcessing` if the claim left `Processing` without being terminal (e.g. appeal flows); `CalculatorPaused` while claims are paused (unlike `finalize_claim`, which panics on pause).
-

@@ -56,6 +56,7 @@ export class AdminController {
     private readonly privacyService: PrivacyService,
     private readonly rateLimitService: RateLimitService,
     private readonly queueMonitor: QueueMonitorService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**

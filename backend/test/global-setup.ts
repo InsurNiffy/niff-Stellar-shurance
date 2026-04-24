@@ -4,9 +4,9 @@ import { execSync } from 'child_process';
 import * as path from 'path';
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __PG_CONTAINER__: StartedPostgreSqlContainer;
-  // eslint-disable-next-line no-var
+   
   var __REDIS_CONTAINER__: StartedRedisContainer;
 }
 

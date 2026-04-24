@@ -2,6 +2,7 @@ import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { createLogger, format, transports } from 'winston';
 import { ConfigService } from '@nestjs/config';
+import { redactHeaders, redactValue, redactMessageText } from '../logger/app-logger.service';
 
 @Injectable()
 export class LoggerMiddleware implements NestMiddleware {
@@ -23,8 +24,10 @@ export class LoggerMiddleware implements NestMiddleware {
           format: format.combine(
             format.colorize(),
             format.printf(({ timestamp, level, message, ...meta }) => {
-              const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-              return `${timestamp} [${level}] ${message}${metaStr}`;
+              const metaStr = Object.keys(meta).length
+                ? ` ${JSON.stringify(redactValue(meta))}`
+                : '';
+              return `${timestamp} [${level}] ${redactMessageText(String(message))}${metaStr}`;
             }),
           ),
         }),
@@ -33,21 +36,7 @@ export class LoggerMiddleware implements NestMiddleware {
   }
 
   private sanitizeHeaders(headers: Record<string, unknown>): Record<string, unknown> {
-    const sensitiveHeaders = [
-      'authorization',
-      'cookie',
-      'x-api-key',
-      'x-auth-token',
-      'proxy-authorization',
-    ];
-    
-    const sanitized = { ...headers };
-    for (const header of sensitiveHeaders) {
-      if (header in sanitized) {
-        sanitized[header] = '[REDACTED]';
-      }
-    }
-    return sanitized;
+    return redactHeaders(headers);
   }
 
   use(req: Request, res: Response, next: NextFunction) {

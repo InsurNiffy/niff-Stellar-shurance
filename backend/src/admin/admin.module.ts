@@ -27,7 +27,7 @@ import { MetricsModule } from '../metrics/metrics.module';
     }),
   ],
   controllers: [AdminController],
-  providers: [AdminService, AuditService, QueueMonitorService],
+  providers: [AdminService, AdminPoliciesService, AuditService, QueueMonitorService],
   exports: [AuditService, QueueMonitorService],
 })
 export class AdminModule implements NestModule {

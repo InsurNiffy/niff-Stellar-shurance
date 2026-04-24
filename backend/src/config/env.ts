@@ -1,3 +1,5 @@
+import { getRuntimeEnv } from './runtime-env';
+
 export interface EnvConfig {
   auth: {
     domain: string;
@@ -26,39 +28,33 @@ export interface EnvConfig {
   };
 }
 
-function intFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
+const env = getRuntimeEnv();
 
 export const config: EnvConfig = {
   auth: {
-    domain: process.env.AUTH_DOMAIN || "localhost",
-    nonceTtlSeconds: intFromEnv("AUTH_NONCE_TTL_SECONDS", 300),
+    domain: env.AUTH_DOMAIN,
+    nonceTtlSeconds: env.NONCE_TTL_SECONDS,
   },
   jwt: {
-    secret: process.env.JWT_SECRET || "dev-secret-change-in-production",
-    ttl: process.env.JWT_EXPIRES_IN || "1h",
-    issuer: process.env.JWT_ISSUER || "niffyinsure",
-    audience: process.env.JWT_AUDIENCE || "niffyinsure-api",
+    secret: env.JWT_SECRET,
+    ttl: env.JWT_EXPIRES_IN,
+    issuer: env.JWT_ISSUER,
+    audience: env.JWT_AUDIENCE,
   },
   redis: {
-    url: process.env.REDIS_URL || "redis://127.0.0.1:6379",
+    url: env.REDIS_URL,
   },
   smtp: {
-    host: process.env.SMTP_HOST || "127.0.0.1",
-    port: intFromEnv("SMTP_PORT", 1025),
-    user: process.env.SMTP_USER || "",
-    pass: process.env.SMTP_PASS || "",
-    from: process.env.SMTP_FROM || "no-reply@niffyinsure.local",
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    user: env.SMTP_USER,
+    pass: env.SMTP_PASS,
+    from: env.SMTP_FROM,
   },
   stellar: {
-    rpcUrl: process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org",
-    networkPassphrase:
-      process.env.STELLAR_NETWORK_PASSPHRASE ||
-      "Test SDF Network ; September 2015",
-    contractId: process.env.CONTRACT_ID || "",
+    rpcUrl: env.SOROBAN_RPC_URL,
+    networkPassphrase: env.STELLAR_NETWORK_PASSPHRASE,
+    contractId: env.CONTRACT_ID,
   },
 };
 

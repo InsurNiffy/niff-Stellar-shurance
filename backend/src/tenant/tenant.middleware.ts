@@ -1,4 +1,5 @@
 import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Request, Response, NextFunction } from 'express';
 import { TenantContextService } from './tenant-context.service';
 
@@ -26,17 +27,22 @@ export class TenantMiddleware implements NestMiddleware {
   private readonly enabled: boolean;
   private readonly baseDomain: string;
 
-  constructor(private readonly tenantCtx: TenantContextService) {
-    this.enabled = process.env.TENANT_RESOLUTION_ENABLED === 'true';
-    this.baseDomain = process.env.TENANT_BASE_DOMAIN ?? 'niffyinsur.com';
+  constructor(
+    private readonly tenantCtx: TenantContextService,
+    private readonly config: ConfigService,
+  ) {
+    this.enabled = this.config.get<boolean>('TENANT_RESOLUTION_ENABLED', false);
+    this.baseDomain = this.config.get<string>('TENANT_BASE_DOMAIN', 'niffyinsur.com');
   }
 
-  use(req: Request, _res: Response, next: NextFunction): void {
+  use(req: Request & { tenantId?: string | null }, _res: Response, next: NextFunction): void {
     if (!this.enabled) {
+      req.tenantId = null;
       return next();
     }
 
     const tenantId = this.resolveFromHeader(req) ?? this.resolveFromSubdomain(req);
+    req.tenantId = tenantId ?? null;
 
     if (tenantId) {
       this.tenantCtx.tenantId = tenantId;

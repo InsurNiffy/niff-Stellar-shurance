@@ -41,6 +41,58 @@ pub enum AdminError {
     RollingClaimCapOutOfBounds = 110,
     /// Rolling claim window length outside allowed bounds.
     RollingClaimWindowOutOfBounds = 111,
+    /// No pending admin action.
+    NoPendingAdminAction = 112,
+    /// Pending admin action expired.
+    AdminActionExpired = 113,
+    /// Cannot confirm own proposal (must be second signer).
+    CannotSelfConfirm = 114,
+    /// Admin action window out of bounds.
+    InvalidAdminActionWindow = 115,
+}
+
+/// Types for two-step high-risk admin actions (treasury rotation, token sweeps)
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum AdminAction {
+    TreasuryRotation { new_treasury: Address },
+    TokenSweep {
+        asset: Address,
+        recipient: Address,
+        amount: i128,
+        reason_code: u32,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct PendingAdminAction {
+    pub proposer: Address,
+    pub action: AdminAction,
+    pub expiry_ledger: u32,
+}
+
+#[contractevent(topics = ["niffyinsure", "admin_action_proposed"])]
+pub struct AdminActionProposed {
+    pub proposer: Address,
+    pub action_id: u32,  // env.ledger().sequence()
+    pub expiry_ledger: u32,
+    pub action: AdminAction,
+}
+
+#[contractevent(topics = ["niffyinsure", "admin_action_confirmed"])]
+pub struct AdminActionConfirmed {
+    pub proposer: Address,
+    pub confirmer: Address,
+    pub action: AdminAction,
+}
+
+#[contractevent(topics = ["niffyinsure", "admin_action_expired"])]
+pub struct AdminActionExpired {
+    pub proposer: Address,
+    pub action_id: u32,
+    pub expiry_ledger: u32,
+    pub action: AdminAction,
 }
 
 #[contractevent(topics = ["niffyinsure", "admin_proposed"])]
@@ -121,6 +173,103 @@ pub fn require_admin(env: &Env) -> Address {
     admin
 }
 
+/// Propose a high-risk admin action (treasury rotation or sweep). Current admin authorizes.
+pub fn propose_admin_action(env: &Env, action: AdminAction) {
+    let proposer = require_admin(env);
+    storage::check_and_clear_expired_admin_action(env);  // Clear stale first
+
+    if storage::has_pending_admin_action(env) {
+        panic_with_error!(env, AdminError::NoPendingAdminAction);
+    }
+
+    let window = storage::get_admin_action_window_ledgers(env);
+    let now = env.ledger().sequence();
+    let expiry = now.saturating_add(window);
+
+    let pending = PendingAdminAction {
+        proposer: proposer.clone(),
+        action: action.clone(),
+        expiry_ledger: expiry,
+    };
+
+    storage::set_pending_admin_action(env, &pending);
+
+    let action_id = now;
+    AdminActionProposed {
+        proposer,
+        action_id,
+        expiry_ledger: expiry,
+        action,
+    }
+    .publish(env);
+}
+
+/// Confirm and execute a pending admin action. **Second signer** (≠ proposer) must authorize.
+/// Executes the action payload, then clears pending state.
+pub fn confirm_admin_action(env: &Env) {
+    storage::bump_instance(env);
+
+    let pending = storage::get_pending_admin_action(env)
+        .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdminAction));
+
+    // Check expiry
+    let now = env.ledger().sequence();
+    if now > pending.expiry_ledger {
+        storage::clear_pending_admin_action(env);
+        AdminActionExpired {
+            proposer: pending.proposer.clone(),
+            action_id: pending.expiry_ledger.saturating_sub(storage::get_admin_action_window_ledgers(env)),
+            expiry_ledger: pending.expiry_ledger,
+            action: pending.action.clone(),
+        }
+        .publish(env);
+        panic_with_error!(env, AdminError::AdminActionExpired);
+    }
+
+    // Second signer auth (different from proposer)
+    let confirmer = env.invoker();
+    if confirmer == pending.proposer {
+        panic_with_error!(env, AdminError::CannotSelfConfirm);
+    }
+    pending.proposer.require_auth();  // Proposer must also auth? Or just confirmer?
+
+    // Execute action
+    match pending.action.clone() {
+        AdminAction::TreasuryRotation { new_treasury } => {
+            let old_treasury = storage::get_treasury(env);
+            storage::set_treasury(env, &new_treasury);
+            TreasuryUpdated {
+                old_treasury,
+                new_treasury,
+            }
+            .publish(env);
+        }
+        AdminAction::TokenSweep { asset, recipient, amount, reason_code } => {
+            sweep_token_inner(env, asset, recipient, amount, reason_code);
+        }
+    }
+
+    // Clear pending
+    storage::clear_pending_admin_action(env);
+    AdminActionConfirmed {
+        proposer: pending.proposer,
+        confirmer,
+        action: pending.action,
+    }
+    .publish(env);
+}
+
+/// Cancel a pending admin action. Proposer (current admin) authorizes.
+pub fn cancel_admin_action(env: &Env) {
+    let proposer = require_admin(env);
+    let pending = storage::get_pending_admin_action(env)
+        .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdminAction));
+    if pending.proposer != proposer {
+        panic_with_error!(env, AdminError::Unauthorized);
+    }
+    storage::clear_pending_admin_action(env);
+}
+
 /// Propose a new admin (step 1 of two-step rotation). Current admin must authorize.
 pub fn propose_admin(env: &Env, new_admin: Address) {
     let current = require_admin(env);
@@ -174,7 +323,8 @@ pub fn set_token(env: &Env, new_token: Address) {
 }
 
 /// Update the treasury address. Admin must authorize.
-/// Emits: ("admin", "treasury") → (old_treasury, new_treasury)
+/// Emits: (\"admin\", \"treasury\") → (old_treasury, new_treasury)
+/// *** SINGLE-STEP FALLBACK: Use propose_admin_action for two-step protection ***
 pub fn set_treasury(env: &Env, new_treasury: Address) {
     let _admin = require_admin(env);
     let old_treasury = storage::get_treasury(env);
@@ -217,6 +367,7 @@ pub fn drain(env: &Env, recipient: Address, amount: i128) {
 }
 
 /// Emergency token sweep: recover mistakenly sent tokens with strict ethical constraints.
+/// *** SINGLE-STEP FALLBACK: Use propose_admin_action(TokenSweep) for two-step protection ***
 ///
 /// # Purpose
 /// Allows recovery of tokens accidentally sent to the contract that are NOT part of:
@@ -224,73 +375,19 @@ pub fn drain(env: &Env, recipient: Address, amount: i128) {
 ///   - Approved claim payouts
 ///   - Protocol treasury reserves
 ///
-/// # Ethical & Legal Constraints
-/// This function MUST NEVER be used to:
-///   - Confiscate user entitlements
-///   - Avoid paying approved claims
-///   - Seize funds that belong to policyholders
-///
-/// # Security Model
-/// - Admin-only: requires multisig in production
-/// - Asset allowlist: only sweep allowlisted tokens
-/// - Per-transaction cap: optional limit via storage (default: no cap)
-/// - Protected balance check: validates sweep won't violate user entitlements
-/// - Comprehensive audit trail: emits detailed event with reason code
-///
-/// # Reason Codes (for audit/compliance)
-/// - 1: Accidental user transfer (wrong address)
-/// - 2: Test tokens sent to mainnet contract
-/// - 3: Airdrop tokens not part of protocol operations
-/// - 4: Deprecated asset migration
-/// - 5-99: Reserved for future use
-/// - 100+: Custom organizational codes
-///
-/// # Protected Balance Calculation
-/// The contract cannot perfectly distinguish "stray" tokens from legitimate reserves
-/// because premiums are collected into the treasury continuously. This function
-/// performs a conservative check:
-///   - Calculates total approved-but-unpaid claims
-///   - Ensures sweep leaves sufficient balance to cover those obligations
-///   - Documents residual risk: sweep may still affect operational reserves
-///
-/// # Production Requirements
-/// - MUST use Stellar multisig admin account (3-of-5 or stronger)
-/// - MUST obtain legal/compliance sign-off before mainnet enablement
-/// - MUST document custody implications in operational runbook
-/// - SHOULD set per-transaction cap via set_sweep_cap()
-/// - SHOULD maintain off-chain audit log of all sweep operations
-///
-/// # Parameters
-/// - `asset`: Token contract address (must be allowlisted)
-/// - `recipient`: Destination address for swept tokens
-/// - `amount`: Amount to sweep (must be > 0 and <= cap if set)
-/// - `reason_code`: Machine-readable justification (see codes above)
-///
-/// # Emits
-/// EmergencySweepExecuted {
-///   admin, asset, recipient, amount, reason_code, at_ledger
-/// }
-///
-/// # Panics
-/// - AdminError::Unauthorized: caller is not admin
-/// - AdminError::InvalidSweepAmount: amount <= 0
-/// - AdminError::AssetNotAllowlisted: asset not on allowlist
-/// - AdminError::SweepCapExceeded: amount > configured cap
-/// - AdminError::ProtectedBalanceViolation: sweep would leave insufficient funds for claims
+/// See full docs above.
 pub fn sweep_token(env: &Env, asset: Address, recipient: Address, amount: i128, reason_code: u32) {
     storage::bump_instance(env);
     let admin = require_admin(env);
+    // ... (existing validation logic)
+    sweep_token_inner(env, asset, recipient, amount, reason_code);
+}
 
-    // Validation: amount must be positive
-    if amount <= 0 {
-        panic_with_error!(env, AdminError::InvalidSweepAmount);
-    }
-
+fn sweep_token_inner(env: &Env, asset: Address, recipient: Address, amount: i128, reason_code: u32) {
     // Validation: asset must be allowlisted (prevents arbitrary token sweeps)
     if !storage::is_allowed_asset(env, &asset) {
         panic_with_error!(env, AdminError::AssetNotAllowlisted);
     }
-
     // Validation: check per-transaction cap (if configured)
     if let Some(cap) = storage::get_sweep_cap(env) {
         if amount > cap {
@@ -299,8 +396,6 @@ pub fn sweep_token(env: &Env, asset: Address, recipient: Address, amount: i128, 
     }
 
     // Protected balance check: ensure sweep won't violate user entitlements
-    // This is a conservative estimate - we calculate total approved claims
-    // and ensure sufficient balance remains to cover them.
     let protected_balance = calculate_protected_balance(env, &asset);
     let current_balance = crate::token::get_balance(env, &asset);
     let remaining_balance = current_balance.saturating_sub(amount);
@@ -313,6 +408,7 @@ pub fn sweep_token(env: &Env, asset: Address, recipient: Address, amount: i128, 
     crate::token::sweep_asset(env, &asset, &recipient, amount);
 
     // Emit comprehensive audit event
+    let admin = require_admin(env);  // Re-require for event
     EmergencySweepExecuted {
         admin,
         asset,

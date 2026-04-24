@@ -20,15 +20,23 @@
  */
 
 import { WebhookConfig } from "../types/webhook";
+import { getRuntimeEnv } from '../config/runtime-env';
 
-function requireEnv(key: string, fallback?: string): string {
-  const val = process.env[key] ?? fallback;
+const env = getRuntimeEnv();
+
+function requireEnv(key: 'WEBHOOK_SECRET_GITHUB' | 'WEBHOOK_SECRET_STRIPE' | 'WEBHOOK_SECRET_GENERIC'): string {
+  const val = env[key];
   if (!val) throw new Error(`Missing required env var: ${key}`);
   return val;
 }
 
-function optionalEnvList(key: string): string[] {
-  const val = process.env[key];
+function optionalEnvList(
+  key:
+    | 'WEBHOOK_IP_ALLOWLIST_GITHUB'
+    | 'WEBHOOK_IP_ALLOWLIST_STRIPE'
+    | 'WEBHOOK_IP_ALLOWLIST_GENERIC',
+): string[] {
+  const val = env[key];
   if (!val) return [];
   return val.split(",").map((s) => s.trim()).filter(Boolean);
 }
@@ -36,17 +44,17 @@ function optionalEnvList(key: string): string[] {
 export function buildWebhookConfig(): WebhookConfig {
   return {
     github: {
-      secrets: [requireEnv("WEBHOOK_SECRET_GITHUB", "dev-github-secret")],
+      secrets: [requireEnv("WEBHOOK_SECRET_GITHUB")],
       toleranceSeconds: 300,
       ipAllowlist: optionalEnvList("WEBHOOK_IP_ALLOWLIST_GITHUB"),
     },
     stripe: {
-      secrets: [requireEnv("WEBHOOK_SECRET_STRIPE", "dev-stripe-secret")],
+      secrets: [requireEnv("WEBHOOK_SECRET_STRIPE")],
       toleranceSeconds: 300,
       ipAllowlist: optionalEnvList("WEBHOOK_IP_ALLOWLIST_STRIPE"),
     },
     generic: {
-      secrets: [requireEnv("WEBHOOK_SECRET_GENERIC", "dev-generic-secret")],
+      secrets: [requireEnv("WEBHOOK_SECRET_GENERIC")],
       toleranceSeconds: 300,
       ipAllowlist: optionalEnvList("WEBHOOK_IP_ALLOWLIST_GENERIC"),
     },

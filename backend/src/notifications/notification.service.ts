@@ -33,8 +33,10 @@ import {
   buildClaimFinalizedTelegram,
 } from './notification.templates';
 import { config } from '../config/env';
+import { getRuntimeEnv } from '../config/runtime-env';
 
-const isTestEnv = process.env.NODE_ENV === 'test';
+const env = getRuntimeEnv();
+const isTestEnv = env.NODE_ENV === 'test';
 
 // ── Idempotency store (in-memory; replace with Redis Set in production) ───────
 
@@ -157,7 +159,7 @@ async function sendTelegram(
   event: ClaimFinalizedEvent,
   chatId: string,
 ): Promise<void> {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const botToken = env.TELEGRAM_BOT_TOKEN;
   if (!botToken) throw new Error('TELEGRAM_BOT_TOKEN not configured');
   const text = buildClaimFinalizedTelegram(event);
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
@@ -223,7 +225,7 @@ export async function sendClaimNotifications(
   }
 
   // ── Discord ────────────────────────────────────────────────────────────────
-  const discordWebhook = process.env.DISCORD_WEBHOOK_URL;
+  const discordWebhook = env.DISCORD_WEBHOOK_URL;
   const discordKey = idempotencyKey(event.claimantPublicKey, event.claimId, 'discord');
   if (!prefs.discordEnabled || !discordWebhook) {
     records.push({

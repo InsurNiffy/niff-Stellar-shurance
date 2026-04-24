@@ -355,6 +355,7 @@ export function ClaimVotePanel({
         open={submitState === 'confirming'}
         vote={pendingVote}
         claimId={claimId}
+        claim={claim}
         submitting={submitState === 'signing' || submitState === 'submitting'}
         onConfirm={handleConfirm}
         onCancel={handleCancel}

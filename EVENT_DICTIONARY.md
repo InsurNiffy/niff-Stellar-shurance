@@ -221,3 +221,32 @@ Emitted when voting reaches majority **or** the vote window expires.
 - Claim description text.
 - Voter lists (derive from `vote_cast` stream).
 - PII of any kind.
+
+---
+
+## Read-only entrypoints
+
+These entrypoints are callable via Soroban simulation without authentication.
+They perform **no storage reads or writes** and are safe to call repeatedly.
+
+### `version` — deployed contract semver
+
+Returns the semver string stamped at build time from `Cargo.toml` (e.g. `"0.1.0"`).
+No events emitted; no state mutation; no auth required.
+
+| Property | Value |
+|----------|-------|
+| Auth required | None |
+| State mutation | None |
+| Return type | `String` — pure semver (`MAJOR.MINOR.PATCH`), no network or environment prefix |
+| Callable via simulation | Yes |
+
+**Backend usage:** the deployment registry calls `version()` via simulation immediately
+after each deploy and records the result. If the returned value does not match the
+expected `CARGO_PKG_VERSION` baked into the release artifact, the registry logs an error
+and the deploy pipeline should halt and alert.
+
+```
+GET /chain/contract-version?source_account=G…
+→ { "version": "0.1.0", "minResourceFee": "…" }
+```

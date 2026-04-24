@@ -208,7 +208,7 @@ fn file_claim_fails_when_policy_not_found() {
     let holder = Address::generate(&env);
     let details = String::from_str(&env, "damage");
     let ev = common::empty_evidence(&env);
-    let result = client.try_file_claim(&holder, &1u32, &50_000_000i128, &details, &ev);
+    let result = client.try_file_claim(&holder, &1u32, &50_000_000i128, &details, &ev, &None);
     assert!(result.is_err());
 }
 
@@ -225,7 +225,7 @@ fn file_claim_rejects_zero_evidence_hash() {
     let details = String::from_str(&env, "damage");
     let bad = common::one_url_evidence_with_hash(&env, "ipfs://x", common::zero_hash(&env));
     assert!(client
-        .try_file_claim(&holder, &1u32, &10_000_000i128, &details, &bad)
+        .try_file_claim(&holder, &1u32, &10_000_000i128, &details, &bad, &None)
         .is_err());
 }
 
@@ -242,7 +242,7 @@ fn file_claim_stores_evidence_hashes_on_claim() {
     let details = String::from_str(&env, "roof");
     let digest = common::sample_digest(&env);
     let ev = common::one_url_evidence_with_hash(&env, "ipfs://Qmabc", digest.clone());
-    let claim_id = client.file_claim(&holder, &1u32, &15_000_000i128, &details, &ev);
+    let claim_id = client.file_claim(&holder, &1u32, &15_000_000i128, &details, &ev, &None);
     let claim = client.get_claim(&claim_id);
     assert_eq!(claim.evidence.len(), 1u32);
     assert_eq!(claim.evidence.get(0).unwrap().hash, digest);
@@ -293,6 +293,7 @@ fn full_claim_vote_flow_approve() {
         &50_000_000i128,
         &details,
         &common::empty_evidence(&env),
+        &None,
     );
     assert_eq!(claim_id, 1u64);
     assert_eq!(client.get_claim_counter(), 1u64);
@@ -339,6 +340,7 @@ fn full_claim_vote_flow_reject() {
         &10_000_000i128,
         &details,
         &common::empty_evidence(&env),
+        &None,
     );
 
     client.vote_on_claim(&holder, &claim_id, &VoteOption::Reject);
@@ -369,6 +371,7 @@ fn duplicate_vote_is_rejected() {
         &20_000_000i128,
         &details,
         &common::empty_evidence(&env),
+        &None,
     );
 
     client.vote_on_claim(&holder, &claim_id, &VoteOption::Approve);
@@ -399,6 +402,7 @@ fn non_voter_cannot_vote() {
         &30_000_000i128,
         &details,
         &common::empty_evidence(&env),
+        &None,
     );
 
     let result = client.try_vote_on_claim(&outsider, &claim_id, &VoteOption::Approve);

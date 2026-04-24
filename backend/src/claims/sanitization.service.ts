@@ -1,15 +1,47 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+/**
+ * Private/reserved IP ranges that must never be fetched server-side (SSRF prevention).
+ * Covers RFC 1918, loopback, link-local, and other non-routable ranges.
+ */
+const PRIVATE_IP_PATTERNS = [
+  /^127\./,                          // loopback
+  /^10\./,                           // RFC 1918
+  /^172\.(1[6-9]|2\d|3[01])\./,     // RFC 1918
+  /^192\.168\./,                     // RFC 1918
+  /^169\.254\./,                     // link-local
+  /^::1$/,                           // IPv6 loopback
+  /^fc00:/i,                         // IPv6 unique local
+  /^fe80:/i,                         // IPv6 link-local
+  /^0\./,                            // "this" network
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,  // CGNAT (RFC 6598)
+  /^localhost$/i,
+];
+
+/** Default allowlist used when ALLOWED_IPFS_GATEWAYS env var is not set. */
+const DEFAULT_ALLOWED_GATEWAYS = [
+  'ipfs.io',
+  'cloudflare-ipfs.com',
+  'gateway.pinata.cloud',
+  'dweb.link',
+  'nftstorage.link',
+];
 
 @Injectable()
 export class SanitizationService {
-  // Allowed IPFS gateway domains
-  private readonly allowedDomains = new Set([
-    'ipfs.io',
-    'cloudflare-ipfs.com',
-    'gateway.pinata.cloud',
-    'dweb.link',
-    'nftstorage.link',
-  ]);
+  private readonly allowedDomains: Set<string>;
+
+  constructor(config?: ConfigService) {
+    const raw = config?.get<string>('ALLOWED_IPFS_GATEWAYS') ?? '';
+    const configured = raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    this.allowedDomains = new Set(
+      configured.length ? configured : DEFAULT_ALLOWED_GATEWAYS,
+    );
+  }
 
   // Stellar address pattern (starts with G, 56 chars)
   private readonly stellarAddressPattern = /^G[A-Z0-9]{55}$/i;
@@ -111,7 +143,18 @@ export class SanitizationService {
   }
 
   /**
-   * Sanitize evidence URL - validate against allowed domains
+   * Returns true if the hostname resolves to a private/reserved IP range.
+   * Used to block SSRF attempts via crafted evidence URLs.
+   */
+  isPrivateHost(hostname: string): boolean {
+    return PRIVATE_IP_PATTERNS.some((re) => re.test(hostname));
+  }
+
+  /**
+   * Sanitize evidence URL — validate against allowed gateway domains and
+   * block SSRF attempts targeting private IP ranges or non-HTTPS schemes.
+   *
+   * Returns '' for any URL that fails validation; never throws.
    */
   sanitizeEvidenceUrl(url: string): string {
     if (!url || typeof url !== 'string') {
@@ -120,15 +163,22 @@ export class SanitizationService {
 
     try {
       const parsed = new URL(url);
-      
-      // Only allow HTTPS
+
+      // Only allow HTTPS (blocks file://, http://, ftp://, etc.)
       if (parsed.protocol !== 'https:') {
         return '';
       }
 
-      // Check against allowed domains
       const hostname = parsed.hostname.toLowerCase();
-      const isAllowed = this.allowedDomains.has(hostname) || 
+
+      // Block private/reserved IP ranges (SSRF prevention)
+      if (this.isPrivateHost(hostname)) {
+        return '';
+      }
+
+      // Check against allowed gateway domains
+      const isAllowed =
+        this.allowedDomains.has(hostname) ||
         hostname.endsWith('.ipfs.dweb.link') ||
         hostname.endsWith('.ipfs.hashlock.dev');
 
@@ -136,7 +186,6 @@ export class SanitizationService {
         return '';
       }
 
-      // Return sanitized URL
       return parsed.toString();
     } catch {
       return '';

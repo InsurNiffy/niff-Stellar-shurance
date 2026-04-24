@@ -43,6 +43,14 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Check generated OpenAPI types are up to date
+        run: |
+          npm run generate-client
+          if ! git diff --exit-code src/lib/api/generated/openapi.d.ts; then
+            echo "::error::Generated types are stale. Run 'make generate-client' locally and commit the updated file."
+            exit 1
+          fi
+
   # ── Soroban ABI golden-vector drift guard ────────────────────────────────
   golden-vectors:
     name: Soroban ABI golden vectors
@@ -135,6 +143,14 @@ jobs:
 
       - name: Run unit tests
         run: npm test
+
+      - name: Check OpenAPI spec is up to date
+        run: |
+          npm run export-spec
+          if ! git diff --exit-code openapi.json; then
+            echo "::error::backend/openapi.json is stale. Run 'make generate-client' locally and commit the updated file."
+            exit 1
+          fi
 
   # ── Playwright E2E tests ──────────────────────────────────────────────────
   e2e-tests:

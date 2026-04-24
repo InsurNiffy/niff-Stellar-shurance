@@ -1,0 +1,109 @@
+name: Postgres Backups
+
+# Required GitHub configuration:
+#   Repository variables:
+#     BACKUP_AWS_REGION        e.g. us-east-1
+#     BACKUP_BUCKET            S3 bucket name for encrypted backups
+#     BACKUP_PREFIX            Prefix within the bucket, e.g. postgres-backups
+#     BACKUP_ENVIRONMENT       production | staging
+#     BACKUP_RETENTION_DAYS    e.g. 35
+#   Repository secrets:
+#     BACKUP_AWS_ROLE_ARN      OIDC-assumable IAM role with scoped S3/KMS access
+#     BACKUP_DATABASE_URL      Postgres connection string for the protected environment
+#     BACKUP_KMS_KEY_ID        KMS key ARN or alias used for SSE-KMS
+#     OPS_ALERT_WEBHOOK_URL    Optional Slack/PagerDuty/webhook endpoint for failures
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Retention window in days (defaults to BACKUP_RETENTION_DAYS)'
+        required: false
+        type: string
+      skip_prune:
+        description: 'Skip old-object pruning for this run'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: postgres-backup-${{ vars.BACKUP_ENVIRONMENT || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Encrypted pg_dump to S3
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AWS_REGION: ${{ vars.BACKUP_AWS_REGION }}
+      BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+      BACKUP_PREFIX: ${{ vars.BACKUP_PREFIX || 'postgres-backups' }}
+      BACKUP_ENVIRONMENT: ${{ vars.BACKUP_ENVIRONMENT || 'production' }}
+      BACKUP_RETENTION_DAYS: ${{ github.event.inputs.retention_days || vars.BACKUP_RETENTION_DAYS || '35' }}
+      BACKUP_SKIP_PRUNE: ${{ github.event.inputs.skip_prune == 'true' && '1' || '0' }}
+      BACKUP_OUTPUT_DIR: ${{ github.workspace }}/backup-artifacts
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_KMS_KEY_ID: ${{ secrets.BACKUP_KMS_KEY_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate backup configuration
+        run: |
+          for name in AWS_REGION BACKUP_BUCKET BACKUP_PREFIX DATABASE_URL BACKUP_KMS_KEY_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required value: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Install PostgreSQL client and jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client jq
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.BACKUP_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.BACKUP_AWS_REGION }}
+
+      - name: Run backup
+        run: ./scripts/ops/postgres-backup.sh
+
+      - name: Upload backup metadata artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-backup-${{ github.run_id }}
+          path: backup-artifacts/
+          retention-days: 180
+
+      - name: Notify ops on backup failure
+        if: failure() && secrets.OPS_ALERT_WEBHOOK_URL != ''
+        env:
+          OPS_ALERT_WEBHOOK_URL: ${{ secrets.OPS_ALERT_WEBHOOK_URL }}
+        run: |
+          payload="$(jq -n \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg environment "$BACKUP_ENVIRONMENT" \
+            --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{
+              text: ("Postgres backup failed for " + $repository + " (" + $environment + ")."),
+              workflow: $workflow,
+              runId: $runId,
+              repository: $repository,
+              environment: $environment,
+              runUrl: $url
+            }')"
+          curl -fsSL -X POST "$OPS_ALERT_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            --data "$payload"

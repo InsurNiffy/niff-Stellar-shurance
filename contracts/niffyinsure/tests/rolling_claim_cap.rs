@@ -107,13 +107,13 @@ fn single_claim_at_cap_succeeds() {
         &CoverageType::Standard,
         &80,
         &500_000i128,
-        &token,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "at cap");
     let urls = vec![&env];
     let claim_id = client
-        .try_file_claim(&holder, &policy.policy_id, &CAP, &details, &urls)
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details, &urls, &None)
         .unwrap()
         .unwrap();
     assert_eq!(claim_id, 1u64);
@@ -146,13 +146,13 @@ fn two_claims_summing_to_cap_succeed() {
         &CoverageType::Standard,
         &80,
         &500_000i128,
-        &token,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "first");
     let urls = vec![&env];
     let c1 = client
-        .try_file_claim(&holder, &policy.policy_id, &60_000i128, &details, &urls)
+        .try_file_claim(&holder, &policy.policy_id, &60_000i128, &details, &urls, &None)
         .unwrap()
         .unwrap();
     approve_and_pay(&env, &client, &v1, &v2, c1);
@@ -160,7 +160,7 @@ fn two_claims_summing_to_cap_succeed() {
 
     let details2 = String::from_str(&env, "second");
     let c2 = client
-        .try_file_claim(&holder, &policy.policy_id, &40_000i128, &details2, &urls)
+        .try_file_claim(&holder, &policy.policy_id, &40_000i128, &details2, &urls, &None)
         .unwrap()
         .unwrap();
     approve_and_pay(&env, &client, &v1, &v2, c2);
@@ -188,7 +188,7 @@ fn file_claim_over_cap_fails() {
         &CoverageType::Standard,
         &80,
         &500_000i128,
-        &token,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "too big");
@@ -199,6 +199,7 @@ fn file_claim_over_cap_fails() {
         &(CAP + 1),
         &details,
         &urls,
+        &None,
     ) {
         Ok(Err(e)) => assert_eq!(e, Error::RollingClaimCapExceeded.into()),
         Ok(Ok(id)) => panic!("expected cap error, got success claim_id={id}"),
@@ -229,13 +230,13 @@ fn cap_lowered_after_file_does_not_block_payout() {
         &CoverageType::Standard,
         &80,
         &500_000i128,
-        &token,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "in flight");
     let urls = vec![&env];
     let claim_id = client
-        .try_file_claim(&holder, &policy.policy_id, &80_000i128, &details, &urls)
+        .try_file_claim(&holder, &policy.policy_id, &80_000i128, &details, &urls, &None)
         .unwrap()
         .unwrap();
 
@@ -270,13 +271,13 @@ fn window_rollover_resets_cumulative() {
         &CoverageType::Standard,
         &80,
         &500_000i128,
-        &token,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: None, expected_nonce: None },
     );
 
     let details = String::from_str(&env, "w1");
     let urls = vec![&env];
     let c1 = client
-        .try_file_claim(&holder, &policy.policy_id, &CAP, &details, &urls)
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details, &urls, &None)
         .unwrap()
         .unwrap();
     approve_and_pay(&env, &client, &v1, &v2, c1);
@@ -291,7 +292,7 @@ fn window_rollover_resets_cumulative() {
 
     let details2 = String::from_str(&env, "w2");
     let c2 = client
-        .try_file_claim(&holder, &policy.policy_id, &CAP, &details2, &urls)
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details2, &urls, &None)
         .unwrap()
         .unwrap();
     approve_and_pay(&env, &client, &v1, &v2, c2);

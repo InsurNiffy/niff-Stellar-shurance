@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
-import { RampController } from '../../ramp/ramp.controller';
-import { FeatureFlagsService } from '../../feature-flags/feature-flags.service';
+import { RampController } from '../ramp/ramp.controller';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { Reflector } from '@nestjs/core';
-import { FeatureFlagsGuard } from '../../feature-flags/feature-flags.guard';
+import { FeatureFlagsGuard } from '../feature-flags/feature-flags.guard';
+import { ConfigService } from '@nestjs/config';
 
 describe('RampController', () => {
   let controller: RampController;
@@ -19,6 +20,21 @@ describe('RampController', () => {
       controllers: [RampController],
       providers: [
         { provide: FeatureFlagsService, useValue: mockFlags(flagEnabled) },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, fallback?: string) => {
+              const values: Record<string, string> = {
+                RAMP_URL: process.env.RAMP_URL ?? '',
+                RAMP_ALLOWED_REGIONS: process.env.RAMP_ALLOWED_REGIONS ?? '',
+                RAMP_UTM_SOURCE: 'niffyinsure',
+                RAMP_UTM_MEDIUM: 'app',
+                RAMP_UTM_CAMPAIGN: 'onramp',
+              };
+              return values[key] ?? fallback;
+            }),
+          },
+        },
         Reflector,
         FeatureFlagsGuard,
       ],

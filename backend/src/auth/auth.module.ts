@@ -6,6 +6,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { WalletAuthService } from './wallet-auth.service';
 import { NonceService } from './nonce.service';
 import { AuthController } from './auth.controller';
+import { AuthIdentityService } from './auth-identity.service';
 
 @Module({
   imports: [
@@ -14,14 +15,13 @@ import { AuthController } from './auth.controller';
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '7d' },
+        signOptions: { expiresIn: configService.get<string>('JWT_EXPIRES_IN', '7d') },
       }),
       inject: [ConfigService],
     }),
   ],
   controllers: [AuthController],
-  providers: [JwtStrategy, WalletAuthService, NonceService],
-  exports: [PassportModule, JwtModule],
+  providers: [JwtStrategy, WalletAuthService, NonceService, AuthIdentityService],
+  exports: [PassportModule, JwtModule, AuthIdentityService],
 })
 export class AuthModule {}
-

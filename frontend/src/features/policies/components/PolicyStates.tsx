@@ -1,5 +1,6 @@
 'use client';
 
+import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonRow, SkeletonCard } from '@/components/ui/skeleton';
 
 export function PolicyListSkeleton({ rows = 5, layout = 'row' }: { rows?: number; layout?: 'row' | 'card' }) {
@@ -22,19 +23,21 @@ export function PolicyListSkeleton({ rows = 5, layout = 'row' }: { rows?: number
   );
 }
 
-interface EmptyStateProps {
+interface PolicyEmptyStateProps {
   filter: 'active' | 'expired' | 'all';
 }
 
-export function PolicyEmptyState({ filter }: EmptyStateProps) {
-  const messages: Record<typeof filter, { heading: string; body: string }> = {
+export function PolicyEmptyState({ filter }: PolicyEmptyStateProps) {
+  const messages: Record<typeof filter, { heading: string; body: string; cta?: boolean }> = {
     all: {
       heading: "You don't have any policies yet",
       body: "Get a quote to start your first coverage on the Stellar network.",
+      cta: true,
     },
     active: {
       heading: "No active policies",
       body: "All your policies have expired, or you haven't purchased one yet.",
+      cta: true,
     },
     expired: {
       heading: "No expired policies",
@@ -42,22 +45,16 @@ export function PolicyEmptyState({ filter }: EmptyStateProps) {
     },
   };
 
-  const { heading, body } = messages[filter];
+  const { heading, body, cta } = messages[filter];
 
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
-      <span className="text-4xl" aria-hidden="true">📋</span>
-      <h2 className="text-lg font-semibold text-gray-900">{heading}</h2>
-      <p className="text-sm text-gray-500 max-w-xs">{body}</p>
-      {filter !== 'expired' && (
-        <a
-          href="/quote"
-          className="mt-2 inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
-        >
-          Get a quote
-        </a>
-      )}
-    </div>
+    <EmptyState
+      variant="policies"
+      headline={heading}
+      description={body}
+      ctaLabel={cta ? 'Get your first quote' : undefined}
+      ctaHref={cta ? '/quote' : undefined}
+    />
   );
 }
 

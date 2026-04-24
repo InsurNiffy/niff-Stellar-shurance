@@ -43,6 +43,7 @@ model Claim {
   @@index([deletedAt])
   @@index([createdAt])
   @@index([policyId])
+  @@index([policyId, deletedAt, createdAt])
   @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
   @@index([tenantId])
   @@index([tenantId, status])
@@ -68,6 +69,7 @@ model Vote {
   @@unique([claimId, voterAddress])
   @@index([voterAddress])
   @@index([claimId])
+  @@index([claimId, deletedAt])
   @@index([deletedAt])
   @@map("votes")
 }

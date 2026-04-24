@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { Worker } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
 import { IndexerService } from './indexer.service';
+import { getRuntimeEnv } from '../config/runtime-env';
 
 /**
  * Consumes BullMQ `reindex` jobs after admin resets the ledger cursor.
@@ -15,7 +16,8 @@ export class ReindexWorkerService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly indexer: IndexerService) {}
 
   onModuleInit(): void {
-    if (process.env.NODE_ENV === 'test' || process.env.DISABLE_REINDEX_WORKER === '1') {
+    const env = getRuntimeEnv();
+    if (env.NODE_ENV === 'test' || env.DISABLE_REINDEX_WORKER === '1') {
       this.logger.log('Reindex BullMQ worker disabled (test or DISABLE_REINDEX_WORKER)');
       return;
     }

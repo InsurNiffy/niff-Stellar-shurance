@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * AnalyticsScript — injects the Plausible script only when analytics is
- * configured and the environment is not local dev.
+ * configured and the user has accepted analytics consent.
  *
- * Rendered inside <head> from the root layout. The nonce from the CSP
- * middleware is forwarded so the script satisfies the nonce-based policy.
+ * Rendered from the root layout. The nonce from the CSP middleware is forwarded
+ * so the script satisfies the nonce-based policy.
  *
  * Environment variables:
  *   NEXT_PUBLIC_ANALYTICS_ENABLED  — set to "true" in staging/production
@@ -14,6 +16,11 @@
  * CSP: the Plausible script origin must be added to script-src and
  * connect-src in middleware.ts when using the cloud-hosted version.
  */
+
+import { useEffect, useState } from 'react'
+import Script from 'next/script'
+
+import { COOKIE_CONSENT_EVENT, getCookieConsent } from '@/lib/cookie-consent'
 
 interface AnalyticsScriptProps {
   nonce?: string
@@ -26,15 +33,32 @@ const SRC =
   'https://plausible.io/js/script.js'
 
 export function AnalyticsScript({ nonce }: AnalyticsScriptProps) {
+  const [allowed, setAllowed] = useState(false)
+
+  useEffect(() => {
+    if (!ENABLED || !DOMAIN) return
+
+    const update = () => {
+      const consent = getCookieConsent()
+      setAllowed(consent?.value === 'accepted')
+    }
+
+    update()
+    window.addEventListener('storage', update)
+    window.addEventListener(COOKIE_CONSENT_EVENT, update)
+
+    return () => {
+      window.removeEventListener('storage', update)
+      window.removeEventListener(COOKIE_CONSENT_EVENT, update)
+    }
+  }, [])
+
   // Disabled in local dev (env var absent) or when domain is not configured
-  if (!ENABLED || !DOMAIN) return null
+  if (!ENABLED || !DOMAIN || !allowed) return null
 
   return (
-    // defer keeps the script out of the critical rendering path (LCP safe)
-    // data-domain scopes events to this site in the Plausible dashboard
-    // eslint-disable-next-line @next/next/no-sync-scripts
-    <script
-      defer
+    <Script
+      strategy="afterInteractive"
       data-domain={DOMAIN}
       src={SRC}
       nonce={nonce}

@@ -52,6 +52,7 @@ import {
 } from "./renewal-reminder.constants";
 import { enqueueRenewalReminder } from "./renewal-reminder.job";
 import { SECONDS_PER_LEDGER } from "./renewal.constants";
+import { getRuntimeEnv } from "../config/runtime-env";
 
 interface ScanSummary {
   window: ReminderType;
@@ -82,7 +83,7 @@ export class RenewalReminderService {
    * To change in production, set RENEWAL_REMINDER_CRON to a valid cron expression,
    * e.g. "0 * /4 * * *" for every 4 hours.
    */
-  @Cron(process.env["RENEWAL_REMINDER_CRON"] ?? "0 * * * *")
+  @Cron(getRuntimeEnv().RENEWAL_REMINDER_CRON)
   async runScan(): Promise<void> {
     if (this.isRunning) {
       this.logger.warn("Renewal reminder scan already running — skipping this tick");
@@ -152,7 +153,7 @@ export class RenewalReminderService {
     let skippedOptOut = 0;
     let skippedDeduplicated = 0;
 
-    // eslint-disable-next-line no-constant-condition
+     
     while (true) {
       const page = await this.prisma.policy.findMany({
         where: {

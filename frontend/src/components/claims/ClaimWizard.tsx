@@ -16,12 +16,14 @@ import {
   useToast,
 } from '@/components/ui';
 import { useWallet } from '@/hooks/use-wallet';
+import { useDraftPersistence } from '@/hooks/use-draft-persistence';
 import { ClaimAPI } from '@/lib/api/claim';
 
 import { AmountStep } from './steps/AmountStep';
 import { EvidenceStep } from './steps/EvidenceStep';
 import { NarrativeStep } from './steps/NarrativeStep';
 import { ReviewStep } from './steps/ReviewStep';
+import { DraftResumeBanner } from './DraftResumeBanner';
 
 interface ClaimWizardProps {
   policyId: string;
@@ -35,6 +37,8 @@ const STEPS = [
   { id: '4', title: 'Review', description: 'Confirm & Sign' },
 ];
 
+const CLAIM_DRAFT_SCHEMA_VERSION = 1;
+
 export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -43,6 +47,7 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [txStatus, setTxStatus] = useState<string>('');
+  const [showBanner, setShowBanner] = useState(true);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const [formData, setFormData] = useState({
@@ -50,6 +55,44 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
     details: '',
     evidence: [] as { url: string; contentSha256Hex: string }[],
   });
+
+  const { hasDraft, saveDraft, loadDraft, clearDraft } = useDraftPersistence(
+    `claim-${policyId}`,
+    CLAIM_DRAFT_SCHEMA_VERSION
+  );
+
+  // Sync draft on form changes (excluding files/IPFS handled by hook sanitize)
+  useEffect(() => {
+    if (activeStep > 0 || formData.amount || formData.details) {
+      saveDraft({ ...formData, _step: activeStep });
+    }
+  }, [formData, activeStep, saveDraft]);
+
+  const handleResumeDraft = () => {
+    const draft = loadDraft();
+    if (draft) {
+      const { _step, ...data } = draft as any;
+      setFormData(prev => ({ ...prev, ...data }));
+      if (typeof _step === 'number') {
+        setActiveStep(_step);
+      }
+      toast({
+        title: 'Draft Restored',
+        description: 'You are continuing where you left off.',
+      });
+    }
+    setShowBanner(false);
+  };
+
+  const handleDismissBanner = () => {
+    clearDraft(); // Clearing explicitly if they choose to start over?
+    // Actually, maybe not clearing immediately, but just hiding banner?
+    // Requirements say "Resume draft banner when a valid draft is detected".
+    // If they dismiss, we should probably stop showing it but maybe keep draft until new data overwrites?
+    // Let's clear it to be safe and avoid confusion.
+    clearDraft();
+    setShowBanner(false);
+  };
 
   // Move focus to step heading when step changes
   useEffect(() => {
@@ -103,6 +146,10 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
 
       setTxStatus('Claim submitted successfully.');
       setIsSuccess(true);
+      
+      // EXTREMELY IMPORTANT: Clear draft on success (Issue #229)
+      clearDraft();
+
       toast({
         title: 'Claim Submitted!',
         description: 'Your claim has been successfully filed on-chain.',
@@ -173,6 +220,11 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Banner for resuming draft (Requirement: Resume draft banner detected on wizard mount) */}
+        {hasDraft && showBanner && (
+          <DraftResumeBanner onConfirm={handleResumeDraft} onDismiss={handleDismissBanner} />
+        )}
+
         {/* Visually hidden heading receives focus on step change */}
         <h2
           ref={stepHeadingRef}
@@ -205,8 +257,13 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
         </StepContent>
 
         <StepContent title={STEPS[3].title} isActive={activeStep === 3} isCompleted={activeStep > 3}>
-          <ReviewStep data={formData} policyId={policyId} />
+          <ReviewStep 
+            data={formData} 
+            policyId={policyId} 
+            onEdit={(step) => setActiveStep(step)} 
+          />
         </StepContent>
+
 
         <div className="flex justify-between pt-4 border-t">
           <Button

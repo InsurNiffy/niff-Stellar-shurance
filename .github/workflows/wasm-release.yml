@@ -1,0 +1,61 @@
+name: Wasm Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to upload release assets
+
+jobs:
+  wasm-release:
+    name: Build & publish Wasm artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install binaryen (wasm-opt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y binaryen
+
+      - name: Build release Wasm + compute SHA-256
+        run: bash scripts/wasm-release.sh
+
+      - name: Verify artifact exists and print hash
+        run: |
+          ARTIFACT=$(ls artifacts/niffyinsure-*.wasm | grep -v sha256 | head -1)
+          echo "ARTIFACT=$ARTIFACT" >> "$GITHUB_ENV"
+          echo "SHA256=$(cat ${ARTIFACT}.sha256)"
+
+      - name: Upload artifact to workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: niffyinsure-wasm-${{ github.ref_name }}
+          path: |
+            artifacts/niffyinsure-*.wasm
+            artifacts/niffyinsure-*.sha256
+          retention-days: 90
+
+      - name: Attach artifact to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/niffyinsure-*.wasm
+            artifacts/niffyinsure-*.sha256

@@ -1,0 +1,147 @@
+{
+  "SIGNATURE_INVALID": {
+    "httpStatus": 401,
+    "i18nKey": "errors.auth.signatureInvalid",
+    "description": "Wallet signature verification failed."
+  },
+  "NONCE_EXPIRED": {
+    "httpStatus": 401,
+    "i18nKey": "errors.auth.nonceExpired",
+    "description": "The sign-in nonce has expired; request a new one."
+  },
+  "TOKEN_EXPIRED": {
+    "httpStatus": 401,
+    "i18nKey": "errors.auth.tokenExpired",
+    "description": "JWT access token has expired."
+  },
+  "UNAUTHORIZED": {
+    "httpStatus": 401,
+    "i18nKey": "errors.auth.unauthorized",
+    "description": "Request is not authenticated."
+  },
+  "FORBIDDEN": {
+    "httpStatus": 403,
+    "i18nKey": "errors.auth.forbidden",
+    "description": "Authenticated user lacks permission for this action."
+  },
+  "INVALID_WALLET_ADDRESS": {
+    "httpStatus": 400,
+    "i18nKey": "errors.wallet.invalidAddress",
+    "description": "The supplied Stellar address is not valid or does not exist on-chain."
+  },
+  "ACCOUNT_NOT_FOUND": {
+    "httpStatus": 400,
+    "i18nKey": "errors.wallet.accountNotFound",
+    "description": "Stellar account not found; fund it with at least 1 XLM."
+  },
+  "WRONG_NETWORK": {
+    "httpStatus": 400,
+    "i18nKey": "errors.wallet.wrongNetwork",
+    "description": "RPC network passphrase mismatch."
+  },
+  "INSUFFICIENT_BALANCE": {
+    "httpStatus": 400,
+    "i18nKey": "errors.wallet.insufficientBalance",
+    "description": "Account does not have enough XLM to cover fees."
+  },
+  "TRANSACTION_FAILED": {
+    "httpStatus": 400,
+    "i18nKey": "errors.tx.failed",
+    "description": "Stellar transaction was rejected by the network."
+  },
+  "TRANSACTION_REJECTED": {
+    "httpStatus": 400,
+    "i18nKey": "errors.tx.rejected",
+    "description": "Transaction was rejected at submission time."
+  },
+  "INSUFFICIENT_FEE": {
+    "httpStatus": 400,
+    "i18nKey": "errors.tx.insufficientFee",
+    "description": "Transaction fee is below the network minimum."
+  },
+  "SIMULATION_FAILED": {
+    "httpStatus": 400,
+    "i18nKey": "errors.tx.simulationFailed",
+    "description": "Soroban simulation returned an error."
+  },
+  "SIMULATION_DECODE_FAILED": {
+    "httpStatus": 500,
+    "i18nKey": "errors.tx.simulationDecodeFailed",
+    "description": "Could not decode the simulation return value."
+  },
+  "CONTRACT_NOT_DEPLOYED": {
+    "httpStatus": 503,
+    "i18nKey": "errors.tx.contractNotDeployed",
+    "description": "Smart contract is not deployed on this network."
+  },
+  "CONTRACT_NOT_CONFIGURED": {
+    "httpStatus": 400,
+    "i18nKey": "errors.tx.contractNotConfigured",
+    "description": "CONTRACT_ID environment variable is not set."
+  },
+  "CONTRACT_NOT_INITIALIZED": {
+    "httpStatus": 400,
+    "i18nKey": "errors.tx.contractNotInitialized",
+    "description": "Contract is not initialized for this operation."
+  },
+  "SUBMISSION_FAILED": {
+    "httpStatus": 503,
+    "i18nKey": "errors.tx.submissionFailed",
+    "description": "Failed to submit transaction to the Soroban RPC."
+  },
+  "LEDGER_CLOSED": {
+    "httpStatus": 400,
+    "i18nKey": "errors.tx.ledgerClosed",
+    "description": "Target ledger has already closed."
+  },
+  "TIMEOUT_ERROR": {
+    "httpStatus": 504,
+    "i18nKey": "errors.tx.timeout",
+    "description": "RPC call timed out."
+  },
+  "RPC_UNAVAILABLE": {
+    "httpStatus": 503,
+    "i18nKey": "errors.rpc.unavailable",
+    "description": "Soroban RPC endpoint is unreachable."
+  },
+  "POLICY_NOT_FOUND": {
+    "httpStatus": 404,
+    "i18nKey": "errors.policy.notFound",
+    "description": "Policy does not exist."
+  },
+  "POLICY_BATCH_TOO_LARGE": {
+    "httpStatus": 400,
+    "i18nKey": "errors.policy.batchTooLarge",
+    "description": "Batch request exceeds the maximum allowed policy count."
+  },
+  "CLAIM_NOT_FOUND": {
+    "httpStatus": 404,
+    "i18nKey": "errors.claim.notFound",
+    "description": "Claim does not exist."
+  },
+  "CLAIM_ALREADY_FINALIZED": {
+    "httpStatus": 409,
+    "i18nKey": "errors.claim.alreadyFinalized",
+    "description": "Claim has already been finalized and cannot be modified."
+  },
+  "RATE_LIMIT_EXCEEDED": {
+    "httpStatus": 429,
+    "i18nKey": "errors.rateLimit.exceeded",
+    "description": "Too many requests; retry after the window resets."
+  },
+  "VALIDATION_ERROR": {
+    "httpStatus": 422,
+    "i18nKey": "errors.validation.failed",
+    "description": "Request body failed schema validation."
+  },
+  "NOT_FOUND": {
+    "httpStatus": 404,
+    "i18nKey": "errors.generic.notFound",
+    "description": "Requested resource was not found."
+  },
+  "INTERNAL_ERROR": {
+    "httpStatus": 500,
+    "i18nKey": "errors.generic.internalError",
+    "description": "Unexpected server error."
+  }
+}

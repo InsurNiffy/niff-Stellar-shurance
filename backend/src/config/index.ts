@@ -1,6 +1,5 @@
-/**
- * Application configuration
- */
+import { getRuntimeEnv } from './runtime-env';
+
 export interface AppConfig {
   port: number;
   env: 'development' | 'production' | 'test';
@@ -11,9 +10,6 @@ export interface AppConfig {
     issuer: string;
     audience: string;
   };
-  bcrypt: {
-    saltRounds: number;
-  };
   database: {
     host: string;
     port: number;
@@ -23,69 +19,64 @@ export interface AppConfig {
   };
   security: {
     corsOrigins: string[];
-    rateLimitWindowMs: number;
-    rateLimitMaxRequests: number;
-    tokenExpiryHours: number;
-    refreshTokenExpiryDays: number;
   };
   logging: {
-    logLevel: 'error' | 'warn' | 'info' | 'debug';
-    logAuthFailures: boolean;
+    logLevel: 'error' | 'warn' | 'log' | 'verbose' | 'debug';
   };
 }
 
-/**
- * Get configuration from environment variables
- */
-export function getConfig(): AppConfig {
+function parseDatabaseUrl(databaseUrl: string): AppConfig['database'] {
+  const url = new URL(databaseUrl);
+
   return {
-    port: parseInt(process.env.PORT || '3000', 10),
-    env: (process.env.NODE_ENV as AppConfig['env']) || 'development',
+    host: url.hostname,
+    port: Number.parseInt(url.port || '5432', 10),
+    username: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    name: url.pathname.replace(/^\//, ''),
+  };
+}
+
+export function getConfig(): AppConfig {
+  const env = getRuntimeEnv();
+
+  return {
+    port: env.PORT,
+    env: env.NODE_ENV,
     jwt: {
-      secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
-      expiresIn: process.env.JWT_EXPIRES_IN || '1h',
-      refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
-      issuer: process.env.JWT_ISSUER || 'niffyinsure',
-      audience: process.env.JWT_AUDIENCE || 'niffyinsure-api',
+      secret: env.JWT_SECRET,
+      expiresIn: env.JWT_EXPIRES_IN,
+      refreshExpiresIn: env.JWT_REFRESH_EXPIRES_IN,
+      issuer: env.JWT_ISSUER,
+      audience: env.JWT_AUDIENCE,
     },
-    bcrypt: {
-      saltRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
-    },
-    database: {
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432', 10),
-      username: process.env.DB_USERNAME || 'niff_user',
-      password: process.env.DB_PASSWORD || 'niff_password',
-      name: process.env.DB_NAME || 'niff_stellar',
-    },
+    database: parseDatabaseUrl(env.DATABASE_URL),
     security: {
-      corsOrigins: (process.env.CORS_ORIGINS || '*').split(','),
-      rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
-      rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
-      tokenExpiryHours: parseInt(process.env.TOKEN_EXPIRY_HOURS || '1', 10),
-      refreshTokenExpiryDays: parseInt(process.env.REFRESH_TOKEN_EXPIRY_DAYS || '7', 10),
+      corsOrigins: env.FRONTEND_ORIGINS.split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean),
     },
     logging: {
-      logLevel: (process.env.LOG_LEVEL as AppConfig['logging']['logLevel']) || 'info',
-      logAuthFailures: process.env.LOG_AUTH_FAILURES !== 'false',
+      logLevel: env.LOG_LEVEL,
     },
   };
 }
 
-/**
- * Validate required production configurations
- */
 export function validateProductionConfig(config: AppConfig): void {
-  const requiredVars: string[] = [];
-  
-  if (config.env === 'production') {
-    if (config.jwt.secret === 'dev-secret-change-in-production') {
-      requiredVars.push('JWT_SECRET');
-    }
+  if (config.env !== 'production') {
+    return;
   }
-  
-  if (requiredVars.length > 0) {
-    throw new Error(`Missing required environment variables for ${config.env} environment: ${requiredVars.join(', ')}`);
+
+  const missing: string[] = [];
+
+  if (!config.jwt.secret) {
+    missing.push('JWT_SECRET');
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required environment variables for ${config.env}: ${missing.join(', ')}`,
+    );
   }
 }
 

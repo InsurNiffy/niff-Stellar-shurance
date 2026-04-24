@@ -32,7 +32,7 @@ fn seed(client: &NiffyInsureClient, holder: &Address, coverage: i128, end_ledger
 fn file(client: &NiffyInsureClient, holder: &Address, amount: i128, env: &Env) -> u64 {
     let details = String::from_str(env, "ttl test");
     let urls = vec![env];
-    client.file_claim(holder, &1u32, &amount, &details, &urls)
+    client.file_claim(holder, &1u32, &amount, &details, &urls, &None)
 }
 
 /// Simulates Soroban archival of the snapshot entry (same observable effect as TTL expiry).

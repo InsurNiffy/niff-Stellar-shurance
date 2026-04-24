@@ -21,6 +21,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { config } from '../config/env';
+import { getRuntimeEnv } from '../config/runtime-env';
 import { AppError } from '../middleware/errorHandler';
 
 // Convenience aliases
@@ -238,7 +239,7 @@ export async function buildInitiatePolicyTransaction(args: {
   const ledgerInfo = await server.getLatestLedger();
 
   // Resolve asset: use caller-supplied address or fall back to configured default.
-  const assetAddress = args.asset ?? process.env.DEFAULT_TOKEN_CONTRACT_ID ?? '';
+  const assetAddress = args.asset ?? getRuntimeEnv().DEFAULT_TOKEN_CONTRACT_ID;
 
   const beneficiaryScv =
     args.beneficiary == null || args.beneficiary === ''

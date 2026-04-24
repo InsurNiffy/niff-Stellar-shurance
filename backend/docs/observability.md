@@ -113,10 +113,21 @@ Load `docs/prometheus-alerts.yml` into your Prometheus `rule_files`.
 
 | Alert | Threshold | Severity |
 |---|---|---|
-| `High5xxRate` | > 0.5 errors/s for 2 min | critical |
-| `HighRpcErrorRate` | > 0.2 errors/s for 2 min | warning |
-| `HighP99Latency` | p99 > 3 s for 5 min | warning |
-| `HighRpcP95Latency` | p95 > 10 s for 5 min | warning |
+| `High5xxRate` | > 1 errors/s for 10 min | critical |
+| `HighRpcErrorRate` | > 0.5 errors/s for 10 min | warning |
+| `HighP99Latency` | p99 > 3 s for 10 min | warning |
+| `HighRpcP95Latency` | p95 > 8 s for 10 min | warning |
+| `IndexerLagHigh` | > 30 ledger lag for 10 min | warning |
+| `SolvencyBufferLow` | buffer below configured threshold | critical |
+| `DlqDepthHigh` | dead-letter queue depth > 10 for 5 min | critical |
+
+#### Operator Runbook
+
+- `High5xxRate` / `HighRpcErrorRate`: first check for recent deploys, service restarts, and API gateway errors. If the issue is transient, acknowledge and continue monitoring; if not, escalate to backend engineering and rollback the most recent deployment if required.
+- `HighP99Latency` / `HighRpcP95Latency`: review traces and Prometheus panels for the affected route / RPC method. Look for slow Soroban RPC calls, database contention, or request storms before expanding the incident.
+- `IndexerLagHigh`: inspect the indexer queue and database cursor. Confirm whether the indexer is stalled, retrying with repeated failures, or simply catching up after a backlog. Use `/admin/queues` and query `ledger_cursors` to diagnose.
+- `SolvencyBufferLow`: verify the latest solvency snapshot in the admin dashboard and check approved claims versus contract balance. If the buffer is below the configured safety threshold, open an on-call incident and notify finance/compliance.
+- `DlqDepthHigh`: use Bull Board or `/admin/queues/:queue/jobs/:jobId/retry` to replay failed jobs. Investigate the failure reason from `bullmq_dlq_jobs_total` labels and address the root cause before mass retries.
 
 ---
 

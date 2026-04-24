@@ -18,7 +18,7 @@ const metricsMock = {
 // We test with a real in-process Queue/Worker backed by ioredis-mock
 jest.mock('../redis/client', () => ({
   getBullMQConnection: () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const IORedis = require('ioredis-mock');
     return new IORedis();
   },

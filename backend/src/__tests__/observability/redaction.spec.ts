@@ -1,4 +1,9 @@
-import { redactHeaders, redactBody } from '../../common/logger/app-logger.service';
+import {
+  redactHeaders,
+  redactBody,
+  redactMessageText,
+  redactValue,
+} from '../../common/logger/app-logger.service';
 
 describe('redactHeaders', () => {
   it('redacts Authorization header', () => {
@@ -51,5 +56,36 @@ describe('redactBody', () => {
 
   it('returns undefined for undefined input', () => {
     expect(redactBody(undefined)).toBeUndefined();
+  });
+});
+
+describe('redactValue', () => {
+  it('redacts nested secret-like fields', () => {
+    const redacted = redactValue({
+      jwtSecret: 'super-secret-value',
+      nested: {
+        apiKey: 'another-secret',
+      },
+    });
+
+    expect(redacted).toEqual({
+      jwtSecret: '[REDACTED]',
+      nested: {
+        apiKey: '[REDACTED]',
+      },
+    });
+  });
+});
+
+describe('redactMessageText', () => {
+  it('redacts secret assignments and bearer tokens inside log messages', () => {
+    const redacted = redactMessageText(
+      'JWT_SECRET=my-secret-value authorization=Bearer abc.def.ghi',
+    );
+
+    expect(redacted).not.toContain('my-secret-value');
+    expect(redacted).not.toContain('abc.def.ghi');
+    expect(redacted).toContain('JWT_SECRET=[REDACTED]');
+    expect(redacted).toContain('Bearer [REDACTED]');
   });
 });

@@ -5,7 +5,7 @@
 import config from "./config";
 import app, { closeRedisClient, initializeApp } from "./index";
 
-const PORT = parseInt(process.env.PORT ?? "3000", 10);
+const PORT = config.port;
 
 let server: ReturnType<typeof app.listen> | null = null;
 

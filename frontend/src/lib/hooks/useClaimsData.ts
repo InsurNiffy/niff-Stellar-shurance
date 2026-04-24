@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useNetworkAwareQuery, STALE_TIMES } from '@/lib/query';
 import { z } from "zod";
 
 import type { ClaimFilters } from "@/components/claims/types";

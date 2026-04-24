@@ -26,7 +26,7 @@ use soroban_sdk::{contract, contractevent, contractimpl, panic_with_error, Addre
 
 #[contract]
 pub struct NiffyInsure;
-pub use admin::AdminError;
+pub use admin::{AdminAction, AdminError, PendingAdminAction};
 pub use policy::{PolicyError, RenewalError};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -90,6 +90,12 @@ impl NiffyInsure {
 
     pub fn get_admin(env: Env) -> Address {
         storage::get_admin(&env)
+    }
+
+    /// Returns the semver version string stamped at build time from `Cargo.toml`.
+    /// Read-only: no storage access, no auth required. Safe to call via simulation.
+    pub fn version(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
     }
 
     /// Read-only: balance of the default payout token held by this contract (payout reserve).
@@ -164,6 +170,7 @@ impl NiffyInsure {
             42 => validate::Error::RateLimitExceeded,
             49 => validate::Error::VotingDurationOutOfBounds,
             51 => validate::Error::VoterSnapshotExpired,
+            52 => validate::Error::NonceMismatch,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -201,9 +208,10 @@ impl NiffyInsure {
         amount: i128,
         details: soroban_sdk::String,
         evidence: Vec<types::ClaimEvidenceEntry>,
+        expected_nonce: Option<u64>,
     ) -> Result<u64, validate::Error> {
         holder.require_auth();
-        claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence)
+        claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence, expected_nonce)
     }
 
     /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
@@ -467,8 +475,7 @@ impl NiffyInsure {
         safety_score: u32,
         base_amount: i128,
         asset: Address,
-        beneficiary: Option<Address>,
-        deductible: Option<i128>,
+        opts: types::InitiatePolicyOptions,
     ) -> Result<types::Policy, policy::PolicyError> {
         policy::initiate_policy(
             &env,
@@ -480,8 +487,9 @@ impl NiffyInsure {
             safety_score,
             base_amount,
             asset,
-            beneficiary,
-            deductible,
+            opts.beneficiary,
+            opts.deductible,
+            opts.expected_nonce,
         )
     }
 
@@ -570,6 +578,14 @@ impl NiffyInsure {
         storage::get_active_policy_count(&env, &holder)
     }
 
+    /// Read-only: current replay-protection nonce for `holder`.
+    /// Pass this value as `expected_nonce` in the next `initiate_policy` or `file_claim`
+    /// call to enable nonce checking. Nonce starts at 0 and increments on each
+    /// successful mutating call where `expected_nonce` was supplied.
+    pub fn get_nonce(env: Env, holder: Address) -> u64 {
+        storage::get_holder_nonce(&env, &holder)
+    }
+
     /// If set, the `end_ledger` for which a [`policy::PolicyExpired`] event was already recorded
     /// (one row per policy). Indexers may use this with `get_policy` for idempotency checks.
     /// Name is shortened to satisfy the 32-char Soroban export limit.
@@ -651,8 +667,28 @@ impl NiffyInsure {
         admin::cancel_admin(&env);
     }
 
-    pub fn set_token(env: Env, new_token: Address) {
+    /// Propose a high-risk admin action for two-step confirmation.
+    pub fn propose_admin_action(env: Env, action: AdminAction) {
+        admin::propose_admin_action(&env, action);
+    }
+
+    /// Confirm and execute pending admin action (second signer auth).
+    pub fn confirm_admin_action(env: Env) {
+        admin::confirm_admin_action(&env);
+    }
+
+    /// Cancel pending admin action (proposer auth).
+    pub fn cancel_admin_action(env: Env) {
+        admin::cancel_admin_action(&env);
+    }
+
+pub fn set_token(env: Env, new_token: Address) {
         admin::set_token(&env, new_token);
+    }
+
+    /// *** DEPRECATED single-step *** Use propose_admin_action(TreasuryRotation) for protected rotation.
+    pub fn set_treasury(env: Env, new_treasury: Address) {
+        admin::set_treasury(&env, new_treasury);
     }
 
     pub fn set_treasury(env: Env, new_treasury: Address) {

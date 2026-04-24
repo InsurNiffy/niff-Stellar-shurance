@@ -26,6 +26,29 @@ Operators should align `DATA_RETENTION_DAYS` with counsel-approved schedules; de
 - **Idempotent:** Re-running the same window removes no additional rows.
 - **Concurrency:** Safe alongside live ingestion: only rows with non-null `deleted_at <= cutoff` are removed; new rows have `deleted_at` NULL.
 
+## Right-to-erasure (GDPR Article 17)
+
+### Process
+
+1. **Request Submission:** Admin submits erasure request via `POST /admin/privacy/requests` with subject wallet address, request type (ANONYMIZE or DELETE), and notes.
+2. **Immediate Execution:** The request is processed synchronously, erasing or anonymizing PII fields in off-chain DB rows.
+3. **Audit Logging:** All erasure requests are logged in `privacy_requests` table and admin audit log, including actor and timestamp.
+4. **Response:** Returns request ID and rows affected count.
+5. **Verification:** Admin can list requests via `GET /admin/privacy/requests` to track status.
+
+### PII Fields Erased/Anonymized
+
+- **Claims:** `description` → '[redacted]', `imageUrls` → []
+- **Audit Logs:** Actor field anonymized for erased users (preserves integrity but removes PII)
+- **On-chain data:** Immutable, not erased (documented in service comments)
+
+### SLA
+
+- **Processing Time:** Immediate (synchronous execution)
+- **Completion Notification:** Via API response
+- **Audit Retention:** Erasure requests logged indefinitely for compliance
+- **Escalation:** If request fails, error logged and status set to FAILED
+
 ## Environment
 
 | Variable               | Purpose                                      |
@@ -38,3 +61,5 @@ Operators should align `DATA_RETENTION_DAYS` with counsel-approved schedules; de
 - `backend/src/admin/admin-policies.service.ts` — list + soft delete
 - `backend/src/maintenance/data-retention.service.ts` — purge job
 - `backend/src/claims/claims.service.ts` — public API filters
+- `backend/src/maintenance/privacy.service.ts` — erasure implementation
+- `backend/src/admin/admin.controller.ts` — API endpoints

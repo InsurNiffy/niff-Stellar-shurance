@@ -25,10 +25,17 @@ export class MetricsService implements OnModuleInit {
   readonly httpRequestDuration: client.Histogram<string>;
   readonly httpRequestTotal: client.Counter<string>;
   readonly http5xxTotal: client.Counter<string>;
+  readonly graphqlOperationDuration: client.Histogram<string>;
+  readonly graphqlOperationTotal: client.Counter<string>;
 
   // ── Queue / DLQ metrics ───────────────────────────────────────────────────
   readonly dlqDepth: client.Gauge<string>;
   readonly dlqJobFailed: client.Counter<string>;
+
+  // ── Indexer / observability metrics ───────────────────────────────────────
+  readonly indexerLag: client.Gauge<string>;
+  readonly solvencyBufferStroops: client.Gauge<string>;
+  readonly solvencyBufferThresholdStroops: client.Gauge<string>;
 
   // ── RPC metrics ───────────────────────────────────────────────────────────
   readonly rpcCallDuration: client.Histogram<string>;
@@ -75,6 +82,21 @@ export class MetricsService implements OnModuleInit {
       registers: [this.registry],
     });
 
+    this.graphqlOperationDuration = new client.Histogram({
+      name: 'graphql_operation_duration_seconds',
+      help: 'GraphQL operation latency in seconds',
+      labelNames: ['operation_type', 'status'],
+      buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+      registers: [this.registry],
+    });
+
+    this.graphqlOperationTotal = new client.Counter({
+      name: 'graphql_operations_total',
+      help: 'Total GraphQL operations',
+      labelNames: ['operation_type', 'status'],
+      registers: [this.registry],
+    });
+
     this.dlqDepth = new client.Gauge({
       name: 'bullmq_dlq_depth',
       help: 'Number of jobs currently in the dead-letter (failed) queue',
@@ -83,6 +105,34 @@ export class MetricsService implements OnModuleInit {
     });
 
     this.dlqJobFailed = new client.Counter({
+      name: 'bullmq_dlq_jobs_total',
+      help: 'Total jobs moved to dead-letter queue after max retries',
+      labelNames: ['queue', 'job_name', 'failure_reason'],
+      registers: [this.registry],
+    });
+
+    this.indexerLag = new client.Gauge({
+      name: 'indexer_lag_ledgers',
+      help: 'Current indexer lag in ledger count behind the network head',
+      labelNames: ['network'],
+      registers: [this.registry],
+    });
+
+    this.solvencyBufferStroops = new client.Gauge({
+      name: 'solvency_buffer_stroops',
+      help: 'Contract solvency buffer in stroops (balance minus approved obligations)',
+      labelNames: ['tenant'],
+      registers: [this.registry],
+    });
+
+    this.solvencyBufferThresholdStroops = new client.Gauge({
+      name: 'solvency_buffer_threshold_stroops',
+      help: 'Configured solvency buffer threshold in stroops',
+      labelNames: ['tenant'],
+      registers: [this.registry],
+    });
+
+    this.rpcCallDuration = new client.Histogram({
       name: 'bullmq_dlq_jobs_total',
       help: 'Total jobs moved to dead-letter queue after max retries',
       labelNames: ['queue', 'job_name', 'failure_reason'],
@@ -172,6 +222,22 @@ export class MetricsService implements OnModuleInit {
     }
   }
 
+  recordGraphqlOperation(opts: {
+    operationType: string;
+    status: 'success' | 'error' | 'rejected';
+    durationMs: number;
+  }) {
+    const durationSec = opts.durationMs / 1000;
+    this.graphqlOperationDuration.observe(
+      { operation_type: opts.operationType, status: opts.status },
+      durationSec,
+    );
+    this.graphqlOperationTotal.inc({
+      operation_type: opts.operationType,
+      status: opts.status,
+    });
+  }
+
   recordRpcCall(opts: {
     rpcMethod: string;
     status: 'success' | 'error';
@@ -191,6 +257,21 @@ export class MetricsService implements OnModuleInit {
 
   recordQuoteSimulationCache(result: 'hit' | 'miss' | 'bypass') {
     this.quoteSimulationCacheTotal.inc({ result });
+  }
+
+  recordIndexerLag(opts: { network: string; lag: number }) {
+    this.indexerLag.set({ network: opts.network }, opts.lag);
+  }
+
+  recordSolvencyBuffer(opts: { tenant: string; bufferStroops: bigint }) {
+    this.solvencyBufferStroops.set({ tenant: opts.tenant }, Number(opts.bufferStroops));
+  }
+
+  recordSolvencyThreshold(opts: { tenant: string; thresholdStroops: bigint }) {
+    this.solvencyBufferThresholdStroops.set(
+      { tenant: opts.tenant },
+      Number(opts.thresholdStroops),
+    );
   }
 
   recordDbPool(opts: { active: number; idle: number; waiting: number }) {

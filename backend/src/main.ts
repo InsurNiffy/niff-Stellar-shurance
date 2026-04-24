@@ -1,3 +1,7 @@
+// OpenTelemetry instrumentation MUST be imported before any other module
+// so that auto-instrumentation patches are applied at load time.
+import './tracing'
+
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
@@ -9,6 +13,9 @@ import { RequestContextMiddleware } from "./common/middleware/request-context.mi
 import type { Request, Response, NextFunction } from "express";
 import { loadNetworkConfig } from "./config/network.config";
 import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
+import { validateEnvironment } from "./config/env.validation";
+import { AppLoggerService } from "./common/logger/app-logger.service";
+import { EnvironmentVariables } from "./config/env.definitions";
 
 export function parseOrigins(raw: string): string[] {
   return raw
@@ -26,32 +33,33 @@ async function assertRpcPassphrase(networkConfig: ReturnType<typeof loadNetworkC
     const info = await server.getNetwork();
     if (info.passphrase !== networkConfig.networkPassphrase) {
       throw new Error(
-        `RPC passphrase mismatch! RPC returned "${info.passphrase}" ` +
-          `but config expects "${networkConfig.networkPassphrase}". ` +
-          `Check SOROBAN_RPC_URL and STELLAR_NETWORK_PASSPHRASE.`,
+        'RPC passphrase mismatch. Check SOROBAN_RPC_URL and STELLAR_NETWORK_PASSPHRASE.',
       );
     }
-    startupLogger.log(`✅ RPC passphrase verified for network: ${networkConfig.network}`);
+    startupLogger.log(`RPC passphrase verified for network: ${networkConfig.network}`);
   } catch (err) {
     if (err instanceof Error && err.message.includes('passphrase mismatch')) throw err;
     // RPC unreachable at startup — log warning but don't block (offline dev)
-    startupLogger.warn(`⚠️  Could not verify RPC passphrase (RPC unreachable): ${String(err)}`);
+    startupLogger.warn(`Could not verify RPC passphrase because the RPC endpoint was unreachable: ${String(err)}`);
   }
 }
 
 async function bootstrap() {
+  validateEnvironment(process.env);
+
   // Validate and load network config before anything else — fail fast.
   const networkConfig = loadNetworkConfig();
   const startupLogger = new Logger('Bootstrap');
   startupLogger.log(
     `🌐 Active network: ${networkConfig.network.toUpperCase()} | ` +
-      `RPC: ${networkConfig.rpcUrl} | ` +
-      `Passphrase: "${networkConfig.networkPassphrase}"`,
+      `RPC: ${networkConfig.rpcUrl}`,
   );
 
   await assertRpcPassphrase(networkConfig);
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const appLogger = app.get(AppLoggerService);
+  app.useLogger(appLogger);
 
   // Global prefix
   app.setGlobalPrefix("api");
@@ -85,7 +93,7 @@ async function bootstrap() {
   });
 
   // CORS — admin UI gets its own restricted origin list
-  const configService = app.get(ConfigService);
+  const configService = app.get<ConfigService<EnvironmentVariables, true>>(ConfigService);
   const adminOrigins = parseOrigins(
     configService.get<string>("ADMIN_CORS_ORIGINS") ?? "",
   );
@@ -156,9 +164,21 @@ async function bootstrap() {
     "Bootstrap",
   );
   Logger.log(`📚 Swagger docs: http://localhost:${port}/docs`, "Bootstrap");
+  const graphqlEnabled = configService.get<boolean>('GRAPHQL_ENABLED', true);
+  if (graphqlEnabled) {
+    const graphqlPath = configService.get<string>('GRAPHQL_PATH', '/graphql');
+    Logger.log(
+      `🧭 GraphQL endpoint: http://localhost:${port}/api${graphqlPath}`,
+      'Bootstrap',
+    );
+  }
   Logger.log(
     `🌐 Network: ${networkConfig.network.toUpperCase()} | Contract: ${networkConfig.contractIds.niffyinsure || '(not set)'}`,
     "Bootstrap",
   );
 }
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  Logger.error(message, undefined, 'Bootstrap');
+  process.exit(1);
+});

@@ -73,13 +73,12 @@ fn approve_claim_flow(
         &80,
         &1_000_000,
         token,
-        &None::<Address>,
-        &deductible,
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: deductible, expected_nonce: None },
     );
 
     let details = String::from_str(env, "deductible test");
     let urls = vec![env];
-    let claim_id = client.file_claim(&holder, &1u32, &claim_gross, &details, &urls);
+    let claim_id = client.file_claim(&holder, &1u32, &claim_gross, &details, &urls, &None);
 
     let c = client.get_claim(&claim_id);
     assert_eq!(c.deductible, deductible.unwrap_or(0));
@@ -139,8 +138,7 @@ fn initiate_rejects_deductible_above_coverage() {
         &80,
         &100_000,
         &token,
-        &None::<Address>,
-        &Some(100_001i128),
+        &niffyinsure::types::InitiatePolicyOptions { beneficiary: None, deductible: Some(100_001i128), expected_nonce: None },
     );
     assert!(matches!(
         r,

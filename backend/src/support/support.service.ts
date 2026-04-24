@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CaptchaService } from './captcha.service';
@@ -11,6 +12,7 @@ export class SupportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly captcha: CaptchaService,
+    private readonly config: ConfigService,
   ) {}
 
   async submitTicket(dto: CreateTicketDto, remoteIp?: string) {
@@ -44,7 +46,7 @@ export class SupportService {
   /** One-way hash so we can detect duplicate IPs without storing raw IPs */
   private hashIp(ip: string): string {
     return createHash('sha256')
-      .update(ip + (process.env.IP_HASH_SALT ?? 'niff-salt'))
+      .update(ip + this.config.get<string>('IP_HASH_SALT', 'niff-salt'))
       .digest('hex');
   }
 }

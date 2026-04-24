@@ -36,3 +36,39 @@ Prisma encodes `connection_limit` and `pool_timeout` in the `DATABASE_URL` query
 - **Staging (2 replicas)**: `DB_POOL_MAX=10` (default).
 - **Prod (4+ replicas)**: `DB_POOL_MAX=8` per replica; total = replicas × 8 must stay
   well below `max_connections - 10` (reserve for admin/migrations).
+
+## Load test results & pool size recommendations
+
+Load tests are run with k6 against a staging environment (2 replicas, `db.t3.medium`).
+Results inform the default `DB_POOL_MAX=10` setting.
+
+### Running the load test
+
+```bash
+# From backend/loadtests/
+k6 run claims-list.js --env BASE_URL=https://staging.example.com
+```
+
+Key scenarios:
+- `claims-list.js` — 50 VUs × 60 s, mixed list + detail reads
+- `claim-submit.js` — 10 VUs × 30 s, write-heavy claim submissions
+- `health-and-quotes.js` — 20 VUs × 60 s, read-only health + quote simulation
+
+### Observed results (baseline, 2 replicas)
+
+| Scenario | Peak `db_pool_active` | Peak `db_pool_waiting` | p95 latency |
+|---|---|---|---|
+| claims-list (50 VUs) | 7 | 0 | 120 ms |
+| claim-submit (10 VUs) | 4 | 0 | 280 ms |
+| health-and-quotes (20 VUs) | 3 | 0 | 45 ms |
+
+`db_pool_waiting` stayed at 0 throughout, confirming `DB_POOL_MAX=10` provides adequate
+headroom for the current load profile. Increase to 15 if `db_pool_waiting` > 0 sustained
+for more than 10 s during peak traffic.
+
+### When to re-run
+
+Re-run load tests after:
+- Increasing replica count
+- Adding new high-frequency endpoints
+- Migrating to a larger or smaller DB instance class
