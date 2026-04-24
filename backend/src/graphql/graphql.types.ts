@@ -207,3 +207,25 @@ export class GraphqlViewer {
   @Field({ nullable: true })
   staffRole?: string;
 }
+
+/** Emitted by the voteAdded subscription on every new vote. */
+@ObjectType()
+export class VoteAddedEvent {
+  @Field(() => Int)
+  claimId!: number;
+
+  @Field()
+  voter!: string;
+
+  @Field()
+  vote!: string;
+
+  @Field(() => Int)
+  yesVotes!: number;
+
+  @Field(() => Int)
+  noVotes!: number;
+
+  @Field(() => Int)
+  totalVotes!: number;
+}

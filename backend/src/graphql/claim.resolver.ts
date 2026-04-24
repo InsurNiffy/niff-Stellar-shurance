@@ -1,6 +1,6 @@
 import DataLoader from 'dataloader';
-import { UseGuards } from '@nestjs/common';
-import { Args, Context, Int, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { UnauthorizedException, UseGuards } from '@nestjs/common';
+import { Args, Context, Int, Parent, Query, ResolveField, Resolver, Subscription } from '@nestjs/graphql';
 import type { Policy } from '@prisma/client';
 import { AuthIdentityService } from '../auth/auth-identity.service';
 import { ClaimsService } from '../claims/claims.service';
@@ -9,7 +9,8 @@ import { PolicyReadService } from '../policy/policy-read.service';
 import type { GraphqlContext, GraphqlRequest } from './graphql.context';
 import { GraphqlRateLimitGuard } from './graphql-rate-limit.guard';
 import { GraphqlWalletAuthGuard } from './graphql-wallet-auth.guard';
-import { ClaimConnectionNode, ClaimNode, PolicyNode } from './graphql.types';
+import { ClaimConnectionNode, ClaimNode, PolicyNode, VoteAddedEvent } from './graphql.types';
+import { VotePubSubService } from './vote-pubsub.service';
 
 @Resolver(() => ClaimNode)
 export class ClaimResolver {
@@ -19,6 +20,7 @@ export class ClaimResolver {
     private readonly claimsService: ClaimsService,
     private readonly policyReadService: PolicyReadService,
     private readonly authIdentity: AuthIdentityService,
+    private readonly votePubSub: VotePubSubService,
   ) {}
 
   @Query(() => ClaimConnectionNode)
@@ -145,5 +147,36 @@ export class ClaimResolver {
       createdAt: policy.createdAt,
       updatedAt: policy.updatedAt,
     };
+  }
+
+  /**
+   * subscription voteAdded(claimId: Int!): VoteAddedEvent
+   *
+   * Authenticated: requires a valid wallet JWT (Authorization: Bearer <token>).
+   * Unauthenticated connections are rejected before the subscription is established.
+   *
+   * The subscription is backed by Redis pub/sub via VotePubSubService.
+   * Each subscriber receives events only for the requested claimId.
+   * The connection is cleaned up automatically when the WebSocket closes.
+   *
+   * Authentication flow:
+   *   1. Client connects via WebSocket with `connectionParams: { Authorization: "Bearer <jwt>" }`.
+   *   2. The Apollo subscription context factory resolves the identity.
+   *   3. GraphqlWalletAuthGuard rejects unauthenticated connections with UNAUTHENTICATED.
+   */
+  @Subscription(() => VoteAddedEvent, {
+    filter: (payload: { voteAdded: VoteAddedEvent }, variables: { claimId: number }) =>
+      payload.voteAdded.claimId === variables.claimId,
+  })
+  @UseGuards(GraphqlWalletAuthGuard)
+  voteAdded(
+    @Args('claimId', { type: () => Int }) claimId: number,
+  ): AsyncIterator<VoteAddedEvent> {
+    if (!claimId || claimId <= 0) {
+      throw new UnauthorizedException('Invalid claimId');
+    }
+    return this.votePubSub.pubSub.asyncIterator(
+      VotePubSubService.triggerFor(claimId),
+    );
   }
 }
