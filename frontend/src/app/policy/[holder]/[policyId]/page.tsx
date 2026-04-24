@@ -27,9 +27,17 @@ export default async function PolicyDetailPage({ params }: Props) {
     start_ledger: number;
     end_ledger: number;
     strike_count: number;
+    /** Optional beneficiary address set by the holder. Null/undefined = payouts go to holder. */
+    beneficiary?: string | null;
   };
 
   const statusLabel = p.is_active ? 'Active' : 'Inactive';
+  const decodedHolder = decodeURIComponent(holder);
+  const hasBeneficiary = Boolean(p.beneficiary?.trim());
+  // Warn when a beneficiary is set — the connected wallet is server-rendered so
+  // we always show the warning when any beneficiary is present; the client-side
+  // policy/[id]/page.tsx compares against the live wallet address.
+  const showBeneficiaryWarning = hasBeneficiary && p.beneficiary !== decodedHolder;
 
   return (
     <main className="container mx-auto px-4 py-8 max-w-2xl space-y-6">
@@ -38,6 +46,27 @@ export default async function PolicyDetailPage({ params }: Props) {
         {' / '}
         <span>Policy #{p.policy_id}</span>
       </nav>
+
+      {showBeneficiaryWarning && (
+        <div
+          role="alert"
+          className="flex gap-3 rounded-lg border border-amber-400/60 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          <span aria-hidden="true" className="mt-0.5 shrink-0 text-base">⚠️</span>
+          <div className="space-y-1">
+            <p className="font-semibold">Payout address differs from the policy holder</p>
+            <p>
+              Approved claims will be paid to the <strong>beneficiary</strong> address below, not
+              the holder. Verify this address on a second channel (hardware wallet screen, multisig
+              quorum, etc.) before signing any policy changes.
+            </p>
+            <p className="text-xs opacity-80">
+              Phishing risk: malicious interfaces can trick you into setting a beneficiary you do
+              not control.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-4 shadow-sm">
         <div className="flex items-center justify-between">
@@ -55,6 +84,18 @@ export default async function PolicyDetailPage({ params }: Props) {
           <Detail label="Start ledger" value={String(p.start_ledger)} />
           <Detail label="End ledger" value={String(p.end_ledger)} />
           <Detail label="Strike count" value={String(p.strike_count)} />
+          <div className="col-span-2">
+            <dt className="text-xs text-gray-500">Payout beneficiary</dt>
+            <dd className="font-mono text-xs break-all text-gray-900">
+              {hasBeneficiary ? (
+                <span className={showBeneficiaryWarning ? 'text-amber-700 dark:text-amber-300' : undefined}>
+                  {p.beneficiary}
+                </span>
+              ) : (
+                <span className="italic text-gray-400">Not set — payouts go to holder</span>
+              )}
+            </dd>
+          </div>
         </dl>
 
         <p className="text-xs text-gray-400">
