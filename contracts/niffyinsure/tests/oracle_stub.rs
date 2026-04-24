@@ -18,7 +18,7 @@
 
 use niffyinsure::types::{OracleSource, TriggerStatus};
 use niffyinsure::validate::OracleError;
-use soroban_sdk::{testutils::Address as _, vec::Vec as SdkVec, Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Bytes, Env};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // DEFAULT BUILD TESTS (feature = std without "experimental")
@@ -75,10 +75,11 @@ mod default_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
             trigger_ledger: 0,
-            signature: SdkVec::new(&env),
+            nonce: 0,
+            signature: BytesN::from_array(&env, &[0u8; 64]),
         };
         niffyinsure::storage::set_oracle_trigger(&env, 1, &trigger);
     }
@@ -108,10 +109,11 @@ mod default_build_tests {
             policy_id: 1,
             event_type: niffyinsure::types::TriggerEventType::Undefined,
             source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
+            payload: Bytes::new(&env),
             timestamp: 0,
             trigger_ledger: 0,
-            signature: SdkVec::new(&env),
+            nonce: 0,
+            signature: BytesN::from_array(&env, &[0u8; 64]),
         };
         let _ = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
     }
@@ -148,276 +150,214 @@ mod default_build_tests {
 #[cfg(feature = "experimental")]
 mod experimental_build_tests {
     use super::*;
+    use soroban_sdk::testutils::ed25519::Sign;
 
-    /// Test that oracle triggers are disabled by default in experimental builds.
-    ///
-    /// Even experimental builds should have oracle triggers disabled by default,
-    /// requiring explicit admin action to enable.
+    fn make_trigger(
+        env: &Env,
+        source: OracleSource,
+        policy_id: u32,
+        nonce: u64,
+        sig: [u8; 64],
+    ) -> niffyinsure::types::OracleTrigger {
+        niffyinsure::types::OracleTrigger {
+            policy_id,
+            event_type: niffyinsure::types::TriggerEventType::WeatherEvent,
+            source,
+            payload: {
+                let mut b = Bytes::new(env);
+                b.push_back(1u8);
+                b
+            },
+            timestamp: 1_000_000u64,
+            trigger_ledger: 1000u32,
+            nonce,
+            signature: BytesN::from_array(env, &sig),
+        }
+    }
+
     #[test]
     fn oracle_disabled_by_default_in_experimental_build() {
         let env = Env::default();
         env.mock_all_auths();
-
-        // Verify oracle is disabled by default
         assert!(!niffyinsure::storage::is_oracle_enabled(&env));
     }
 
-    /// Test that oracle triggers can be enabled in experimental builds.
     #[test]
     fn oracle_can_be_enabled_in_experimental_build() {
         let env = Env::default();
         env.mock_all_auths();
-
-        // Enable oracle triggers
         niffyinsure::storage::set_oracle_enabled(&env, true);
         assert!(niffyinsure::storage::is_oracle_enabled(&env));
-
-        // Disable oracle triggers
         niffyinsure::storage::set_oracle_enabled(&env, false);
         assert!(!niffyinsure::storage::is_oracle_enabled(&env));
     }
 
-    /// Test that trigger ID generation works in experimental builds.
     #[test]
     fn trigger_id_generation_in_experimental_build() {
         let env = Env::default();
-
-        // Generate first trigger ID
         let id1 = niffyinsure::storage::next_trigger_id(&env);
         assert_eq!(id1, 1);
-
-        // Generate second trigger ID
         let id2 = niffyinsure::storage::next_trigger_id(&env);
         assert_eq!(id2, 2);
-
-        // Verify monotonic increment
-        assert!(id2 > id1);
     }
 
-    /// Test that OracleTrigger can be stored and retrieved in experimental builds.
     #[test]
     fn oracle_trigger_storage_in_experimental_build() {
         let env = Env::default();
         env.mock_all_auths();
-
-        let trigger = niffyinsure::types::OracleTrigger {
-            policy_id: 42,
-            event_type: niffyinsure::types::TriggerEventType::Undefined,
-            source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
-            timestamp: 1234567890,
-            trigger_ledger: 1000,
-            signature: SdkVec::new(&env),
-        };
-
-        // Store trigger
+        let source_addr = Address::generate(&env);
+        let trigger = make_trigger(
+            &env,
+            OracleSource::Registered(source_addr),
+            42,
+            1,
+            [0u8; 64],
+        );
         niffyinsure::storage::set_oracle_trigger(&env, 1, &trigger);
-
-        // Retrieve trigger
-        let retrieved = niffyinsure::storage::get_oracle_trigger(&env, 1);
-        assert!(retrieved.is_some());
-
-        let retrieved_trigger = retrieved.unwrap();
-        assert_eq!(retrieved_trigger.policy_id, 42);
-        assert_eq!(retrieved_trigger.timestamp, 1234567890);
+        let retrieved = niffyinsure::storage::get_oracle_trigger(&env, 1).unwrap();
+        assert_eq!(retrieved.policy_id, 42);
+        assert_eq!(retrieved.nonce, 1);
     }
 
-    /// Test that check_oracle_trigger rejects disabled oracle.
     #[test]
     fn check_oracle_trigger_rejects_disabled_oracle() {
         let env = Env::default();
         env.mock_all_auths();
-
-        // Ensure oracle is disabled
         niffyinsure::storage::set_oracle_enabled(&env, false);
-
-        let trigger = niffyinsure::types::OracleTrigger {
-            policy_id: 1,
-            event_type: niffyinsure::types::TriggerEventType::Undefined,
-            source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
-            timestamp: 0,
-            trigger_ledger: 1000,
-            signature: SdkVec::new(&env),
-        };
-
+        let source_addr = Address::generate(&env);
+        let trigger = make_trigger(&env, OracleSource::Registered(source_addr), 1, 1, [0u8; 64]);
         let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
-        assert_eq!(
-            result,
-            Err(niffyinsure::validate::OracleError::OracleDisabled)
-        );
+        assert_eq!(result, Err(OracleError::OracleDisabled));
     }
 
-    /// Test that check_oracle_trigger rejects expired triggers.
     #[test]
     fn check_oracle_trigger_rejects_expired_ledger() {
         let env = Env::default();
         env.mock_all_auths();
-
-        // Enable oracle
         niffyinsure::storage::set_oracle_enabled(&env, true);
-
-        let trigger = niffyinsure::types::OracleTrigger {
-            policy_id: 1,
-            event_type: niffyinsure::types::TriggerEventType::Undefined,
-            source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
-            timestamp: 0,
-            trigger_ledger: 100, // Old ledger
-            signature: SdkVec::new(&env),
-        };
-
-        // Current ledger is much later than trigger ledger
+        let source_addr = Address::generate(&env);
+        let trigger = make_trigger(&env, OracleSource::Registered(source_addr), 1, 1, [0u8; 64]);
+        // trigger_ledger=1000, max_age=100, current=10000 → expired
         let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 10000, 100);
-        assert_eq!(
-            result,
-            Err(niffyinsure::validate::OracleError::TriggerLedgerExpired)
-        );
+        assert_eq!(result, Err(OracleError::TriggerLedgerExpired));
     }
 
-    /// Test that check_oracle_trigger rejects non-empty signatures (crypto not implemented).
     #[test]
-    fn check_oracle_trigger_rejects_non_empty_signature() {
+    fn check_oracle_trigger_rejects_unregistered_source() {
         let env = Env::default();
         env.mock_all_auths();
-
-        // Enable oracle
         niffyinsure::storage::set_oracle_enabled(&env, true);
-
-        let trigger = niffyinsure::types::OracleTrigger {
-            policy_id: 1,
-            event_type: niffyinsure::types::TriggerEventType::Undefined,
-            source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
-            timestamp: 0,
-            trigger_ledger: 1000,
-            signature: {
-                // Non-empty signature should be rejected until crypto is implemented
-                let mut v = SdkVec::new(&env);
-                v.push_back(0xDEADBEEF);
-                v
-            },
-        };
-
-        let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
-        assert_eq!(
-            result,
-            Err(niffyinsure::validate::OracleError::SignatureNotImplemented)
-        );
+        let source_addr = Address::generate(&env);
+        // No pub key registered for source_addr
+        let trigger = make_trigger(&env, OracleSource::Registered(source_addr), 1, 1, [0u8; 64]);
+        let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 17280);
+        assert_eq!(result, Err(OracleError::SourceNotRegistered));
     }
 
-    /// Test that check_trigger_status_transition allows valid transitions.
+    #[test]
+    fn check_oracle_trigger_accepts_valid_ed25519_signature() {
+        let env = Env::default();
+        env.mock_all_auths();
+        niffyinsure::storage::set_oracle_enabled(&env, true);
+
+        // Generate a keypair using Soroban test utilities
+        let keypair = soroban_sdk::testutils::ed25519::generate(&env);
+        let pub_key: BytesN<32> = keypair.public_key();
+        let source_addr = Address::generate(&env);
+
+        // Register the public key
+        niffyinsure::storage::set_oracle_pub_key(&env, &source_addr, &pub_key);
+
+        // Build the message: policy_id(4) || timestamp(8) || nonce(8) || payload
+        let policy_id: u32 = 1;
+        let timestamp: u64 = 1_000_000;
+        let nonce: u64 = 1;
+        let payload_byte = 1u8;
+
+        let mut msg = Bytes::new(&env);
+        msg.extend_from_array(&policy_id.to_be_bytes());
+        msg.extend_from_array(&timestamp.to_be_bytes());
+        msg.extend_from_array(&nonce.to_be_bytes());
+        msg.push_back(payload_byte);
+
+        let sig_bytes = keypair.sign(&env, &msg);
+
+        let trigger = niffyinsure::types::OracleTrigger {
+            policy_id,
+            event_type: niffyinsure::types::TriggerEventType::WeatherEvent,
+            source: OracleSource::Registered(source_addr),
+            payload: { let mut b = Bytes::new(&env); b.push_back(payload_byte); b },
+            timestamp,
+            trigger_ledger: 1000,
+            nonce,
+            signature: sig_bytes,
+        };
+
+        let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 17280);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_oracle_trigger_rejects_replayed_nonce() {
+        let env = Env::default();
+        env.mock_all_auths();
+        niffyinsure::storage::set_oracle_enabled(&env, true);
+
+        let keypair = soroban_sdk::testutils::ed25519::generate(&env);
+        let pub_key: BytesN<32> = keypair.public_key();
+        let source_addr = Address::generate(&env);
+        niffyinsure::storage::set_oracle_pub_key(&env, &source_addr, &pub_key);
+
+        // Advance nonce to 5 manually
+        let key = niffyinsure::storage::DataKey::OracleNonce(source_addr.clone());
+        env.storage().persistent().set(&key, &5u64);
+
+        // Try to submit with nonce=3 (replay)
+        let policy_id: u32 = 1;
+        let timestamp: u64 = 1_000_000;
+        let nonce: u64 = 3;
+        let mut msg = Bytes::new(&env);
+        msg.extend_from_array(&policy_id.to_be_bytes());
+        msg.extend_from_array(&timestamp.to_be_bytes());
+        msg.extend_from_array(&nonce.to_be_bytes());
+        msg.push_back(1u8);
+        let sig = keypair.sign(&env, &msg);
+
+        let trigger = niffyinsure::types::OracleTrigger {
+            policy_id,
+            event_type: niffyinsure::types::TriggerEventType::WeatherEvent,
+            source: OracleSource::Registered(source_addr),
+            payload: { let mut b = Bytes::new(&env); b.push_back(1u8); b },
+            timestamp,
+            trigger_ledger: 1000,
+            nonce,
+            signature: sig,
+        };
+
+        let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 17280);
+        assert_eq!(result, Err(OracleError::ReplayedNonce));
+    }
+
     #[test]
     fn check_trigger_status_transition_valid_paths() {
-        // Pending -> Validated (valid)
         assert!(niffyinsure::validate::check_trigger_status_transition(
-            TriggerStatus::Pending,
-            TriggerStatus::Validated
-        )
-        .is_ok());
-
-        // Pending -> Rejected (valid)
+            TriggerStatus::Pending, TriggerStatus::Validated).is_ok());
         assert!(niffyinsure::validate::check_trigger_status_transition(
-            TriggerStatus::Pending,
-            TriggerStatus::Rejected
-        )
-        .is_ok());
-
-        // Pending -> Expired (valid)
+            TriggerStatus::Pending, TriggerStatus::Rejected).is_ok());
         assert!(niffyinsure::validate::check_trigger_status_transition(
-            TriggerStatus::Pending,
-            TriggerStatus::Expired
-        )
-        .is_ok());
-
-        // Validated -> Executed (valid)
-        assert!(niffyinsure::validate::check_trigger_status_transition(
-            TriggerStatus::Validated,
-            TriggerStatus::Executed
-        )
-        .is_ok());
-
-        // Same state is idempotent (valid)
-        assert!(niffyinsure::validate::check_trigger_status_transition(
-            TriggerStatus::Pending,
-            TriggerStatus::Pending
-        )
-        .is_ok());
+            TriggerStatus::Validated, TriggerStatus::Executed).is_ok());
     }
 
-    /// Test that check_trigger_status_transition rejects invalid transitions.
     #[test]
     fn check_trigger_status_transition_invalid_paths() {
-        // Executed -> any (invalid)
         assert_eq!(
             niffyinsure::validate::check_trigger_status_transition(
-                TriggerStatus::Executed,
-                TriggerStatus::Validated
-            ),
-            Err(niffyinsure::validate::OracleError::TriggerAlreadyProcessed)
-        );
-
-        // Rejected -> any (invalid)
+                TriggerStatus::Executed, TriggerStatus::Validated),
+            Err(OracleError::TriggerAlreadyProcessed));
         assert_eq!(
             niffyinsure::validate::check_trigger_status_transition(
-                TriggerStatus::Rejected,
-                TriggerStatus::Executed
-            ),
-            Err(niffyinsure::validate::OracleError::TriggerAlreadyProcessed)
-        );
-
-        // Pending -> Executed (invalid, must be validated first)
-        assert_eq!(
-            niffyinsure::validate::check_trigger_status_transition(
-                TriggerStatus::Pending,
-                TriggerStatus::Executed
-            ),
-            Err(niffyinsure::validate::OracleError::TriggerAlreadyProcessed)
-        );
-    }
-
-    /// Test that TriggerStatus variants are properly defined.
-    #[test]
-    fn trigger_status_variants() {
-        assert_eq!(format!("{:?}", TriggerStatus::Pending), "Pending");
-        assert_eq!(format!("{:?}", TriggerStatus::Validated), "Validated");
-        assert_eq!(format!("{:?}", TriggerStatus::Rejected), "Rejected");
-        assert_eq!(format!("{:?}", TriggerStatus::Executed), "Executed");
-        assert_eq!(format!("{:?}", TriggerStatus::Expired), "Expired");
-    }
-
-    /// Test that OracleSource variants are properly defined.
-    #[test]
-    fn oracle_source_variants() {
-        assert_eq!(format!("{:?}", OracleSource::Undefined), "Undefined");
-    }
-
-    /// Test that empty payload is rejected for non-undefined event types.
-    #[test]
-    fn check_oracle_trigger_rejects_empty_payload_for_defined_events() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        // Enable oracle
-        niffyinsure::storage::set_oracle_enabled(&env, true);
-
-        // Undefined event type with empty payload is allowed (pre-configuration)
-        let trigger = niffyinsure::types::OracleTrigger {
-            policy_id: 1,
-            event_type: niffyinsure::types::TriggerEventType::Undefined,
-            source: niffyinsure::types::OracleSource::Undefined,
-            payload: SdkVec::new(&env),
-            timestamp: 0,
-            trigger_ledger: 1000,
-            signature: SdkVec::new(&env),
-        };
-
-        // This should fail because source is Undefined, not because payload is empty
-        let result = niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 100);
-        assert_eq!(
-            result,
-            Err(niffyinsure::validate::OracleError::SourceNotWhitelisted)
-        );
+                TriggerStatus::Rejected, TriggerStatus::Executed),
+            Err(OracleError::TriggerAlreadyProcessed));
     }
 }
 

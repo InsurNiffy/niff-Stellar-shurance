@@ -27,7 +27,8 @@ use soroban_sdk::{contract, contractevent, contractimpl, panic_with_error, Addre
 #[contract]
 pub struct NiffyInsure;
 pub use admin::{AdminAction, AdminError, PendingAdminAction};
-pub use policy::{PolicyError, RenewalError};
+pub use policy::RenewalError;
+pub use policy_lifecycle::PolicyError;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[soroban_sdk::contracterror]
@@ -171,6 +172,7 @@ impl NiffyInsure {
             49 => validate::Error::VotingDurationOutOfBounds,
             51 => validate::Error::VoterSnapshotExpired,
             52 => validate::Error::NonceMismatch,
+            53 => validate::Error::ClaimNotProcessing,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -212,26 +214,6 @@ impl NiffyInsure {
     ) -> Result<u64, validate::Error> {
         holder.require_auth();
         claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence, expected_nonce)
-    }
-
-    /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
-    pub fn withdraw_claim(
-        env: Env,
-        claimant: Address,
-        claim_id: u64,
-    ) -> Result<(), validate::Error> {
-        claimant.require_auth();
-        claim::withdraw_claim(&env, &claimant, claim_id)
-    }
-
-    /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
-    pub fn withdraw_claim(
-        env: Env,
-        claimant: Address,
-        claim_id: u64,
-    ) -> Result<(), validate::Error> {
-        claimant.require_auth();
-        claim::withdraw_claim(&env, &claimant, claim_id)
     }
 
     /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).

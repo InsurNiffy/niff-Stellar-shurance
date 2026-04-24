@@ -332,13 +332,22 @@ pub fn file_claim(
         evidence_hashes.push_back(e.hash.clone());
     }
 
+    // Stable fingerprint: XOR-fold the first 8 bytes of each evidence hash.
+    let image_hash: u64 = evidence_hashes.iter().fold(0u64, |acc, h| {
+        let mut v = 0u64;
+        for i in 0u32..8u32 {
+            v = (v << 8) | (h.get(i).unwrap_or(0) as u64);
+        }
+        acc ^ v
+    });
+
     ClaimFiled {
         claim_id,
         holder: holder.clone(),
         policy_id,
         claim_amount: amount,
         deductible: deductible_snapshot,
-        image_hash: hash_image_urls(image_urls),
+        image_hash,
     }
     .publish(env);
 
@@ -513,10 +522,7 @@ pub fn refresh_snapshot(env: &Env, claim_id: u64) -> Result<(), Error> {
 /// Window check: `now > claim.voting_deadline_ledger` (see `ledger::is_claim_past_voting_deadline`).
 /// Uses the **participation quorum** and per-claim `quorum_bps` snapshot (see module helpers).
 /// If quorum is met, plurality decides; if not, **Rejected** (no quorum).
-pub fn finalize_claim(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
-    // Check pause: finalization is blocked if claims_paused is true
-    storage::assert_claims_not_paused(env);
-
+fn finalize_claim_inner(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
     if claim.status.is_terminal() {
