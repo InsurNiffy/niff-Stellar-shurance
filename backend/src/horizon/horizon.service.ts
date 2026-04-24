@@ -9,6 +9,7 @@ import { getNetworkConfig } from "../config/network.config";
 import { filterHorizonOperations } from "./filters/horizon-field.filter";
 import { HorizonTransactionResponse } from "./dto/horizon-transaction.dto";
 import { RedisService } from "../cache/redis.service";
+import { HorizonRateLimitService } from "../horizon-rate-limit.service";
 
 const CACHE_TTL_SECONDS = 15;
 const CACHE_PREFIX = "horizon:txcache:";
@@ -26,6 +27,7 @@ export class HorizonService {
   constructor(
     private readonly config: ConfigService,
     private readonly redis: RedisService,
+    private readonly rateLimitService: HorizonRateLimitService,
   ) {
     // Resolve from network config (supports per-network overrides)
     const networkConfig = getNetworkConfig();
@@ -79,33 +81,42 @@ export class HorizonService {
   }
 
   private async fetchFromHorizon(url: string): Promise<Record<string, unknown>> {
-    let res: Response;
     try {
-      res = await fetch(url, {
-        headers: {
-          Accept: "application/json",
-          // Never forward client-supplied headers here — Horizon API keys
-          // are injected server-side only if HORIZON_API_KEY is set.
-          ...(this.getHorizonApiKey()
-            ? { Authorization: `Bearer ${this.getHorizonApiKey()}` }
-            : {}),
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+        // Never forward client-supplied headers here — Horizon API keys
+        // are injected server-side only if HORIZON_API_KEY is set.
+        ...(this.getHorizonApiKey()
+          ? { Authorization: `Bearer ${this.getHorizonApiKey()}` }
+          : {}),
+      };
+
+      // Use rate limiting service for Horizon API calls
+      const response = await this.rateLimitService.executeWithRateLimit<Record<string, unknown>>(
+        url,
+        {
+          headers,
+          signal: AbortSignal.timeout(10_000),
         },
-        signal: AbortSignal.timeout(10_000),
-      });
+        'horizon-api'
+      );
+
+      this.logger.debug(`Horizon request successful: ${url}`);
+      return response;
     } catch (err) {
       this.logger.error(`Horizon fetch failed: ${err}`);
+      
+      // Handle rate limit specific errors
+      if (err instanceof Error) {
+        if (err.message.includes('queue is full')) {
+          throw new BadGatewayException("Horizon rate limit queue is full - please try again later");
+        }
+        if (err.message.includes('timed out')) {
+          throw new BadGatewayException("Horizon request timed out");
+        }
+      }
+      
       throw new BadGatewayException("Horizon is unreachable");
-    }
-
-    if (!res.ok) {
-      this.logger.warn(`Horizon returned ${res.status}`);
-      throw new BadGatewayException(`Horizon returned status ${res.status}`);
-    }
-
-    try {
-      return (await res.json()) as Record<string, unknown>;
-    } catch {
-      throw new BadGatewayException("Horizon returned non-JSON response");
     }
   }
 

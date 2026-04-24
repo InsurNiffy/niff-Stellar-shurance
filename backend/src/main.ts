@@ -14,6 +14,9 @@ import type { Request, Response, NextFunction } from "express";
 import { loadNetworkConfig } from "./config/network.config";
 import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
 import { validateEnvironment } from "./config/env.validation";
+import { MetricsService } from './metrics/metrics.service';
+import { setRedisCacheMetricsService } from './redis/cache';
+import { setRedisClientMetricsService } from './redis/client';
 import { AppLoggerService } from "./common/logger/app-logger.service";
 import { EnvironmentVariables } from "./config/env.definitions";
 
@@ -60,6 +63,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const appLogger = app.get(AppLoggerService);
   app.useLogger(appLogger);
+
+  // Wire MetricsService into Redis standalone modules (lazy injection)
+  const metricsService = app.get(MetricsService);
+  setRedisCacheMetricsService(metricsService);
+  setRedisClientMetricsService(metricsService);
 
   // Global prefix
   app.setGlobalPrefix("api");

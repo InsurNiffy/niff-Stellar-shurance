@@ -40,7 +40,21 @@ jobs:
   backup:
     name: Encrypted pg_dump to S3
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: restore_drill
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d restore_drill"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       AWS_REGION: ${{ vars.BACKUP_AWS_REGION }}
       BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
@@ -50,6 +64,10 @@ jobs:
       BACKUP_SKIP_PRUNE: ${{ github.event.inputs.skip_prune == 'true' && '1' || '0' }}
       BACKUP_OUTPUT_DIR: ${{ github.workspace }}/backup-artifacts
       DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      RESTORE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/restore_drill
+      RESTORE_ENVIRONMENT: ${{ vars.BACKUP_ENVIRONMENT || 'production' }}
+      DRILL_OUTPUT_DIR: ${{ github.workspace }}/backup-artifacts/restore-drill
+      RESTORE_MAX_ROW_COUNT_DELTA: ${{ vars.BACKUP_RESTORE_MAX_ROW_COUNT_DELTA || '0' }}
       BACKUP_KMS_KEY_ID: ${{ secrets.BACKUP_KMS_KEY_ID }}
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +94,13 @@ jobs:
 
       - name: Run backup
         run: ./scripts/ops/postgres-backup.sh
+
+      - name: Select backup object for restore verification
+        run: |
+          echo "BACKUP_OBJECT_KEY=$(jq -r '.dumpObjectKey' backup-artifacts/postgres.metadata.json)" >> "$GITHUB_ENV"
+
+      - name: Verify backup with restore drill
+        run: ./scripts/ops/postgres-restore-drill.sh
 
       - name: Upload backup metadata artifact
         if: always()

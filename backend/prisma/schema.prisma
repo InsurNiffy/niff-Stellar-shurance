@@ -141,6 +141,16 @@ model LedgerGapAlertDedup {
   @@map("ledger_gap_alert_dedup")
 }
 
+model NotificationPreference {
+  userId                  String   @id
+  renewalRemindersEnabled Boolean? @map("renewal_reminders_enabled")
+  claimUpdatesEnabled     Boolean? @map("claim_updates_enabled")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_preferences")
+}
+
 model RawEvent {
   id              Int      @id @default(autoincrement())
   txHash          String

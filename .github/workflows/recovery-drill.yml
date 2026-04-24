@@ -28,10 +28,16 @@ on:
         description: 'Optional replay anchor ledger; defaults to DRILL_REINDEX_FROM_LEDGER'
         required: false
         type: string
+      create_ticket:
+        description: 'Create a GitHub issue with drill evidence and follow-ups'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
   id-token: write
+  issues: write
 
 concurrency:
   group: recovery-drill-${{ vars.BACKUP_ENVIRONMENT || 'production' }}
@@ -80,6 +86,7 @@ jobs:
       SOROBAN_RPC_URL: ${{ vars.DRILL_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org' }}
       CONTRACT_ID: ${{ vars.DRILL_CONTRACT_ID }}
       DRILL_REINDEX_FROM_LEDGER: ${{ github.event.inputs.from_ledger || vars.DRILL_REINDEX_FROM_LEDGER }}
+      CREATE_DRILL_TICKET: ${{ github.event_name == 'schedule' || github.event.inputs.create_ticket == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,6 +136,36 @@ jobs:
             --network "${STELLAR_NETWORK}" \
             --output "${DRILL_OUTPUT_DIR}/indexer-replay.json"
 
+      - name: Write recovery drill ticket
+        if: always()
+        run: |
+          mkdir -p "$DRILL_OUTPUT_DIR"
+          cat > "$DRILL_OUTPUT_DIR/recovery-drill-ticket.md" <<EOF
+          # Recovery Drill Ticket
+
+          ## Metadata
+
+          - Environment: ${RESTORE_ENVIRONMENT}
+          - Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - Backup object key: ${BACKUP_OBJECT_KEY:-latest under ${BACKUP_PREFIX}/${RESTORE_ENVIRONMENT}}
+          - Restore database target: ${RESTORE_DATABASE_URL}
+          - Replay anchor ledger N: ${DRILL_REINDEX_FROM_LEDGER}
+
+          ## Validation
+
+          - Restore job status: ${{ job.status }}
+          - Evidence artifact: recovery-drill-${GITHUB_RUN_ID}
+          - Replay output: indexer-replay.json
+
+          ## Follow-up actions
+
+          - File any failed validation, IAM, replay, or timing gaps as follow-up issues within 48 hours.
+          - Update docs/ops/recovery-drill-log.md with observed RTO/RPO after reviewing this artifact.
+          EOF
+
+          cat "$DRILL_OUTPUT_DIR/recovery-drill-ticket.md" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload drill evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -136,6 +173,17 @@ jobs:
           name: recovery-drill-${{ github.run_id }}
           path: drill-evidence/
           retention-days: 365
+
+      - name: File recovery drill ticket
+        if: always() && env.CREATE_DRILL_TICKET == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Recovery drill ${RESTORE_ENVIRONMENT} ${GITHUB_RUN_ID} - ${{ job.status }}"
+          gh issue create \
+            --title "$title" \
+            --label "Stellar Wave" \
+            --body-file "$DRILL_OUTPUT_DIR/recovery-drill-ticket.md"
 
       - name: Notify ops on drill failure
         if: failure() && secrets.OPS_ALERT_WEBHOOK_URL != ''

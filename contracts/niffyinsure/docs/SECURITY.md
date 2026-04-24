@@ -3,48 +3,64 @@
 ## Admin Privileges & Centralization Risks
 
 ### Two-Step Confirmation (Protected Operations)
-High-risk operations require **two-step confirmation** to mitigate compromised key risks:
 
-| Operation | Description | Entrypoint Flow |
-|-----------|-------------|-----------------|
-| **Treasury Rotation** | Change treasury address for premium collection/payouts | `propose_admin_action(TreasuryRotation { new_treasury })` → `confirm_admin_action()` |
-| **Token Sweep** | Emergency recovery of misplaced tokens | `propose_admin_action(TokenSweep { asset, recipient, amount, reason_code })` → `confirm_admin_action()` |
+High-risk operations require **two-step confirmation** to reduce the blast radius of a
+compromised admin key. A single signature cannot execute these operations.
 
-- **Proposer**: Current admin authorizes proposal.
-- **Confirmer**: Second signer (≠ proposer) authorizes execution within configurable window (~30min default).
-- **Expiry**: Automatic; emits `AdminActionExpired`, inert against replay.
-- **Audit Trail**: `AdminActionProposed` / `AdminActionConfirmed` / `AdminActionExpired` events.
+| Operation | Entrypoint Flow |
+|-----------|-----------------|
+| **Treasury Rotation** | `propose_admin_action(AdminAction::treasury_rotation(new_treasury))` → `confirm_admin_action(confirmer)` |
+| **Token Sweep** | `propose_admin_action(AdminAction::token_sweep(asset, recipient, amount, reason_code))` → `confirm_admin_action(confirmer)` |
 
-### Single-Step Fallback (Lower Risk)
+**How it works:**
+
+1. **Proposer** — current admin calls `propose_admin_action`. Stores `PendingAdminAction { proposer, action, expiry_ledger }` and emits `AdminActionProposed`.
+2. **Confirmer** — a *different* address calls `confirm_admin_action(confirmer)`. The confirmer must not equal the proposer (`CannotSelfConfirm`). On success, the action executes and `AdminActionConfirmed` is emitted.
+3. **Expiry** — if `confirm_admin_action` is called after `expiry_ledger`, the pending entry is cleared, `AdminActionExpired` is emitted, and the call reverts. Expired proposals are inert and cannot be replayed.
+4. **Cancellation** — the proposer (current admin) may call `cancel_admin_action` at any time before expiry to withdraw the proposal.
+
+**Configurable window:** `AdminActionWindowLedgers` (default 100 ledgers ≈ 8 min at 5 s/ledger).
+Admin can adjust via `propose_admin_action` + `confirm_admin_action` on a config-change action.
+
+### Single-Step Operations (Lower Risk)
+
 These remain single-admin for MVP operational needs:
 
-| Operation | Description | Risk Mitigation |
-|-----------|-------------|-----------------|
-| `set_token` | Update default policy token | Multisig admin |
-| `drain` | Emergency treasury withdrawal | Protected balance checks |
-| `pause`/`unpause` | Emergency protocol halt | Granular flags, events |
-| Config setters (quorum, evidence count, etc.) | Parameter tuning | Bounded values, events |
+| Operation | Risk Mitigation |
+|-----------|-----------------|
+| `set_token` | Multisig admin recommended |
+| `drain` | Protected balance checks |
+| `pause` / `unpause` | Granular flags, events |
+| Config setters (quorum, evidence count, etc.) | Bounded values, events |
 
 ### Admin Rotation
+
 Independent two-step: `propose_admin` → `accept_admin` / `cancel_admin`.
 
 ## Multisig Recommendation
+
 - **Production**: 3-of-5 Stellar multisig as admin.
-- **Roles**: Proposer (hot key), Confirmers (cold keys).
-- **Recovery**: Documented in ops runbook.
+- **Proposer role**: hot key (online, lower threshold).
+- **Confirmer role**: cold key (offline, higher threshold).
+- **Recovery**: documented in ops runbook.
 
 ## Storage Security
-- **TTL Management**: Instance bumped on mutations; persistent extended to ~1yr.
-- **Protected Balances**: Sweeps validate unpaid claims preserved.
-- **Allowlists**: Sweep assets explicitly approved.
 
-## Event Schema
-All admin actions emit structured events for indexer monitoring:
-- Topics: `["niffyinsure", "admin_*"]`
-- Full dictionary: EVENT_DICTIONARY.md
+- **TTL Management**: Instance bumped on mutations; persistent extended to ~1 yr.
+- **Protected Balances**: Sweeps validate unpaid approved claims are preserved.
+- **Allowlists**: Sweep assets must be explicitly approved.
+
+## Audit Events
+
+All admin actions emit structured events for indexer / NestJS monitoring:
+
+| Event | Topics | Emitted when |
+|-------|--------|--------------|
+| `AdminActionProposed` | `["niffyinsure", "admin_action_proposed"]` | Proposal stored |
+| `AdminActionConfirmed` | `["niffyinsure", "admin_action_confirmed"]` | Action executed |
+| `AdminActionExpired` | `["niffyinsure", "admin_action_expired"]` | Confirm called after expiry |
 
 ## Audit Status
+
 - [ ] Internal review complete
 - [ ] External audit pending
-
-Last Updated: $(date)

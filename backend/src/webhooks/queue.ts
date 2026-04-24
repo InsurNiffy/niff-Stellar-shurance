@@ -1,37 +1,24 @@
 /**
- * Webhook job queue.
+ * Webhook job queue — #409
  *
- * This module provides a BullMQ-compatible interface backed by an in-memory
- * queue. When Redis becomes available, replace the `InMemoryQueue` class with
- * a real BullMQ `Queue` instance — the controller and tests are unchanged.
+ * Uses BullMQ backed by Redis for:
+ *   - Persistent job storage (survives restarts)
+ *   - Exponential backoff retry (up to MAX_ATTEMPTS)
+ *   - Delivery tracking per webhook endpoint
+ *   - Admin visibility via getDeliveryHistory() / retryFailed()
  *
- * BullMQ swap-in (production):
- * ─────────────────────────────
- *   import { Queue } from "bullmq";
- *   export const webhookQueue = new Queue("webhooks", {
- *     connection: { host: process.env.REDIS_HOST, port: 6379 },
- *     defaultJobOptions: {
- *       attempts: 5,
- *       backoff: { type: "exponential", delay: 1000 },
- *       removeOnComplete: true,
- *       removeOnFail: false,
- *     },
- *   });
+ * Retry semantics:
+ *   - Max attempts : 5
+ *   - Backoff      : exponential, starting at 1 s (1s, 2s, 4s, 8s, 16s)
+ *   - Dead-letter  : jobs exhausting retries move to BullMQ "failed" set
  *
- * Retry semantics (documented)
- * ─────────────────────────────
- * - Max attempts: 5
- * - Backoff: exponential starting at 1 s (1s, 2s, 4s, 8s, 16s)
- * - Dead-letter: jobs that exhaust retries move to the "failed" set
- * - Observability: BullMQ exposes job counts via queue.getJobCounts()
- *   and integrates with Bull Board / Arena for a dashboard UI
- *
- * In-memory queue observability
- * ──────────────────────────────
- * GET /webhooks/queue/stats returns { pending, processed, failed } counts.
+ * Key naming: uses getBullMQConnection() which does NOT carry the global
+ * ioredis keyPrefix — BullMQ manages its own key namespace.
  */
 
-import { WebhookJob } from "../types/webhook";
+import { Queue, Worker, Job, QueueEvents } from 'bullmq';
+import { getBullMQConnection } from '../redis/client';
+import { WebhookJob } from '../types/webhook';
 
 export interface QueueStats {
   pending: number;
@@ -39,60 +26,116 @@ export interface QueueStats {
   failed: number;
 }
 
-type JobHandler = (job: WebhookJob) => Promise<void>;
-
-class InMemoryQueue {
-  private pending: WebhookJob[] = [];
-  private _processed = 0;
-  private _failed = 0;
-  private handler: JobHandler | null = null;
-
-  /** Enqueue a job. Returns immediately (non-blocking). */
-  async add(name: string, data: WebhookJob): Promise<void> {
-    this.pending.push(data);
-    // Process asynchronously so the HTTP response is sent first
-    Promise.resolve().then(() => this._process());
-  }
-
-  /** Register a job processor (mirrors BullMQ Worker pattern). */
-  process(handler: JobHandler): void {
-    this.handler = handler;
-  }
-
-  private async _process(): Promise<void> {
-    const job = this.pending.shift();
-    if (!job || !this.handler) return;
-    try {
-      await this.handler(job);
-      this._processed++;
-    } catch {
-      this._failed++;
-    }
-  }
-
-  stats(): QueueStats {
-    return {
-      pending: this.pending.length,
-      processed: this._processed,
-      failed: this._failed,
-    };
-  }
-
-  /** Reset — used in tests only. */
-  _reset(): void {
-    this.pending = [];
-    this._processed = 0;
-    this._failed = 0;
-  }
+export interface DeliveryRecord {
+  jobId: string;
+  provider: string;
+  eventType: string;
+  idempotencyKey: string;
+  receivedAt: number;
+  status: 'completed' | 'failed' | 'active' | 'waiting';
+  attemptsMade: number;
+  failedReason?: string;
 }
 
-export const webhookQueue = new InMemoryQueue();
+const QUEUE_NAME = 'webhooks';
+const MAX_ATTEMPTS = 5;
 
-// Default no-op processor — replace with real business logic
-webhookQueue.process(async (job) => {
-  // TODO: dispatch job.eventType to domain handlers
-  // e.g. if (job.provider === "stripe" && job.eventType === "payment_intent.succeeded") { ... }
-  console.log(
-    `[webhook-queue] processing provider=${job.provider} event=${job.eventType} key=${job.idempotencyKey}`
-  );
+// ── Queue ─────────────────────────────────────────────────────────────────────
+
+export const webhookQueue = new Queue<WebhookJob>(QUEUE_NAME, {
+  connection: getBullMQConnection(),
+  defaultJobOptions: {
+    attempts: MAX_ATTEMPTS,
+    backoff: { type: 'exponential', delay: 1_000 },
+    removeOnComplete: { count: 500 },  // keep last 500 completed for history
+    removeOnFail: false,               // retain failed jobs for admin retry
+  },
 });
+
+// ── Worker ────────────────────────────────────────────────────────────────────
+
+export const webhookWorker = new Worker<WebhookJob>(
+  QUEUE_NAME,
+  async (job: Job<WebhookJob>) => {
+    const { provider, eventType, idempotencyKey } = job.data;
+    // Domain handlers are registered via webhookWorker.on('completed') or
+    // by replacing this processor. Extend here for provider-specific logic.
+    console.log(
+      `[webhook-queue] processing provider=${provider} event=${eventType} key=${idempotencyKey} attempt=${job.attemptsMade + 1}/${MAX_ATTEMPTS}`,
+    );
+  },
+  {
+    connection: getBullMQConnection(),
+    concurrency: 5,
+  },
+);
+
+webhookWorker.on('failed', (job, err) => {
+  if (job) {
+    console.error(
+      `[webhook-queue] job failed provider=${job.data.provider} key=${job.data.idempotencyKey} attempts=${job.attemptsMade}`,
+      err.message,
+    );
+  }
+});
+
+// ── Delivery history ──────────────────────────────────────────────────────────
+
+/**
+ * Returns recent delivery records across all states.
+ * Used by the admin endpoint GET /webhooks/deliveries.
+ */
+export async function getDeliveryHistory(limit = 100): Promise<DeliveryRecord[]> {
+  const [completed, failed, active, waiting] = await Promise.all([
+    webhookQueue.getCompleted(0, limit),
+    webhookQueue.getFailed(0, limit),
+    webhookQueue.getActive(0, limit),
+    webhookQueue.getWaiting(0, limit),
+  ]);
+
+  const toRecord = (job: Job<WebhookJob>, status: DeliveryRecord['status']): DeliveryRecord => ({
+    jobId: String(job.id),
+    provider: job.data.provider,
+    eventType: job.data.eventType,
+    idempotencyKey: job.data.idempotencyKey,
+    receivedAt: job.data.receivedAt,
+    status,
+    attemptsMade: job.attemptsMade,
+    failedReason: job.failedReason,
+  });
+
+  return [
+    ...completed.map((j) => toRecord(j, 'completed')),
+    ...failed.map((j) => toRecord(j, 'failed')),
+    ...active.map((j) => toRecord(j, 'active')),
+    ...waiting.map((j) => toRecord(j, 'waiting')),
+  ].slice(0, limit);
+}
+
+/**
+ * Manually retry a specific failed job by ID.
+ * Used by the admin endpoint POST /webhooks/deliveries/:jobId/retry.
+ */
+export async function retryFailedJob(jobId: string): Promise<void> {
+  const job = await webhookQueue.getJob(jobId);
+  if (!job) throw new Error(`Job ${jobId} not found`);
+  await job.retry();
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+
+export async function getQueueStats(): Promise<QueueStats> {
+  const counts = await webhookQueue.getJobCounts('waiting', 'active', 'completed', 'failed');
+  return {
+    pending: (counts.waiting ?? 0) + (counts.active ?? 0),
+    processed: counts.completed ?? 0,
+    failed: counts.failed ?? 0,
+  };
+}
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+export async function closeWebhookQueue(): Promise<void> {
+  await webhookWorker.close();
+  await webhookQueue.close();
+}

@@ -52,6 +52,14 @@ export class MetricsService implements OnModuleInit {
   /** Number of requests waiting for a free connection. */
   readonly dbPoolWaiting: client.Gauge<string>;
 
+  // ── Redis cache metrics ───────────────────────────────────────────────────
+  /** Total cache hits by key namespace (policy, claim, idempotency, …). */
+  readonly redisCacheHits: client.Counter<string>;
+  /** Total cache misses by key namespace. */
+  readonly redisCacheMisses: client.Counter<string>;
+  /** Total Redis connection errors. */
+  readonly redisConnectionErrors: client.Counter<string>;
+
   constructor() {
     this.registry = new client.Registry();
     this.registry.setDefaultLabels({ app: 'niffyinsure-api' });
@@ -185,6 +193,26 @@ export class MetricsService implements OnModuleInit {
       help: 'Number of requests waiting for a free DB connection',
       registers: [this.registry],
     });
+
+    this.redisCacheHits = new client.Counter({
+      name: 'redis_cache_hits_total',
+      help: 'Total Redis cache hits by key namespace',
+      labelNames: ['namespace'],
+      registers: [this.registry],
+    });
+
+    this.redisCacheMisses = new client.Counter({
+      name: 'redis_cache_misses_total',
+      help: 'Total Redis cache misses by key namespace',
+      labelNames: ['namespace'],
+      registers: [this.registry],
+    });
+
+    this.redisConnectionErrors = new client.Counter({
+      name: 'redis_connection_errors_total',
+      help: 'Total Redis connection errors',
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -278,6 +306,18 @@ export class MetricsService implements OnModuleInit {
     this.dbPoolActive.set(opts.active);
     this.dbPoolIdle.set(opts.idle);
     this.dbPoolWaiting.set(opts.waiting);
+  }
+
+  recordRedisCache(result: 'hit' | 'miss', namespace: string) {
+    if (result === 'hit') {
+      this.redisCacheHits.inc({ namespace });
+    } else {
+      this.redisCacheMisses.inc({ namespace });
+    }
+  }
+
+  recordRedisConnectionError() {
+    this.redisConnectionErrors.inc();
   }
 
   async getMetrics(): Promise<string> {

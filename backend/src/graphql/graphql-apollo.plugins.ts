@@ -1,5 +1,5 @@
 import type { ApolloServerPlugin } from '@apollo/server';
-import type { GraphQLFormattedError, GraphQLError } from 'graphql';
+import { GraphQLError, type GraphQLFormattedError } from 'graphql';
 import { AppLoggerService } from '../common/logger/app-logger.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { GraphqlOperationGuardService } from './graphql-operation-guard.service';
@@ -43,22 +43,22 @@ export function createGraphqlSecurityPlugin(
         },
         async didEncounterErrors(context) {
           hadErrors = true;
-          for (const error of context.errors) {
-            error.extensions = {
-              ...error.extensions,
-              ...(requestId ? { requestId } : {}),
-            };
-          }
+          void context;
         },
       };
     },
   };
 }
 
-export function formatGraphqlError(error: GraphQLError): GraphQLFormattedError {
+export function formatGraphqlError(
+  formattedError: GraphQLFormattedError,
+  error: unknown,
+): GraphQLFormattedError {
+  const graphQLError = error instanceof GraphQLError ? error : undefined;
   const response =
-    typeof error.extensions?.response === 'object' && error.extensions.response !== null
-      ? (error.extensions.response as { statusCode?: number; message?: unknown })
+    typeof graphQLError?.extensions?.response === 'object' &&
+    graphQLError.extensions.response !== null
+      ? (graphQLError.extensions.response as { statusCode?: number; message?: unknown })
       : undefined;
   const responseCode = response?.statusCode;
   const responseMessage =
@@ -68,15 +68,18 @@ export function formatGraphqlError(error: GraphQLError): GraphQLFormattedError {
         ? response.message.join(', ')
         : undefined;
   const code =
-    typeof error.extensions?.code === 'string' && error.extensions.code !== 'INTERNAL_SERVER_ERROR'
-      ? error.extensions.code
+    typeof formattedError.extensions?.code === 'string' &&
+    formattedError.extensions.code !== 'INTERNAL_SERVER_ERROR'
+      ? formattedError.extensions.code
       : mapStatusCodeToGraphqlCode(responseCode);
   const requestId =
-    typeof error.extensions?.requestId === 'string' ? error.extensions.requestId : undefined;
+    typeof formattedError.extensions?.requestId === 'string'
+      ? formattedError.extensions.requestId
+      : undefined;
 
   if (code === 'GRAPHQL_PARSE_FAILED' || code === 'GRAPHQL_VALIDATION_FAILED') {
     return {
-      message: error.message,
+      message: formattedError.message,
       extensions: {
         code,
         ...(requestId ? { requestId } : {}),
@@ -87,6 +90,10 @@ export function formatGraphqlError(error: GraphQLError): GraphQLFormattedError {
   if (
     code === 'GRAPHQL_DEPTH_LIMIT' ||
     code === 'GRAPHQL_COMPLEXITY_LIMIT' ||
+    code === 'PERSISTED_QUERY_REQUIRED' ||
+    code === 'PERSISTED_QUERY_NOT_ALLOWLISTED' ||
+    code === 'PERSISTED_QUERY_NOT_FOUND' ||
+    code === 'PERSISTED_QUERY_HASH_MISMATCH' ||
     code === 'UNAUTHENTICATED' ||
     code === 'FORBIDDEN' ||
     code === 'BAD_USER_INPUT' ||
@@ -95,7 +102,7 @@ export function formatGraphqlError(error: GraphQLError): GraphQLFormattedError {
     code === 'TOO_MANY_REQUESTS'
   ) {
     return {
-      message: responseMessage ?? error.message,
+      message: responseMessage ?? formattedError.message,
       extensions: {
         code,
         ...(requestId ? { requestId } : {}),

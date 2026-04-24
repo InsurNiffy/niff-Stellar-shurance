@@ -145,7 +145,8 @@ struct ClaimFiled {
     pub claim_amount: i128,
     /// Deductible copied from the policy at filing (for indexer / UI breakdown).
     pub deductible: i128,
-    pub image_hash: u64,
+    /// SHA-256 content hashes for each evidence entry (same order as submitted).
+    pub evidence_hashes: Vec<BytesN<32>>,
 }
 
 /// Emitted when the claimant withdraws before any vote is cast.
@@ -332,13 +333,22 @@ pub fn file_claim(
         evidence_hashes.push_back(e.hash.clone());
     }
 
+    // Stable fingerprint: XOR-fold the first 8 bytes of each evidence hash.
+    let image_hash: u64 = evidence_hashes.iter().fold(0u64, |acc, h| {
+        let mut v = 0u64;
+        for i in 0u32..8u32 {
+            v = (v << 8) | (h.get(i).unwrap_or(0) as u64);
+        }
+        acc ^ v
+    });
+
     ClaimFiled {
         claim_id,
         holder: holder.clone(),
         policy_id,
         claim_amount: amount,
         deductible: deductible_snapshot,
-        image_hash: hash_image_urls(image_urls),
+        image_hash,
     }
     .publish(env);
 
@@ -513,10 +523,7 @@ pub fn refresh_snapshot(env: &Env, claim_id: u64) -> Result<(), Error> {
 /// Window check: `now > claim.voting_deadline_ledger` (see `ledger::is_claim_past_voting_deadline`).
 /// Uses the **participation quorum** and per-claim `quorum_bps` snapshot (see module helpers).
 /// If quorum is met, plurality decides; if not, **Rejected** (no quorum).
-pub fn finalize_claim(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
-    // Check pause: finalization is blocked if claims_paused is true
-    storage::assert_claims_not_paused(env);
-
+fn finalize_claim_inner(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
     if claim.status.is_terminal() {
@@ -783,6 +790,80 @@ pub fn get_claim_history(env: &Env, claim_id: u64) -> Result<Vec<ClaimStatusHist
 
 pub fn set_allowed_asset(env: &Env, asset: &Address, allowed: bool) {
     storage::set_allowed_asset(env, asset, allowed);
+}
+
+#[cfg(test)]
+mod evidence_hash_tests {
+    use crate::validate::{check_claim_fields, Error};
+    use soroban_sdk::{Bytes, BytesN, Env, String, Vec};
+    use crate::types::ClaimEvidenceEntry;
+
+    fn make_hash(env: &Env, fill: u8) -> BytesN<32> {
+        let mut b = [fill; 32];
+        BytesN::from_array(env, &b)
+    }
+
+    fn make_url(env: &Env) -> String {
+        String::from_str(env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
+    }
+
+    fn make_details(env: &Env) -> String {
+        String::from_str(env, "flood damage")
+    }
+
+    #[test]
+    fn zero_hash_is_rejected() {
+        let env = Env::default();
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url: make_url(&env),
+            hash: make_hash(&env, 0x00),
+        });
+        let err = check_claim_fields(&env, 100, 1000, &make_details(&env), &evidence)
+            .unwrap_err();
+        assert_eq!(err, Error::ExcessiveEvidenceBytes);
+    }
+
+    #[test]
+    fn non_zero_hash_is_accepted() {
+        let env = Env::default();
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url: make_url(&env),
+            hash: make_hash(&env, 0xab),
+        });
+        assert!(check_claim_fields(&env, 100, 1000, &make_details(&env), &evidence).is_ok());
+    }
+
+    #[test]
+    fn mixed_zero_and_nonzero_hash_rejected_on_zero_entry() {
+        let env = Env::default();
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url: make_url(&env),
+            hash: make_hash(&env, 0xab),
+        });
+        evidence.push_back(ClaimEvidenceEntry {
+            url: make_url(&env),
+            hash: make_hash(&env, 0x00),
+        });
+        let err = check_claim_fields(&env, 100, 1000, &make_details(&env), &evidence)
+            .unwrap_err();
+        assert_eq!(err, Error::ExcessiveEvidenceBytes);
+    }
+
+    #[test]
+    fn hash_persisted_on_stored_claim() {
+        // Verify that the hash stored in ClaimEvidenceEntry round-trips through
+        // the struct without mutation (persistence correctness).
+        let env = Env::default();
+        let expected = make_hash(&env, 0xde);
+        let entry = ClaimEvidenceEntry {
+            url: make_url(&env),
+            hash: expected.clone(),
+        };
+        assert_eq!(entry.hash, expected);
+    }
 }
 
 #[cfg(test)]

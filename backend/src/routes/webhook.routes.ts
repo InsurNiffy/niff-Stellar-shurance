@@ -11,7 +11,12 @@
  */
 
 import { Router, Request, Response, NextFunction } from "express";
-import { handleWebhook, getQueueStats } from "../controllers/webhook.controller";
+import {
+  handleWebhook,
+  getQueueStatsHandler,
+  getDeliveryHistoryHandler,
+  retryDeliveryHandler,
+} from "../controllers/webhook.controller";
 
 const router = Router();
 
@@ -75,6 +80,43 @@ router.post("/:provider", captureRawBody, handleWebhook);
  *       200:
  *         description: Current queue counts
  */
-router.get("/queue/stats", getQueueStats);
+router.get("/queue/stats", getQueueStatsHandler);
+
+/**
+ * @openapi
+ * /webhooks/deliveries:
+ *   get:
+ *     summary: Admin — recent delivery history (completed, failed, active, waiting)
+ *     tags: [Webhooks]
+ *     security: [{ adminToken: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 100, maximum: 500 }
+ *     responses:
+ *       200:
+ *         description: Array of DeliveryRecord
+ */
+router.get("/deliveries", getDeliveryHistoryHandler);
+
+/**
+ * @openapi
+ * /webhooks/deliveries/{jobId}/retry:
+ *   post:
+ *     summary: Admin — manually retry a failed delivery
+ *     tags: [Webhooks]
+ *     security: [{ adminToken: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: jobId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Job re-queued
+ *       404:
+ *         description: Job not found
+ */
+router.post("/deliveries/:jobId/retry", retryDeliveryHandler);
 
 export default router;

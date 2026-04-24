@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 import { AdminController } from './admin.controller';
@@ -255,6 +255,143 @@ describe('AdminController', () => {
       const guard = new AdminRoleGuard();
       const ctx = toExecutionContext('viewer');
       expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+    });
+  });
+});
+
+// ── Admin Role Guard Enforcement Tests ───────────────────────────────────────
+
+describe('Admin Role Guard Enforcement', () => {
+  let controller: AdminController;
+  let module: TestingModule;
+
+  const mockReq = (role?: string, authenticated = true) =>
+    ({
+      user: authenticated ? { walletAddress: 'GTEST', role } : undefined,
+      ip: '127.0.0.1',
+    } as unknown as Request);
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    
+    module = await Test.createTestingModule({
+      controllers: [AdminController],
+      providers: [
+        { provide: AdminService, useValue: mockAdminService },
+        { provide: AdminPoliciesService, useValue: mockAdminPoliciesService },
+        { provide: AuditService, useValue: mockAuditService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: PrivacyService, useValue: { handleRequest: jest.fn(), listRequests: jest.fn() } },
+        { provide: RateLimitService, useValue: { setLimit: jest.fn(), getCounterState: jest.fn(), enableOverride: jest.fn(), disableOverride: jest.fn() } },
+        { provide: QueueMonitorService, useValue: mockQueueMonitorService },
+        {
+          provide: 'SolvencyMonitoringService',
+          useValue: mockSolvencyMonitoringService,
+        },
+      ],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AdminRoleGuard)
+      .useValue({
+        canActivate: (ctx: ExecutionContext) => {
+          const req = ctx.switchToHttp().getRequest();
+          if (!req.user) {
+            throw new UnauthorizedException('Authentication required');
+          }
+          if (req.user.role !== 'admin') {
+            throw new ForbiddenException('Admin role required');
+          }
+          return true;
+        },
+      })
+      .compile();
+
+    controller = module.get<AdminController>(AdminController);
+    (controller as unknown as Record<string, unknown>)['solvencyMonitoringService'] =
+      mockSolvencyMonitoringService;
+  });
+
+  afterAll(async () => {
+    await module.close();
+  });
+
+  describe('Authentication Required', () => {
+    it('should reject unauthenticated requests to POST /admin/reindex', async () => {
+      await expect(controller.reindex({ fromLedger: 500 }, mockReq(undefined, false)))
+        .rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should reject unauthenticated requests to GET /admin/audits', async () => {
+      await expect(controller.getAudits({}, mockReq(undefined, false)))
+        .rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should reject unauthenticated requests to GET /admin/policies', async () => {
+      await expect(controller.getAdminPolicies('false', mockReq(undefined, false)))
+        .rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should reject unauthenticated requests to GET /admin/feature-flags', async () => {
+      await expect(controller.listFeatureFlags(mockReq(undefined, false)))
+        .rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('Admin Role Required', () => {
+    it('should reject non-admin users from POST /admin/reindex', async () => {
+      await expect(controller.reindex({ fromLedger: 500 }, mockReq('user')))
+        .rejects.toThrow(ForbiddenException);
+    });
+
+    it('should reject non-admin users from GET /admin/audits', async () => {
+      await expect(controller.getAudits({}, mockReq('user')))
+        .rejects.toThrow(ForbiddenException);
+    });
+
+    it('should reject non-admin users from GET /admin/policies', async () => {
+      await expect(controller.getAdminPolicies('false', mockReq('user')))
+        .rejects.toThrow(ForbiddenException);
+    });
+
+    it('should reject non-admin users from GET /admin/feature-flags', async () => {
+      await expect(controller.listFeatureFlags(mockReq('user')))
+        .rejects.toThrow(ForbiddenException);
+    });
+
+    it('should reject staff users without admin role', async () => {
+      const staffReq = mockReq('staff');
+      
+      await expect(controller.reindex({ fromLedger: 500 }, staffReq))
+        .rejects.toThrow(ForbiddenException);
+      
+      await expect(controller.getAudits({}, staffReq))
+        .rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('Admin Access Success', () => {
+    it('should allow admin users to access all endpoints', async () => {
+      const adminReq = mockReq('admin');
+      
+      // Mock successful responses
+      mockAdminService.enqueueReindex.mockResolvedValue('job-123');
+      mockAdminService.getFeatureFlags.mockResolvedValue([]);
+      mockAdminPoliciesService.listPolicies.mockResolvedValue({ policies: [] });
+      mockAuditService.findAll.mockResolvedValue({ items: [], pagination: {} });
+      
+      // These should not throw
+      await expect(controller.reindex({ fromLedger: 500 }, adminReq))
+        .resolves.toBeDefined();
+      
+      await expect(controller.getAudits({}, adminReq))
+        .resolves.toBeDefined();
+      
+      await expect(controller.listFeatureFlags(adminReq))
+        .resolves.toBeDefined();
+      
+      await expect(controller.getAdminPolicies('false', adminReq))
+        .resolves.toBeDefined();
     });
   });
 });

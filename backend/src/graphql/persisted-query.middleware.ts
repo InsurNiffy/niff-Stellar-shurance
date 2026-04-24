@@ -19,19 +19,45 @@ type PersistedQueryRequest = Request & {
 @Injectable()
 export class PersistedQueryMiddleware implements NestMiddleware {
   private readonly enabled: boolean;
+  private readonly required: boolean;
+  private readonly registrationEnabled: boolean;
+  private readonly allowlist: Set<string>;
   private readonly ttlSeconds: number;
 
   constructor(
     private readonly redis: RedisService,
     config: ConfigService,
   ) {
+    const isProduction = config.get<string>('NODE_ENV') === 'production';
     this.enabled = config.get<boolean>('GRAPHQL_PERSISTED_QUERIES_ENABLED', false);
+    this.required = config.get<boolean>(
+      'GRAPHQL_PERSISTED_QUERIES_REQUIRED',
+      isProduction,
+    );
+    this.registrationEnabled = config.get<boolean>(
+      'GRAPHQL_PERSISTED_QUERY_REGISTRATION_ENABLED',
+      !isProduction,
+    );
+    this.allowlist = new Set(
+      (config.get<string>('GRAPHQL_PERSISTED_QUERY_ALLOWLIST', '') ?? '')
+        .split(',')
+        .map((hash) => hash.trim())
+        .filter(Boolean),
+    );
     this.ttlSeconds = config.get<number>('GRAPHQL_PERSISTED_QUERY_TTL_SECONDS', 86_400);
   }
 
   async use(req: PersistedQueryRequest, res: Response, next: NextFunction): Promise<void> {
     const persistedQuery = req.body?.extensions?.persistedQuery;
     if (!persistedQuery?.sha256Hash) {
+      if (this.required) {
+        this.writeError(
+          res,
+          'Persisted query hash is required',
+          'PERSISTED_QUERY_REQUIRED',
+        );
+        return;
+      }
       return next();
     }
 
@@ -47,6 +73,15 @@ export class PersistedQueryMiddleware implements NestMiddleware {
       const actualHash = createHash('sha256').update(query).digest('hex');
       if (actualHash !== persistedQuery.sha256Hash) {
         this.writeError(res, 'Persisted query hash mismatch', 'PERSISTED_QUERY_HASH_MISMATCH');
+        return;
+      }
+
+      if (!this.registrationEnabled && !this.allowlist.has(persistedQuery.sha256Hash)) {
+        this.writeError(
+          res,
+          'Persisted query hash is not allowlisted',
+          'PERSISTED_QUERY_NOT_ALLOWLISTED',
+        );
         return;
       }
 

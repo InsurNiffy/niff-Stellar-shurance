@@ -210,6 +210,43 @@ Signature: ___________________
 Date: ___________________
 ```
 
+---
+
+## Legal Review Sign-Off Record
+
+> **Instructions:** Complete one row per jurisdiction before mainnet deployment.
+> Link each signed document to the internal compliance repository.
+> This table must be reviewed and re-signed annually or after any material
+> regulatory change.
+
+| Jurisdiction | Reviewer Name | Title | Firm / In-house | Date | Status | Document Link |
+|---|---|---|---|---|---|---|
+| United States | [NAME] | [TITLE] | [FIRM] | [DATE] | ⬜ Pending | [LINK] |
+| European Union | [NAME] | [TITLE] | [FIRM] | [DATE] | ⬜ Pending | [LINK] |
+| United Kingdom | [NAME] | [TITLE] | [FIRM] | [DATE] | ⬜ Pending | [LINK] |
+| [Other] | [NAME] | [TITLE] | [FIRM] | [DATE] | ⬜ Pending | [LINK] |
+
+**Status key:** ⬜ Pending · ✅ Approved · ❌ Not Approved · 🔄 Under Review
+
+### Conditions & Restrictions
+
+Record any jurisdiction-specific conditions imposed by legal counsel:
+
+| Jurisdiction | Condition | Owner | Due Date | Status |
+|---|---|---|---|---|
+| [JURISDICTION] | [CONDITION] | [OWNER] | [DATE] | ⬜ Open |
+
+### Regulatory Classification
+
+| Jurisdiction | Classification | Basis | Notes |
+|---|---|---|---|
+| United States | Administrative recovery of non-custodial funds | Not a "transmission" of user funds; no MSB/MTL trigger | Confirm with FinCEN guidance |
+| European Union | Protocol maintenance operation under MiCA Art. 76 | Not a payment service; no PSD2 trigger | Confirm with local counsel |
+| United Kingdom | Administrative function under FCA cryptoasset framework | Not a regulated payment; confirm consumer duty compliance | FCA registration may apply |
+
+> ⚠️ The classifications above are preliminary guidance only. Each deployment
+> **MUST** obtain independent legal opinion for its specific operational context.
+
 ### Ongoing Compliance
 
 #### Audit & Reporting

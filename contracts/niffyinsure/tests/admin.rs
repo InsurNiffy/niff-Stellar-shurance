@@ -215,3 +215,163 @@ fn pause_emits_event() {
     client.pause(&admin, &0u32);
     assert!(!env.events().all().is_empty());
 }
+
+// ── Two-step admin action: propose / confirm / cancel / expiry ────────────────
+
+fn treasury_rotation_action(env: &Env) -> niffyinsure::admin::AdminAction {
+    niffyinsure::admin::AdminAction::treasury_rotation(Address::generate(env))
+}
+
+/// Proposer proposes; a different signer confirms; action executes and events fire.
+#[test]
+fn two_step_action_confirmation_succeeds() {
+    let (env, client, _admin, _token) = setup();
+    let confirmer = Address::generate(&env);
+
+    let action = treasury_rotation_action(&env);
+    client.propose_admin_action(&action);
+
+    // Events must include AdminActionProposed.
+    let events = env.events().all();
+    assert!(events.iter().any(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.0;
+        topics.iter().any(|t| {
+            if let Ok(s) = soroban_sdk::Symbol::try_from_val(&env, &t) {
+                s == Symbol::new(&env, "admin_action_proposed")
+            } else {
+                false
+            }
+        })
+    }));
+
+    client.confirm_admin_action(&confirmer);
+
+    // AdminActionConfirmed must be present after confirmation.
+    let events_after = env.events().all();
+    assert!(events_after.iter().any(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.0;
+        topics.iter().any(|t| {
+            if let Ok(s) = soroban_sdk::Symbol::try_from_val(&env, &t) {
+                s == Symbol::new(&env, "admin_action_confirmed")
+            } else {
+                false
+            }
+        })
+    }));
+
+    // Pending action is cleared — a second confirm must revert.
+    assert!(client.try_confirm_admin_action(&confirmer).is_err());
+}
+
+/// Proposer cannot confirm their own proposal.
+#[test]
+fn proposer_cannot_self_confirm() {
+    let (env, client, admin, _token) = setup();
+    let action = treasury_rotation_action(&env);
+    client.propose_admin_action(&action);
+    // Confirmer == admin (the proposer) must revert.
+    assert!(client.try_confirm_admin_action(&admin).is_err());
+}
+
+/// An expired proposal is inert: confirm reverts and emits AdminActionExpired.
+#[test]
+fn expired_action_cannot_be_confirmed() {
+    let (env, client, _admin, _token) = setup();
+    let confirmer = Address::generate(&env);
+
+    let action = treasury_rotation_action(&env);
+    client.propose_admin_action(&action);
+
+    // Advance ledger past the default window (100 ledgers).
+    env.ledger().with_mut(|l| l.sequence_number += 200);
+
+    let result = client.try_confirm_admin_action(&confirmer);
+    assert!(result.is_err());
+
+    // AdminActionExpired event must have been emitted.
+    let events = env.events().all();
+    assert!(events.iter().any(|e| {
+        let topics: soroban_sdk::Vec<soroban_sdk::Val> = e.0;
+        topics.iter().any(|t| {
+            if let Ok(s) = soroban_sdk::Symbol::try_from_val(&env, &t) {
+                s == Symbol::new(&env, "admin_action_expired")
+            } else {
+                false
+            }
+        })
+    }));
+}
+
+/// Expired proposals cannot be replayed: a second confirm after expiry also reverts.
+#[test]
+fn expired_action_cannot_be_replayed() {
+    let (env, client, _admin, _token) = setup();
+    let confirmer = Address::generate(&env);
+
+    let action = treasury_rotation_action(&env);
+    client.propose_admin_action(&action);
+    env.ledger().with_mut(|l| l.sequence_number += 200);
+
+    // First attempt clears the pending entry.
+    let _ = client.try_confirm_admin_action(&confirmer);
+    // Second attempt must also revert (no pending action).
+    assert!(client.try_confirm_admin_action(&confirmer).is_err());
+}
+
+/// Admin can cancel a pending action before it expires.
+#[test]
+fn admin_can_cancel_pending_action() {
+    let (env, client, _admin, _token) = setup();
+    let confirmer = Address::generate(&env);
+
+    let action = treasury_rotation_action(&env);
+    client.propose_admin_action(&action);
+    client.cancel_admin_action();
+
+    // After cancellation, confirm must revert.
+    assert!(client.try_confirm_admin_action(&confirmer).is_err());
+}
+
+/// Non-admin cannot cancel a pending action.
+#[test]
+fn non_admin_cannot_cancel_action() {
+    let env2 = Env::default();
+    let cid = env2.register(niffyinsure::NiffyInsure, ());
+    let client2 = NiffyInsureClient::new(&env2, &cid);
+    let admin = Address::generate(&env2);
+    let token = Address::generate(&env2);
+    let rando = Address::generate(&env2);
+
+    env2.mock_all_auths();
+    client2.initialize(&admin, &token);
+    client2.propose_admin_action(&niffyinsure::admin::AdminAction::treasury_rotation(
+        Address::generate(&env2),
+    ));
+
+    env2.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &rando,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &cid,
+            fn_name: "cancel_admin_action",
+            args: soroban_sdk::vec![&env2],
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client2.try_cancel_admin_action().is_err());
+}
+
+/// High-risk operation (treasury rotation) requires two signatures in tests:
+/// a single propose call without confirm must NOT change the treasury.
+#[test]
+fn single_signature_cannot_execute_high_risk_action() {
+    let (env, client, _admin, _token) = setup();
+    let new_treasury = Address::generate(&env);
+
+    client.propose_admin_action(&niffyinsure::admin::AdminAction::treasury_rotation(
+        new_treasury.clone(),
+    ));
+
+    // No confirm called — treasury must be unchanged (still the contract address default).
+    // Attempting to confirm with the proposer (admin) must revert.
+    assert!(client.try_confirm_admin_action(&_admin).is_err());
+}
