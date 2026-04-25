@@ -103,7 +103,7 @@ impl NiffyInsure {
     /// Matches funds available for `process_claim` for the configured default asset.
     pub fn get_treasury_balance(env: Env) -> i128 {
         let token_addr = storage::get_token(&env);
-        crate::token::get_balance(&env, &token_addr)
+        crate::token::get_treasury_balance(&env, &token_addr)
     }
 
     /// Pure quote path: reads config and computes premium only.

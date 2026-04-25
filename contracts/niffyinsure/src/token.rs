@@ -55,6 +55,13 @@ pub fn get_balance(env: &Env, asset: &Address) -> i128 {
     client.balance(&env.current_contract_address())
 }
 
+/// Get the current balance of `asset` held by the configured treasury address.
+pub fn get_treasury_balance(env: &Env, asset: &Address) -> i128 {
+    let treasury = storage::get_treasury(env);
+    let client = token::TokenClient::new(env, asset);
+    client.balance(&treasury)
+}
+
 /// Emergency sweep: transfer `amount` of `asset` from contract to `recipient`.
 /// Used only by admin sweep_token() function with strict validation.
 /// Defence-in-depth: caller must have already validated asset allowlist.
