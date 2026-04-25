@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@apollo/server": "^4.13.0",
-    "@bull-board/api": "^6.20.6",
+    "@bull-board/api": "^7.0.0",
     "@bull-board/express": "^6.20.6",
     "@nestjs-modules/ioredis": "^2.1.0",
     "@nestjs/apollo": "^13.3.0",
