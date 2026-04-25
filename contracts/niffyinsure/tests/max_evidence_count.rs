@@ -1,4 +1,4 @@
-//! Tests for #199: admin-configurable max evidence count per claim.
+//! Tests for #323: admin-configurable max evidence count per claim.
 //!
 //! Verifies:
 //! - Default falls back to compile-time IMAGE_URLS_MAX (5)
@@ -79,9 +79,12 @@ fn setter_emits_max_evidence_count_updated_event() {
 #[test]
 fn setter_rejects_value_above_hard_max() {
     let (_env, client, _, _) = setup();
-    assert!(client
-        .try_admin_set_max_evidence_count(&(MAX_EVIDENCE_COUNT_HARD_MAX + 1))
-        .is_err());
+    let result = client.try_admin_set_max_evidence_count(&(MAX_EVIDENCE_COUNT_HARD_MAX + 1));
+    assert!(result.is_err());
+    assert!(
+        soroban_sdk::testutils::arbitrary::std::format!("{:?}", result)
+            .contains("MaxEvidenceCountOutOfBounds")
+    );
 }
 
 #[test]

@@ -3,7 +3,7 @@ use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Map, Stri
 // ── Field size limits ─────────────────────────────────────────────────────────
 pub const DETAILS_MAX_LEN: u32 = 256;
 pub const IMAGE_URL_MAX_LEN: u32 = 128;
-/// Max evidence attachments per claim (URL + SHA-256 commitment each).
+/// Default evidence attachment limit when admin config is unset.
 pub const IMAGE_URLS_MAX: u32 = 5;
 pub const REASON_MAX_LEN: u32 = 128;
 pub const SAFETY_SCORE_MAX: u32 = 100;

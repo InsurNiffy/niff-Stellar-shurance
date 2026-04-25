@@ -51,6 +51,8 @@ pub enum AdminError {
     InvalidAdminActionWindow = 115,
     /// Sweep notice period has not elapsed since the proposal.
     SweepNoticePeriodActive = 116,
+    /// Max evidence count outside the absolute hard bound.
+    MaxEvidenceCountOutOfBounds = 117,
 }
 
 /// Payload for a treasury-rotation proposal.
@@ -558,7 +560,7 @@ pub struct MaxEvidenceCountUpdated {
 pub fn set_max_evidence_count(env: &Env, new_count: u32) -> Result<(), AdminError> {
     let _admin = require_admin(env);
     if new_count > storage::MAX_EVIDENCE_COUNT_HARD_MAX {
-        return Err(AdminError::InvalidAddress); // reuse closest available error
+        return Err(AdminError::MaxEvidenceCountOutOfBounds);
     }
     let old_count = storage::get_max_evidence_count(env);
     storage::set_max_evidence_count(env, new_count);
