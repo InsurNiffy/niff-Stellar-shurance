@@ -114,7 +114,7 @@ jobs:
         run: ./scripts/ops/postgres-restore-drill.sh
 
       - name: Set up Node.js for replay
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
