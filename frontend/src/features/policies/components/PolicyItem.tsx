@@ -5,11 +5,11 @@ import { SECS_PER_LEDGER } from '@/lib/schemas/vote';
 import { PendingBadge } from '@/components/ui/PendingBadge';
 import type { OptimisticStatus } from '@/lib/optimistic';
 import type { PolicyDto } from '../api';
+import { formatTokenAmount } from '@/lib/formatTokenAmount';
 
-/** Format stroops → locale-aware XLM string (7 decimals). */
-export function formatXlm(stroops: string, locale?: string): string {
-  const n = Number(stroops) / 1e7;
-  return n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 7 });
+/** Format minor-unit token amount using decimals from the coverage_summary manifest. */
+export function formatXlm(stroops: string, locale?: string, decimals = 7): string {
+  return formatTokenAmount(stroops, decimals, locale ?? 'en-US')
 }
 
 /** Approximate wall-clock seconds remaining from ledgers_remaining. */

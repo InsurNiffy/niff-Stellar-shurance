@@ -28,6 +28,7 @@ import { PolicyAPI, PolicyError, getPolicyErrorMessage, getExplorerUrl } from '@
 import { QuoteAPI, QuoteError, getQuoteErrorMessage } from '@/lib/api/quote'
 import { PolicyInitiationSchema, PolicyInitiationData, Transaction, Policy } from '@/lib/schemas/policy'
 import type { QuoteResponse } from '@/lib/schemas/quote'
+import { formatTokenAmount } from '@/lib/formatTokenAmount'
 
 
 interface PolicyInitiationProps {
@@ -196,13 +197,10 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
     })
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'decimal',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount)
-  }
+  // quote.premium and quote.coverageAmount come from the API as minor-unit strings;
+  // decimals are read from the quote response (default 7 for XLM/stroops)
+  const tokenDecimals = (quote as QuoteResponse & { decimals?: number })?.decimals ?? 7
+  const fmt = (raw: string | number) => formatTokenAmount(String(raw), tokenDecimals)
 
   const renderStepContent = () => {
     switch (currentStep) {
@@ -220,13 +218,13 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                   <div>
                     <Label>Premium</Label>
                     <div className="text-2xl font-bold text-primary">
-                      {formatCurrency(quote.premium)} XLM
+                      {fmt(quote.premium)} XLM
                     </div>
                   </div>
                   <div>
                     <Label>Coverage Amount</Label>
                     <div className="text-2xl font-bold">
-                      {formatCurrency(quote.coverageAmount)} XLM
+                      {fmt(quote.coverageAmount)} XLM
                     </div>
                   </div>
                 </div>
@@ -361,7 +359,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span>Premium:</span>
-                      <span className="font-semibold">{quote ? formatCurrency(quote.premium) : '0'} XLM</span>
+                      <span className="font-semibold">{quote ? fmt(quote.premium) : '0'} XLM</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Network Fee:</span>
@@ -369,7 +367,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                     </div>
                     <div className="flex justify-between border-t pt-2">
                       <span>Total:</span>
-                      <span className="font-semibold">{quote ? formatCurrency(quote.premium + 0.01) : '0.01'} XLM</span>
+                      <span className="font-semibold">{quote ? fmt(quote.premium + 0.01) : '0.01'} XLM</span>
                     </div>
                   </div>
                 </div>
@@ -451,7 +449,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
 
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium">Coverage:</span>
-                      <span className="font-semibold">{formatCurrency(policy.coverageAmount)} XLM</span>
+                      <span className="font-semibold">{fmt(policy.coverageAmount)} XLM</span>
                     </div>
 
                     <div className="flex items-center justify-between">

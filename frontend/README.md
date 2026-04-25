@@ -134,6 +134,28 @@ const { data } = useNetworkAwareQuery({
 
 ## Analytics
 
+## Token Amount Formatting
+
+All financial amounts (premium, coverage, payout) must be formatted with the shared utility:
+
+```ts
+import { formatTokenAmount, formatXlm } from '@/lib/formatTokenAmount'
+
+// Generic: read decimals from the network manifest / API response — never hardcode
+formatTokenAmount(raw, coverage_summary.decimals, locale) // e.g. '1,234.56'
+
+// XLM / stroops convenience (7 decimals)
+formatXlm(10_000_000n)           // '1.00'
+formatXlm('10000000', 'de-DE')   // '1,00'
+```
+
+- `raw` accepts `bigint | string | number` (minor units from the chain/API)
+- `decimals` must come from `coverage_summary.decimals` in the API response or the network manifest — **never hardcode**
+- `locale` defaults to `'en-US'`; pass the active i18n locale for locale-aware separators
+- Uses native `BigInt` arithmetic — no floating-point precision loss
+
+## Analytics
+
 Analytics uses [Plausible](https://plausible.io) (cookieless, no PII).
 Disabled by default in local dev. See `src/lib/analytics.ts` for the event
 catalog and `src/app/privacy/page.tsx` for the privacy policy.

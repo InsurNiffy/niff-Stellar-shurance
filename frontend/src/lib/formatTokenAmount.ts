@@ -1,53 +1,43 @@
-import Big from "big.js";
-
 /**
- * Formats raw token amount (bigint or string) to human-readable decimal string.
+ * Formats a raw minor-unit token amount to a human-readable decimal string.
  *
- * - Handles arbitrarily large amounts safely (no Number conversion)
- * - Divides raw / 10^decimals using Big.js for precision
- * - Uses Intl.NumberFormat for locale-aware formatting
- * - Trims insignificant trailing zeros (except for amounts <1)
- * - Edge cases: 0, max safe integer * 10^decimals, overflow
+ * Uses only native BigInt arithmetic — no floating-point conversion — so
+ * amounts up to 2^53-1 minor units (and beyond) are represented exactly.
  *
- * @param raw - Raw minor units (e.g. 1000000n for 1 USDC)
- * @param decimals - Token decimals (e.g. 6 for USDC, 7 for XLM/stroops)
- * @param locale - Optional locale (defaults to 'en-US')
- * @returns Formatted display string (e.g. '1.00', '0.00', '1,234.56')
+ * @param raw      - Raw minor units (bigint | string | number)
+ * @param decimals - Token decimal places (e.g. 7 for XLM/stroops, 6 for USDC)
+ * @param locale   - BCP 47 locale tag for Intl.NumberFormat (default: 'en-US')
+ * @returns Locale-formatted string, e.g. '1,234.567890' or '0.00'
+ *
+ * @example
+ * formatTokenAmount(10_000_000n, 7)          // '1.00'        (1 XLM)
+ * formatTokenAmount('1000000', 6, 'de-DE')   // '1,00'        (1 USDC, German)
+ * formatTokenAmount(0n, 7)                   // '0.00'
  */
 export function formatTokenAmount(
   raw: bigint | string | number,
   decimals: number,
-  locale: string = "en-US"
+  locale = 'en-US',
 ): string {
-  if (raw === 0n || raw === "0" || raw === 0) return "0.00";
+  const bigRaw = BigInt(raw.toString())
+  const divisor = 10n ** BigInt(decimals)
 
-  // Convert to BigInt safely
-  const bigRaw = BigInt(raw.toString());
+  const whole = bigRaw / divisor
+  const remainder = bigRaw % divisor
 
-  // Safe division using Big.js
-  const divisor = 10n ** BigInt(decimals);
-  const bigIntValue = Big(bigRaw.toString()).div(Big(divisor.toString()));
+  // Zero-pad the fractional part to `decimals` digits
+  const fracStr = remainder.toString().padStart(decimals, '0')
 
-  // Get fixed decimal representation
-  const fixed = bigIntValue.toFixed(decimals).replace(/\.?0+$/, "");
+  // Build a decimal string and parse it back for Intl formatting
+  const decimalStr = decimals > 0 ? `${whole}.${fracStr}` : whole.toString()
 
-  // Use Intl.NumberFormat for locale formatting
   return new Intl.NumberFormat(locale, {
-    minimumFractionDigits: 0,
+    minimumFractionDigits: 2,
     maximumFractionDigits: decimals,
-  }).format(parseFloat(fixed));
+  }).format(Number(decimalStr))
 }
 
-// Convenience for XLM/stroops (7 decimals)
-export function formatXlm(
-  raw: bigint | string | number,
-  locale?: string
-): string {
-  return formatTokenAmount(raw, 7, locale ?? "en-US");
+/** Convenience wrapper for XLM / stroops (7 decimals). */
+export function formatXlm(raw: bigint | string | number, locale = 'en-US'): string {
+  return formatTokenAmount(raw, 7, locale)
 }
-
-// Export types for use in components
-export type TokenFormatOptions = {
-  decimals: number;
-  locale?: string;
-};

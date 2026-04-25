@@ -6,6 +6,7 @@ import { useWallet } from '@/hooks/use-wallet';
 import { getConfig } from '@/config/env';
 import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@/components/ui';
 import { AlertTriangle, ArrowLeft } from 'lucide-react';
+import { formatTokenAmount } from '@/lib/formatTokenAmount';
 
 const { apiUrl: API_BASE_URL } = getConfig();
 
@@ -173,12 +174,16 @@ export default function PolicyDetailPage() {
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground">Coverage (stroops)</p>
-              <p className="font-mono">{policy.coverage_summary.coverage_amount}</p>
+              <p className="text-muted-foreground">Coverage</p>
+              <p className="font-mono">
+                {formatTokenAmount(policy.coverage_summary.coverage_amount, policy.coverage_summary.decimals)} {policy.coverage_summary.currency}
+              </p>
             </div>
             <div>
-              <p className="text-muted-foreground">Premium (stroops)</p>
-              <p className="font-mono">{policy.coverage_summary.premium_amount}</p>
+              <p className="text-muted-foreground">Premium</p>
+              <p className="font-mono">
+                {formatTokenAmount(policy.coverage_summary.premium_amount, policy.coverage_summary.decimals)} {policy.coverage_summary.currency}
+              </p>
             </div>
             <div className="sm:col-span-2">
               <p className="text-muted-foreground">Payout beneficiary</p>

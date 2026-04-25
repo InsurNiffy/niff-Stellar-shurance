@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/use-toast'
 import { QuoteAPI, QuoteError, getQuoteErrorMessage } from '@/lib/api/quote'
 import { QuoteFormSchema, QuoteFormData, QuoteResponse } from '@/lib/schemas/quote'
+import { formatTokenAmount } from '@/lib/formatTokenAmount'
 
 
 interface QuoteFormProps {
@@ -117,13 +118,9 @@ export function QuoteForm({ onQuoteReceived }: QuoteFormProps) {
     }
   }
 
-  const formatCurrency = (amount: number, decimals: number = 2) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'decimal',
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }).format(amount)
-  }
+  // Read decimals from quote response; fall back to 7 (XLM/stroops)
+  const tokenDecimals = (currentQuote as QuoteResponse & { decimals?: number })?.decimals ?? 7
+  const fmt = (raw: string | number) => formatTokenAmount(String(raw), tokenDecimals)
 
   const getTimeUntilExpiry = (expiresAt: string) => {
     const expiry = new Date(expiresAt)
@@ -316,7 +313,7 @@ export function QuoteForm({ onQuoteReceived }: QuoteFormProps) {
             <div className="space-y-6">
               <div className="text-center">
                 <div className="text-3xl font-bold text-primary">
-                  {formatCurrency(currentQuote.premium)} XLM
+                  {fmt(currentQuote.premium)} XLM
                 </div>
                 <p className="text-sm text-muted-foreground">Premium</p>
               </div>
@@ -324,7 +321,7 @@ export function QuoteForm({ onQuoteReceived }: QuoteFormProps) {
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">Coverage Amount</p>
-                  <p className="font-semibold">{formatCurrency(currentQuote.coverageAmount)} XLM</p>
+                  <p className="font-semibold">{fmt(currentQuote.coverageAmount)} XLM</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Risk Score</p>
