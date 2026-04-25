@@ -1,5 +1,5 @@
 use crate::{
-    ledger, premium, storage, token,
+    events, ledger, premium, storage, token,
     types::{AgeBand, CoverageTier, Policy, PolicyType, PremiumQuote, RegionTier, RiskInput},
     validate::{self, Error},
 };
@@ -116,17 +116,6 @@ pub struct PolicyRenewed {
 ///
 /// **`renew_policy` on an expired policy:** the call returns [`crate::types::RenewPolicyOutcome::Lapsed`]
 /// in **`Ok`** (not `Err`) so this event and idempotency storage are not rolled back.
-#[contractevent(topics = ["niffyinsure", "policy_expired"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PolicyExpired {
-    #[topic]
-    pub holder: Address,
-    #[topic]
-    pub policy_id: u32,
-    pub expiry_ledger: u32,
-    pub reported_at_ledger: u32,
-}
-
 pub fn generate_premium(
     env: &Env,
     region: RegionTier,
@@ -590,13 +579,7 @@ pub fn publish_policy_expired_if_due(env: &Env, policy: &Policy, now: u32) {
     {
         return;
     }
-    PolicyExpired {
-        holder: policy.holder.clone(),
-        policy_id: policy.policy_id,
-        expiry_ledger: policy.end_ledger,
-        reported_at_ledger: now,
-    }
-    .publish(env);
+    events::emit_policy_expired(env, &policy.holder, policy.policy_id, policy.end_ledger, now);
     storage::set_policy_expired_event_end_ledger(
         env,
         &policy.holder,

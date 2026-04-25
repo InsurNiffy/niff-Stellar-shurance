@@ -62,6 +62,8 @@ pub enum DataKey {
     /// Admin-configurable max evidence entries per claim (u32).
     /// Falls back to [`IMAGE_URLS_MAX`] when unset.
     MaxEvidenceCount,
+    /// Last `end_ledger` for which a PolicyExpired event was emitted for this policy term.
+    PolicyExpiredEventEndLedger(Address, u32),
     // ── Reserved: future governance token (`governance_token` module) ────────
     /// Runtime toggle: only meaningful when crate is built with `governance-token`.
     /// Unset or `false` in MVP; no token logic runs unless feature + flag align.

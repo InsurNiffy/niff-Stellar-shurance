@@ -165,6 +165,8 @@ pub fn process_expired(env: &Env, holder: Address, policy_id: u32) -> Result<(),
         return Err(PolicyError::OpenClaimsMustFinalize);
     }
 
+    crate::policy::publish_policy_expired_if_due(env, &policy, now);
+
     policy.is_active = false;
     policy.terminated_at_ledger = now;
     policy.termination_reason = TerminationReason::LapsedNonPayment;
@@ -176,24 +178,7 @@ pub fn process_expired(env: &Env, holder: Address, policy_id: u32) -> Result<(),
         storage::voters_remove_holder(env, &holder);
     }
 
-    PolicyExpired {
-        holder: holder.clone(),
-        policy_id,
-        at_ledger: now,
-    }
-    .publish(env);
-
     Ok(())
-}
-
-#[contractevent(topics = ["niffyinsure", "policy_expired"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PolicyExpired {
-    #[topic]
-    pub holder: Address,
-    #[topic]
-    pub policy_id: u32,
-    pub at_ledger: u32,
 }
 
 fn terminate_inner(
