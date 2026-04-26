@@ -35,6 +35,15 @@ export {
   TableCell,
   TableCaption,
 } from './table'
+export {
+  ResponsiveTable,
+  ResponsiveTableTable,
+  ResponsiveTableHeader,
+  ResponsiveTableBody,
+  ResponsiveTableRow,
+  ResponsiveTableHead,
+  ResponsiveTableCell,
+} from './responsive-table'
 export { DataTable, type Column } from './data-table'
 export { Skeleton, SkeletonRow, SkeletonCard, SkeletonDetail } from './skeleton'
 export { Progress } from './progress'
