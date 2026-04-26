@@ -56,9 +56,9 @@ const config: Config = {
           subtle: 'hsl(142 71% 95%)',
         },
         warning: {
-          DEFAULT: 'hsl(38 92% 50%)',
+          DEFAULT: 'hsl(48 96% 53%)',
           foreground: 'hsl(0 0% 100%)',
-          subtle: 'hsl(38 92% 95%)',
+          subtle: 'hsl(48 96% 95%)',
         },
         error: {
           DEFAULT: 'hsl(0 84% 60%)',

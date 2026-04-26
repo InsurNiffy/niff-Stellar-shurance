@@ -55,7 +55,7 @@ export function RampButton({ rampUrl }: RampButtonProps) {
             <DialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
-                  You are about to leave NiffyInsure and visit an independent
+                  You are about to leave NiffyInsur and visit an independent
                   third-party service. <strong>InsureFii does not custody,
                   control, or endorse this service.</strong>
                 </p>
@@ -63,7 +63,7 @@ export function RampButton({ rampUrl }: RampButtonProps) {
                   Any KYC or identity verification performed on the ramp is
                   conducted solely by that provider and is{' '}
                   <strong>
-                    entirely separate from NiffyInsure insurance underwriting
+                    entirely separate from NiffyInsur insurance underwriting
                   </strong>
                   . Completing ramp KYC does not constitute an insurance
                   application or approval.
