@@ -71,11 +71,6 @@ export default async function ClaimPage({ params }: ClaimPageProps) {
     notFound()
   }
 
-  // Wallet address and currentLedger are resolved client-side to avoid
-  // exposing wallet-specific data in server-rendered HTML (issue #228 req).
-  const walletAddress: string | null = null
-  const currentLedger = 0
-
   return (
     <main
       className="mx-auto max-w-2xl px-4 py-10 pb-[calc(2.5rem+env(safe-area-inset-bottom,0px))]"
@@ -87,11 +82,7 @@ export default async function ClaimPage({ params }: ClaimPageProps) {
       <h1 className="mb-6 text-xl font-bold">
         Claim vote — <span className="font-mono text-base">{claimId}</span>
       </h1>
-      <ClaimVotePanel
-        claimId={claimId}
-        walletAddress={walletAddress}
-        currentLedger={currentLedger}
-      />
+      <ClaimVotePanel claimId={claimId} />
     </main>
   )
 }
