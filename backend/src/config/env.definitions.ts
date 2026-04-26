@@ -116,6 +116,12 @@ export interface EnvironmentVariables {
   PAGINATION_HMAC_SECRET: string;
   DISABLE_REINDEX_WORKER: string;
   RENEWAL_REMINDER_CRON: string;
+  /**
+   * Optional incoming JWT signing key used during zero-downtime rotation.
+   * When set, tokens signed with JWT_SECRET_NEXT are also accepted.
+   * Remove after the overlap window (≥ JWT_EXPIRES_IN) has elapsed.
+   */
+  JWT_SECRET_NEXT: string;
 }
 
 export type EnvKey = keyof EnvironmentVariables;
@@ -1156,6 +1162,19 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '0 * * * *',
     required: 'required',
     schema: Joi.string().default('0 * * * *'),
+  },
+  JWT_SECRET_NEXT: {
+    key: 'JWT_SECRET_NEXT',
+    section: 'Auth',
+    description:
+      'Incoming JWT signing key for zero-downtime rotation overlap. ' +
+      'Set to the new key while JWT_SECRET still holds the current key. ' +
+      'Tokens signed by either key are accepted during the overlap window. ' +
+      'Remove after all tokens signed with the old JWT_SECRET have expired.',
+    example: '',
+    required: 'optional',
+    secret: true,
+    schema: Joi.string().min(32).allow('').default(''),
   },
 };
 

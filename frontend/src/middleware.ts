@@ -30,6 +30,21 @@ const RAMP_ORIGIN = process.env.NEXT_PUBLIC_RAMP_ENABLED === 'true' && process.e
   ? (() => { try { return new URL(process.env.RAMP_URL).origin } catch { return '' } })()
   : ''
 
+// Plausible analytics — cloud-hosted default or self-hosted override.
+// NEXT_PUBLIC_ANALYTICS_SRC may be a full script URL; we only need the origin.
+const ANALYTICS_SCRIPT_SRC =
+  process.env.NEXT_PUBLIC_ANALYTICS_SRC ?? 'https://plausible.io/js/script.js'
+const ANALYTICS_ORIGIN =
+  process.env.NEXT_PUBLIC_ANALYTICS_ENABLED === 'true'
+    ? (() => { try { return new URL(ANALYTICS_SCRIPT_SRC).origin } catch { return '' } })()
+    : ''
+
+// IPFS gateway — used by evidence viewer to load CIDs.
+const IPFS_GATEWAY_ORIGIN =
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY
+    ? (() => { try { return new URL(process.env.NEXT_PUBLIC_IPFS_GATEWAY).origin } catch { return '' } })()
+    : 'https://ipfs.io'
+
 const REPORT_URI = process.env.CSP_REPORT_URI ?? ''
 const REPORT_ONLY = process.env.CSP_REPORT_ONLY === 'true'
 const CSP_HEADER = REPORT_ONLY
@@ -41,9 +56,17 @@ function buildCsp(nonce: string): string {
 
   return [
     `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}' ${ANALYTICS_ORIGIN}`.trim(),
-    // Tailwind injects styles at runtime; unsafe-inline required until
-    // build-time CSS extraction is adopted. Track in: TODO(csp-style-nonce).
+    // Scripts: self + nonce for Next.js inline bootstrapper.
+    // When analytics is enabled, also allow the Plausible script origin.
+    // Freighter and xBull inject via browser extension content scripts which
+    // run outside the page CSP — no extra script-src entry needed.
+    // Ref: https://docs.freighter.app/docs/guide/csp
+    // Ref: https://docs.xbull.app/integration/csp
+    [`script-src 'self'`, `'nonce-${nonce}'`, ANALYTICS_ORIGIN]
+      .filter(Boolean)
+      .join(' '),
+    // Styles: self + unsafe-inline required by Tailwind's runtime class injection.
+    // Long-term: migrate to build-time CSS extraction to remove unsafe-inline.
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob:`,
     // Fonts are self-hosted via next/font (Inter, IBM Plex Mono)
@@ -51,8 +74,12 @@ function buildCsp(nonce: string): string {
     [
       `connect-src 'self'`,
       API_ORIGIN,
-      // Analytics (Plausible) — only when enabled
+      // Analytics (Plausible) — event ingestion endpoint
       ANALYTICS_ORIGIN,
+      // On-ramp integration — only when feature flag is enabled
+      RAMP_ORIGIN,
+      // IPFS gateway — used by evidence viewer to load CIDs
+      IPFS_GATEWAY_ORIGIN,
       // Soroban RPC + Horizon — testnet
       // Ref: https://developers.stellar.org/network/soroban-rpc
       'https://soroban-testnet.stellar.org',

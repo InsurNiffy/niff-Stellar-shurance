@@ -1,0 +1,55 @@
+name: Env example drift check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/src/config/env.definitions.ts'
+      - 'backend/.env.example'
+      - 'backend/scripts/check-env-example.ts'
+      - 'backend/scripts/generate-env-example.ts'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/src/config/env.definitions.ts'
+      - 'backend/.env.example'
+      - 'backend/scripts/check-env-example.ts'
+      - 'backend/scripts/generate-env-example.ts'
+  # Also run on any PR that touches backend/ to catch indirect drift
+  pull_request_target:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+permissions:
+  contents: read
+
+jobs:
+  env-example-drift:
+    name: .env.example in sync with env.definitions.ts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check .env.example is up to date
+        run: |
+          npm run env:example:generate
+          if ! git diff --exit-code .env.example; then
+            echo ""
+            echo "::error file=backend/.env.example::backend/.env.example is out of sync with env.definitions.ts."
+            echo "::error::Run 'cd backend && npm run env:example:generate' locally and commit the updated file."
+            exit 1
+          fi
+          echo "✅ backend/.env.example is up to date."
