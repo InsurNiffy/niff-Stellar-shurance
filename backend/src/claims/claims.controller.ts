@@ -30,6 +30,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
 import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
 import { MAX_LIMIT, DEFAULT_LIMIT } from '../helpers/pagination';
+import { OptionalJwtAuthGuard } from '../tx/guards/optional-jwt.guard';
 
 /** Maximum claim IDs accepted per status-poll or SSE subscription. */
 const MAX_WATCH_IDS = 50;
@@ -97,11 +98,15 @@ export class ClaimsController {
   }
 
   @Get(':id')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get detailed claim view' })
   @ApiResponse({ status: 200, description: 'Detailed claim with vote tallies', type: ClaimDetailResponseDto })
   @ApiResponse({ status: 404, description: 'Claim not found' })
-  async getClaim(@Param('id', ParseIntPipe) id: number): Promise<ClaimDetailResponseDto> {
-    return this.claimsService.getClaimById(id);
+  async getClaim(
+    @Param('id', ParseIntPipe) id: number,
+    @WalletAddress() walletAddress?: string,
+  ): Promise<ClaimDetailResponseDto> {
+    return this.claimsService.getClaimById(id, walletAddress);
   }
 
   @Post('build-transaction')

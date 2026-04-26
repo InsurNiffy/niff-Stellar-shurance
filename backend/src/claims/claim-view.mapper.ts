@@ -58,13 +58,33 @@ export class ClaimViewMapper {
       this.extractEvidenceHash(claim.imageUrls),
     );
     const indexerLag = Math.max(0, lastLedger - claim.updatedAtLedger);
+    const quorumProgressPct =
+      aggregation?.quorum_progress_pct ?? Math.min(100, Math.round((totalVotes / requiredVotes) * 100));
+    const votesNeeded = aggregation?.votes_needed ?? Math.max(0, requiredVotes - totalVotes);
+    const deadlineEstimateUtc = aggregation?.deadline_estimate_utc ?? votingDeadlineTime.toISOString();
+    const currentStatus = claim.status.toLowerCase() as 'pending' | 'approved' | 'paid' | 'rejected';
+    const statusHistory: ClaimDetailResponseDto['status_history'] = [
+      {
+        status: 'pending' as const,
+        ledger: claim.createdAtLedger,
+        timestamp: claim.createdAt.toISOString(),
+      },
+    ];
+
+    if (currentStatus !== 'pending') {
+      statusHistory.push({
+        status: currentStatus,
+        ledger: claim.updatedAtLedger || claim.createdAtLedger,
+        timestamp: claim.updatedAt.toISOString(),
+      });
+    }
 
     return {
       metadata: {
         id: claim.id,
         policyId: claim.policyId,
         creatorAddress: this.sanitization.sanitizeWalletAddress(claim.creatorAddress),
-        status: claim.status.toLowerCase() as 'pending' | 'approved' | 'paid' | 'rejected',
+        status: currentStatus,
         amount: claim.amount,
         description: claim.description
           ? this.sanitization.sanitizeDescription(claim.description)
@@ -84,15 +104,15 @@ export class ClaimViewMapper {
         current: totalVotes,
         percentage: Math.min(100, Math.round((totalVotes / requiredVotes) * 100)),
         reached: claim.isFinalized || Math.max(yesVotes, noVotes) >= requiredVotes,
-        quorum_progress_pct: aggregation?.quorum_progress_pct ?? Math.min(100, Math.round((totalVotes / requiredVotes) * 100)),
-        votes_needed: aggregation?.votes_needed ?? Math.max(0, requiredVotes - totalVotes),
+        quorum_progress_pct: quorumProgressPct,
+        votes_needed: votesNeeded,
       } as QuorumProgressDto,
       deadline: {
         votingDeadlineLedger,
         votingDeadlineTime,
         isOpen,
         remainingSeconds,
-        deadline_estimate_utc: aggregation?.deadline_estimate_utc ?? votingDeadlineTime.toISOString(),
+        deadline_estimate_utc: deadlineEstimateUtc,
       } as DeadlineDto,
       evidence: {
         gatewayUrl: sanitizedHash ? `${this.ipfsGateway}/ipfs/${sanitizedHash}` : '',
@@ -105,6 +125,11 @@ export class ClaimViewMapper {
         isStale: indexerLag > this.maxAcceptableLag,
         tallyReconciled: true,
       } as ConsistencyMetadataDto,
+      quorum_progress_pct: quorumProgressPct,
+      votes_needed: votesNeeded,
+      deadline_estimate_utc: deadlineEstimateUtc,
+      status_history: statusHistory,
+      voter_eligible: false,
     };
   }
 

@@ -5,7 +5,7 @@ import { Args, Context, Int, Parent, Query, ResolveField, Resolver } from '@nest
 import type { Policy } from '@prisma/client';
 import { AuthIdentityService } from '../auth/auth-identity.service';
 import { ClaimsService } from '../claims/claims.service';
-import type { ClaimDetailResponseDto } from '../claims/dto/claim.dto';
+import type { ClaimListItemDto } from '../claims/dto/claim.dto';
 import { PolicyReadService } from '../policy/policy-read.service';
 import type { GraphqlContext, GraphqlRequest } from './graphql.context';
 import { GraphqlRateLimitGuard } from './graphql-rate-limit.guard';
@@ -14,6 +14,11 @@ import { ClaimNode, GraphqlViewer, PolicyConnectionNode, PolicyNode } from './gr
 type ClaimsByPolicyKey = {
   policyId: string;
   first: number;
+};
+
+type ClaimNodeSource = ClaimListItemDto & {
+  userVote?: 'yes' | 'no';
+  userHasVoted?: boolean;
 };
 
 @Resolver(() => PolicyNode)
@@ -154,7 +159,7 @@ export class PolicyResolver {
     };
   }
 
-  private toClaimNode(claim: ClaimDetailResponseDto): ClaimNode {
+  private toClaimNode(claim: ClaimNodeSource): ClaimNode {
     return {
       id: claim.metadata.id,
       policyId: claim.metadata.policyId,
@@ -179,8 +184,8 @@ export class PolicyResolver {
       deadlineOpen: claim.deadline.isOpen,
       remainingSeconds: claim.deadline.remainingSeconds,
       isFinalized: claim.consistency.isFinalized,
-      indexerLag: claim.consistency.indexerLag,
-      lastIndexedLedger: claim.consistency.lastIndexedLedger,
+      indexerLag: claim.consistency.indexerLag ?? 0,
+      lastIndexedLedger: claim.consistency.lastIndexedLedger ?? 0,
       isStale: claim.consistency.isStale,
       tallyReconciled: claim.consistency.tallyReconciled,
       userVote: claim.userVote,

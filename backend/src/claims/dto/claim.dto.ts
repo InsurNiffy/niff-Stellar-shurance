@@ -293,7 +293,64 @@ export class ClaimsListResponseDto {
   pagination!: CursorPageDto;
 }
 
+export class ClaimStatusHistoryEntryDto {
+  @ApiProperty({ description: 'Claim status at this point in the indexed lifecycle' })
+  @Expose()
+  @IsEnum(['pending', 'approved', 'paid', 'rejected'])
+  status!: 'pending' | 'approved' | 'paid' | 'rejected';
+
+  @ApiProperty({ description: 'Ledger associated with this status transition' })
+  @Expose()
+  @IsInt()
+  @Min(0)
+  ledger!: number;
+
+  @ApiProperty({ description: 'UTC timestamp associated with this status transition' })
+  @Expose()
+  @IsString()
+  timestamp!: string;
+}
+
 export class ClaimDetailResponseDto extends ClaimListItemDto {
+  @ApiProperty({ description: 'Quorum progress percentage from aggregation service (0-100)' })
+  @Expose()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  quorum_progress_pct!: number;
+
+  @ApiProperty({ description: 'Additional approve votes needed to reach quorum' })
+  @Expose()
+  @IsInt()
+  @Min(0)
+  votes_needed!: number;
+
+  @ApiProperty({
+    description:
+      'Approximate UTC voting deadline estimate. Stellar ledger close times vary, so this timestamp is not authoritative.',
+  })
+  @Expose()
+  @IsString()
+  deadline_estimate_utc!: string;
+
+  @ApiProperty({
+    description:
+      'Indexed claim status history. If historical transition rows are unavailable, this contains the created status and current indexed status.',
+    type: [ClaimStatusHistoryEntryDto],
+  })
+  @Expose()
+  @ValidateNested({ each: true })
+  @Type(() => ClaimStatusHistoryEntryDto)
+  status_history!: ClaimStatusHistoryEntryDto[];
+
+  @ApiProperty({
+    description:
+      'Whether the authenticated wallet is eligible to vote on this claim. False for anonymous requests.',
+  })
+  @Expose()
+  @IsBoolean()
+  voter_eligible!: boolean;
+
   @ApiPropertyOptional({ description: 'User has voted on this claim' })
   @Expose()
   userHasVoted?: boolean;

@@ -264,18 +264,36 @@ export class ClaimsService {
     claim: ClaimDetailResponseDto,
     walletAddress: string,
   ): Promise<ClaimDetailResponseDto> {
-    const userVote = await this.prisma.vote.findFirst({
-      where: {
-        claimId: claim.metadata.id,
-        voterAddress: walletAddress.toLowerCase(),
-        deletedAt: null,
-      },
-    });
+    const normalizedWallet = walletAddress.toLowerCase();
+    const tenantId = this.tenantCtx.tenantId;
+    const [userVote, activePolicyCount] = await Promise.all([
+      this.prisma.vote.findFirst({
+        where: {
+          claimId: claim.metadata.id,
+          voterAddress: normalizedWallet,
+          deletedAt: null,
+        },
+      }),
+      this.prisma.policy.count({
+        where: {
+          holderAddress: { equals: walletAddress, mode: 'insensitive' },
+          isActive: true,
+          deletedAt: null,
+          ...(tenantId ? { tenantId } : {}),
+        },
+      }),
+    ]);
 
     if (userVote) {
       claim.userHasVoted = true;
       claim.userVote = userVote.vote === 'APPROVE' ? 'yes' : 'no';
     }
+
+    claim.voter_eligible =
+      activePolicyCount > 0 &&
+      claim.deadline.isOpen &&
+      !claim.consistency.isFinalized &&
+      !userVote;
 
     return claim;
   }
