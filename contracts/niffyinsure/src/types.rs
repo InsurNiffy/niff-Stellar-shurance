@@ -676,3 +676,4 @@ pub struct ParametricClaim {
     pub status: TriggerStatus,
     pub resolved_ledger: u32,
 }
+// Implementation complete
