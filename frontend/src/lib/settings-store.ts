@@ -6,8 +6,8 @@
 
 import type { Network } from './network-manifest'
 
-const SCHEMA_VERSION = 1
-const STORAGE_KEY = 'niffyinsur-settings-v1'
+const SCHEMA_VERSION = 2
+const STORAGE_KEY = 'niffyinsur-settings-v2'
 
 export interface AppSettings {
   /** Schema version — increment when shape changes */
@@ -20,6 +20,13 @@ export interface AppSettings {
   rpcWarningAcknowledged: boolean
   /** Opt-in to privacy-safe telemetry for settings changes */
   telemetryEnabled: boolean
+  /** Display currency preference (XLM, USD, EUR) */
+  displayCurrency: 'XLM' | 'USD' | 'EUR'
+  /** Notification preferences */
+  notifications: {
+    renewalRemindersEnabled: boolean
+    claimUpdatesEnabled: boolean
+  }
 }
 
 export const PUBLIC_RPC: Record<Network, string> = {
@@ -38,6 +45,11 @@ const DEFAULTS: AppSettings = {
   customRpcUrl: null,
   rpcWarningAcknowledged: false,
   telemetryEnabled: false,
+  displayCurrency: 'XLM',
+  notifications: {
+    renewalRemindersEnabled: true,
+    claimUpdatesEnabled: true,
+  },
 }
 
 export function loadSettings(): AppSettings {
