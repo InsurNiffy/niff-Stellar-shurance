@@ -81,7 +81,13 @@ export default function FileClaimPage() {
 
       <ClaimWizard 
         policyId={policyId} 
-        maxCoverage={policy.coverageAmount.toString()} 
+        maxCoverage={policy.coverageAmount.toString()}
+        policyCoverage={{
+          coverageAmount: policy.coverageAmount,
+          currency: policy.currency,
+          status: policy.status,
+          expiresAt: policy.expiresAt,
+        }}
       />
     </div>
   );
