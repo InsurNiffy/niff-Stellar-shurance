@@ -1,19 +1,36 @@
 # CSP Allowlist — Operator Checklist
 
-**File:** `frontend/src/middleware.ts` (enforced, per-request nonce)  
-**Fallback:** `frontend/next.config.mjs` `headers()` (static, no nonce — CDN/static export only)  
-**Review cadence:** On every RPC vendor change, wallet SDK upgrade, or new third-party integration.
+**Enforced in:** `frontend/src/middleware.ts` (per-request nonce, runs on every route)  
+**Static fallback:** `frontend/next.config.mjs` `headers()` (no nonce — CDN/static export only)  
+**CI check:** `.github/workflows/csp-allowlist-drift.yml` — fails when code and this doc diverge  
+**Review cadence:** On every RPC vendor change, wallet SDK upgrade, new third-party integration, or quarterly whichever comes first.
 
 ---
 
 ## Current Allowlist
 
+Both `middleware.ts` and `next.config.mjs` must be kept in sync. The CI check (`npm run check-csp`) enforces this automatically on every PR that touches either file.
+
+### `script-src`
+
+| Source | Purpose | Condition |
+|---|---|---|
+| `'self'` | App JS bundles | Always |
+| `'nonce-{per-request}'` | Next.js inline bootstrapper (`__NEXT_DATA__`, chunk loader) | Always |
+| `https://plausible.io` | Plausible analytics script (cloud-hosted default) | `NEXT_PUBLIC_ANALYTICS_ENABLED=true` only |
+
+Freighter and xBull inject via **browser extension content scripts**, which run outside the page CSP entirely — no `script-src` entry is required for them.  
+Ref: [Freighter CSP docs](https://docs.freighter.app/docs/guide/csp) · [xBull CSP docs](https://docs.xbull.app/integration/csp)
+
+If `NEXT_PUBLIC_ANALYTICS_SRC` is set to a self-hosted Plausible URL, that origin replaces `https://plausible.io` in both `script-src` and `connect-src`.
+
 ### `connect-src` — XHR / fetch / WebSocket
 
-| Host | Purpose | Directive |
+| Host | Purpose | Condition |
 |---|---|---|
-| `'self'` | Same-origin API calls | Required |
-| `$NEXT_PUBLIC_API_URL` (origin only) | Backend REST API | Required |
+| `'self'` | Same-origin API calls | Always |
+| `$NEXT_PUBLIC_API_URL` (origin only) | Backend REST API | Always |
+| `https://plausible.io` | Plausible event ingestion (`/api/event`) | `NEXT_PUBLIC_ANALYTICS_ENABLED=true` only |
 | `https://soroban-testnet.stellar.org` | Soroban RPC — testnet | Required for testnet |
 | `https://horizon-testnet.stellar.org` | Horizon REST — testnet | Required for testnet |
 | `wss://soroban-testnet.stellar.org` | Soroban event streaming — testnet | Required for testnet |
@@ -21,42 +38,68 @@
 | `https://horizon.stellar.org` | Horizon REST — mainnet | Required for mainnet |
 | `wss://soroban.stellar.org` | Soroban event streaming — mainnet | Required for mainnet |
 | `https://stellar.expert` | Block explorer links (`explorerUrl()`) | UX only — removable if explorer links are dropped |
-
-### `script-src`
-
-| Source | Purpose |
-|---|---|
-| `'self'` | App JS bundles |
-| `'nonce-{per-request}'` | Next.js inline bootstrapper (`__NEXT_DATA__`, chunk loader) |
-
-No external script hosts are needed. Freighter and xBull inject via **browser extension content scripts**, which run outside the page CSP entirely — no `script-src` entry is required for them.  
-Ref: [Freighter CSP docs](https://docs.freighter.app/docs/guide/csp) · [xBull CSP docs](https://docs.xbull.app/integration/csp)
+| `https://ipfs.io` | IPFS gateway for claim evidence CID retrieval | Default when `NEXT_PUBLIC_IPFS_GATEWAY` is unset |
+| `$NEXT_PUBLIC_IPFS_GATEWAY` (origin only) | Configured IPFS gateway (e.g. `https://gateway.pinata.cloud`) | When `NEXT_PUBLIC_IPFS_GATEWAY` is set |
+| `$RAMP_URL` (origin only) | Fiat on-ramp integration | `NEXT_PUBLIC_RAMP_ENABLED=true` only |
 
 ### `style-src`
 
 `'unsafe-inline'` is currently required because Tailwind CSS injects utility classes at runtime.  
 **TODO(csp-style-nonce):** Migrate to build-time CSS extraction (`output: 'export'` or a PostCSS pipeline) to remove `'unsafe-inline'` and replace with a style nonce.
 
+### `img-src`
+
+| Source | Purpose |
+|---|---|
+| `'self'` | App images |
+| `data:` | Next/Image blur placeholders |
+| `blob:` | Client-side image previews (evidence upload) |
+
+### `font-src`
+
+`'self'` only. Inter and IBM Plex Mono are self-hosted via `next/font` — no external font CDN.
+
+### `frame-src`, `frame-ancestors`, `object-src`
+
+All set to `'none'`. Wallet popups (Freighter, xBull) open as top-level windows, not iframes.
+
 ---
 
-## Checklist: Adding a New RPC Endpoint
+## Removed / stale entries
+
+The following entries were present in earlier versions and have been removed:
+
+| Entry | Reason removed |
+|---|---|
+| `https://cdn.freighter.app` (script-src) | Freighter injects via extension content scripts — no page-level script-src entry needed. Ref: [Freighter CSP docs](https://docs.freighter.app/docs/guide/csp) |
+| `https://xbull.app` (script-src) | Same as above for xBull. Ref: [xBull CSP docs](https://docs.xbull.app/integration/csp) |
+
+---
+
+## Checklist: Adding a New Third-Party Service
 
 1. Identify the full origin (scheme + host, no path): e.g. `https://rpc.example.com`
-2. Add it to `connect-src` in **both** locations:
-   - `frontend/src/middleware.ts` → `buildCsp()` connect-src array
-   - `frontend/next.config.mjs` → `buildCsp()` connect-src array (static fallback)
-3. If the endpoint uses WebSockets, add the `wss://` origin too.
-4. Add a comment with the purpose and a link to the vendor's CSP guidance.
-5. Deploy to staging → run wallet flows (Freighter + xBull) → check browser console for CSP violations.
-6. Update this document's allowlist table.
-7. Open a PR; second engineer reviews before merge.
+2. Determine which directive(s) it needs (`script-src`, `connect-src`, `img-src`, etc.).
+3. Add it to **both** locations:
+   - `frontend/src/middleware.ts` → `buildCsp()` — the relevant directive array
+   - `frontend/next.config.mjs` → `buildCsp()` — the same directive array (static fallback)
+4. If the endpoint uses WebSockets, add the `wss://` origin too.
+5. Add a comment with the purpose and a link to the vendor's CSP guidance.
+6. Add a row to the allowlist table above.
+7. Run `npm run check-csp` locally to confirm no drift.
+8. Deploy to staging → run all wallet flows (Freighter + xBull) → check browser console for CSP violations.
+9. Open a PR; second engineer reviews before merge.
 
-## Checklist: Removing an RPC Endpoint
+## Checklist: Removing a Third-Party Service
 
-1. Confirm no code path still calls the host (`grep -r "rpc.example.com" frontend/src`).
+1. Confirm no code path still calls the host:
+   ```bash
+   grep -r "rpc.example.com" frontend/src
+   ```
 2. Remove from both `middleware.ts` and `next.config.mjs`.
-3. Test in staging.
-4. Update this document.
+3. Move the entry to the "Removed / stale entries" table above with the reason.
+4. Run `npm run check-csp` locally.
+5. Test in staging.
 
 ## Checklist: Adding a New Wallet
 
@@ -68,9 +111,20 @@ Ref: [Freighter CSP docs](https://docs.freighter.app/docs/guide/csp) · [xBull C
 
 ---
 
+## CI Check
+
+`npm run check-csp` (runs `scripts/check-csp-allowlist.mjs`) parses all `https://` and `wss://` origins from `middleware.ts` and `next.config.mjs` and cross-references them against this document.
+
+- **Undocumented origin in code** → hard failure (exit 1). Add it to the allowlist table above.
+- **Documented origin not in code** → warning. Either remove the stale entry from this doc or re-add it to the code.
+
+The check runs automatically on every PR that touches `frontend/src/middleware.ts`, `frontend/next.config.mjs`, or `docs/ops/csp-allowlist.md`.
+
+---
+
 ## Report-Only Mode (Iteration Workflow)
 
-Set in `.env` (never commit):
+Set in `.env.local` (never commit):
 
 ```
 CSP_REPORT_ONLY=true
@@ -103,7 +157,7 @@ If you run your own Soroban RPC or Horizon node:
 | Violation directive | Likely cause | Action |
 |---|---|---|
 | `script-src` | Third-party script injected without nonce | Investigate source; add nonce or remove script |
-| `connect-src` | New RPC/API endpoint not in allowlist | Add per checklist above |
+| `connect-src` | New RPC/API/analytics endpoint not in allowlist | Add per checklist above |
 | `style-src` | Dynamic style injection by a UI library | Add nonce to style or accept `unsafe-inline` with justification |
 | `frame-src` | Wallet or embed opened in iframe | Add origin to `frame-src` with justification |
 | `img-src` | External image (avatar, OG image) | Add origin or proxy through `/_next/image` |
