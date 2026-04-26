@@ -58,12 +58,12 @@ export function WalletConnectButton() {
           onClick={handleCopy}
           title="Click to copy address"
           className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-mono hover:bg-accent transition-colors"
-          aria-label="Copy wallet address"
+          aria-label={`Copy wallet address: ${truncateAddress(address)}`}
         >
           {truncateAddress(address)}
-          {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground" />}
+          {copied ? <Check className="h-3.5 w-3.5 text-green-500" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
         </button>
-        <Button variant="outline" size="sm" onClick={disconnect}>
+        <Button variant="outline" size="sm" onClick={disconnect} aria-label="Disconnect wallet">
           Disconnect
         </Button>
       </div>
@@ -84,10 +84,10 @@ export function WalletConnectButton() {
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm" aria-labelledby="wallet-connect-title" aria-describedby="wallet-connect-desc">
           <DialogHeader>
-            <DialogTitle>Connect Wallet</DialogTitle>
-            <DialogDescription>
+            <DialogTitle id="wallet-connect-title">Connect Wallet</DialogTitle>
+            <DialogDescription id="wallet-connect-desc">
               Choose a wallet to connect to NiffyInsur.
             </DialogDescription>
           </DialogHeader>

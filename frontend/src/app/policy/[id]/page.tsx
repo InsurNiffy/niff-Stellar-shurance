@@ -128,8 +128,8 @@ export default function PolicyDetailPage() {
   return (
     <div className="container max-w-3xl py-10 space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.back()} className="h-9 w-9 shrink-0">
-          <ArrowLeft className="h-5 w-5" />
+        <Button variant="ghost" size="icon" onClick={() => router.back()} className="h-9 w-9 shrink-0" aria-label="Go back">
+          <ArrowLeft className="h-5 w-5" aria-hidden="true" />
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">Policy #{policy.policy_id}</h1>
       </div>
@@ -138,7 +138,7 @@ export default function PolicyDetailPage() {
         <Card className="border-amber-500/50 bg-amber-500/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2 text-amber-900 dark:text-amber-100">
-              <AlertTriangle className="h-5 w-5 shrink-0" />
+              <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden="true" />
               Payout address differs from your wallet
             </CardTitle>
           </CardHeader>
