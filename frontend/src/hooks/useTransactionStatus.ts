@@ -32,16 +32,16 @@ export function useTransactionStatus(txHash: string | null): TransactionStatusRe
 
     timeoutRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`\${apiUrl}/tx/status/\${txHash}`);
+        const res = await fetch(`${apiUrl}/tx/status/${txHash}`);
         if (!res.ok) {
-          throw new Error(\`HTTP \${res.status}: \${await res.text()}`);
+          throw new Error(`HTTP ${res.status}: ${await res.text()}`);
         }
         const data: ApiResponse = await res.json();
 
         setResult((prev) => {
           if (data.status === "SUCCESS" || data.status === "FAILED" || data.status === "NOT_FOUND_TIMEOUT") {
             // Terminal state: compute explorerUrl
-            const url = data.status !== "NOT_FOUND_TIMEOUT" ? `\${explorerBase}/\${txHash}` : null;
+            const url = data.status !== "NOT_FOUND_TIMEOUT" ? `${explorerBase}/${txHash}` : null;
             return { status: data.status, error: data.error ?? null, explorerUrl: url };
           }
           // PENDING: continue polling
