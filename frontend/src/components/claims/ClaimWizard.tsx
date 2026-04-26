@@ -22,12 +22,13 @@ import { ClaimAPI } from '@/lib/api/claim';
 import { AmountStep } from './steps/AmountStep';
 import { EvidenceStep } from './steps/EvidenceStep';
 import { NarrativeStep } from './steps/NarrativeStep';
-import { ReviewStep } from './steps/ReviewStep';
+import { ReviewStep, type PolicyCoverageDetails } from './steps/ReviewStep';
 import { DraftResumeBanner } from './DraftResumeBanner';
 
 interface ClaimWizardProps {
   policyId: string;
   maxCoverage: string;
+  policyCoverage?: PolicyCoverageDetails;
 }
 
 const STEPS = [
@@ -39,7 +40,7 @@ const STEPS = [
 
 const CLAIM_DRAFT_SCHEMA_VERSION = 1;
 
-export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
+export function ClaimWizard({ policyId, maxCoverage, policyCoverage }: ClaimWizardProps) {
   const router = useRouter();
   const { toast } = useToast();
   const { address, signTransaction } = useWallet();
@@ -104,7 +105,8 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
   const handleNext = () => {
     if (activeStep < STEPS.length - 1) {
       setActiveStep(prev => prev + 1);
-    } else {
+    } else if (activeStep === STEPS.length - 1) {
+      // Signing is only allowed from the review step (last step)
       handleFinalSubmit();
     }
   };
@@ -259,7 +261,8 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
         <StepContent title={STEPS[3].title} isActive={activeStep === 3} isCompleted={activeStep > 3}>
           <ReviewStep 
             data={formData} 
-            policyId={policyId} 
+            policyId={policyId}
+            policyCoverage={policyCoverage}
             onEdit={(step) => setActiveStep(step)} 
           />
         </StepContent>
@@ -291,7 +294,7 @@ export function ClaimWizard({ policyId, maxCoverage }: ClaimWizardProps) {
               </>
             ) : (
               <>
-                {activeStep === STEPS.length - 1 ? 'Sign & Submit' : 'Next'}
+                {activeStep === STEPS.length - 1 ? 'Confirm & Sign' : 'Next'}
                 <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
               </>
             )}
