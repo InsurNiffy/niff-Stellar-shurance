@@ -1,70 +1,77 @@
 import { getConfig } from '@/config/env'
-import { QuoteFormData, QuoteResponse, QuoteError as QuoteErrorType } from '@/lib/schemas/quote'
-
-const { apiUrl: API_BASE_URL } = getConfig()
-
-export class QuoteAPI {
-  private static async handleResponse<T>(response: Response): Promise<T> {
-    if (!response.ok) {
-      const errorData: QuoteErrorType = await response.json().catch(() => ({
-        code: 'UNKNOWN_ERROR',
-        message: 'An unexpected error occurred'
-      }))
-      throw new QuoteError(errorData.code, errorData.message, errorData.details)
-    }
-    return response.json()
-  }
-
-  static async getQuote(formData: QuoteFormData): Promise<QuoteResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/quotes`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(formData),
-    })
-
-    return this.handleResponse<QuoteResponse>(response)
-  }
-
-  static async getQuoteById(quoteId: string): Promise<QuoteResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/quotes/${quoteId}`)
-    return this.handleResponse<QuoteResponse>(response)
-  }
-
-  static async validateQuote(quoteId: string): Promise<{ valid: boolean; expiresAt: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/quotes/${quoteId}/validate`)
-    return this.handleResponse<{ valid: boolean; expiresAt: string }>(response)
-  }
-}
+import type { QuoteFormData, QuoteResponse } from '@/lib/schemas/quote'
+import { QuoteResponseSchema } from '@/lib/schemas/quote'
 
 export class QuoteError extends Error {
   constructor(
     public code: string,
     message: string,
-    public details?: Record<string, unknown>
+    public details?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'QuoteError'
   }
 }
 
+export async function generatePremium(
+  data: QuoteFormData,
+  signal?: AbortSignal,
+): Promise<QuoteResponse> {
+  const { apiUrl } = getConfig()
+
+  // Strip empty source_account before sending
+  const body: Record<string, unknown> = {
+    policy_type: data.policy_type,
+    region: data.region,
+    coverage_tier: data.coverage_tier,
+    age: data.age,
+    risk_score: data.risk_score,
+  }
+  if (data.source_account) body.source_account = data.source_account
+
+  const res = await fetch(`${apiUrl}/quote/generate-premium`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ code: 'FETCH_FAILED', message: 'Request failed' }))
+    throw new QuoteError(
+      (err as { code?: string }).code ?? 'FETCH_FAILED',
+      (err as { message?: string }).message ?? 'Failed to generate quote',
+    )
+  }
+
+  const json: unknown = await res.json()
+  const parsed = QuoteResponseSchema.safeParse(json)
+  if (!parsed.success) {
+    throw new QuoteError('PARSE_ERROR', `Unexpected response: ${parsed.error.message}`)
+  }
+  return parsed.data
+}
+
+export const QUOTE_TTL_SECONDS = 300 // 5 minutes
+
 export const QUOTE_ERROR_MESSAGES: Record<string, string> = {
-  'INVALID_CONTRACT_ADDRESS': 'The provided contract address is not valid',
-  'INSUFFICIENT_COVERAGE': 'Coverage amount is below minimum requirements',
-  'EXCESSIVE_COVERAGE': 'Coverage amount exceeds maximum limits',
-  'HIGH_RISK_PROFILE': 'Your risk profile is too high for coverage',
-  'CONTRACT_NOT_SUPPORTED': 'This contract type is not currently supported',
-  'RATE_LIMIT_EXCEEDED': 'Too many quote requests. Please try again later',
-  'NETWORK_ERROR': 'Network connection failed. Please check your connection',
-  'SERVER_ERROR': 'Server error occurred. Please try again later',
-  'QUOTE_EXPIRED': 'This quote has expired. Please request a new one',
-  'INVALID_RISK_CATEGORY': 'Invalid risk category selected',
-  'INVALID_DURATION': 'Policy duration is not within allowed range',
-  'VALIDATION_ERROR': 'Please check your form inputs and try again',
-  'UNKNOWN_ERROR': 'An unexpected error occurred. Please try again',
+  ACCOUNT_NOT_FOUND: 'Source account not found on the network',
+  WRONG_NETWORK: 'Source account is on a different network',
+  FETCH_FAILED: 'Network request failed. Please try again.',
+  PARSE_ERROR: 'Unexpected server response. Please try again.',
+  RATE_LIMIT_EXCEEDED: 'Too many requests. Please wait a moment.',
 }
 
 export function getQuoteErrorMessage(error: QuoteError): string {
-  return QUOTE_ERROR_MESSAGES[error.code] || error.message || QUOTE_ERROR_MESSAGES.UNKNOWN_ERROR
+  return QUOTE_ERROR_MESSAGES[error.code] ?? error.message
+}
+
+/**
+ * @deprecated Use generatePremium() directly.
+ * Kept for backward compatibility with policy-initiation.tsx.
+ */
+export class QuoteAPI {
+  static async getQuoteById(_quoteId: string): Promise<never> {
+    throw new QuoteError('NOT_SUPPORTED', 'getQuoteById is not supported. Use generatePremium().')
+  }
 }

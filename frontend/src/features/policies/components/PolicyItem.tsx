@@ -42,6 +42,7 @@ interface PolicyCardProps {
   policy: PolicyDto;
   onRenew: (policy: PolicyDto) => void;
   onTerminate: (policy: PolicyDto) => void;
+  onFileClaim: (policy: PolicyDto) => void;
   currentLedger: number | null;
   /** Admin-configured grace period in ledgers. Defaults to DEFAULT_GRACE_PERIOD_LEDGERS when not provided. */
   gracePeriodLedgers?: number;
@@ -57,7 +58,7 @@ interface PolicyCardProps {
  * This matches the on-chain check in contracts/niffyinsure/src/ledger.rs:
  *   is_in_renewal_window_with_grace(now, end, RENEWAL_WINDOW_LEDGERS, grace)
  */
-export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, gracePeriodLedgers, optimisticStatus, optimisticError }: PolicyCardProps) {
+export function PolicyCard({ policy, onRenew, onTerminate, onFileClaim, currentLedger, gracePeriodLedgers, optimisticStatus, optimisticError }: PolicyCardProps) {
   const { coverage_summary: cs, expiry_countdown: ec } = policy;
   const grace = gracePeriodLedgers ?? DEFAULT_GRACE_PERIOD_LEDGERS;
 
@@ -152,7 +153,20 @@ export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, graceP
       )}
 
       {/* Actions */}
-      <div className="flex gap-2 pt-1">
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Link
+          href={`/policy/${encodeURIComponent(policy.holder)}/${policy.policy_id}`}
+          className="min-h-[44px] min-w-[44px] inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500"
+        >
+          View Details
+        </Link>
+        <ActionButton
+          label="File Claim"
+          enabled={policy.is_active}
+          disabledReason={!policy.is_active ? 'Policy is not active' : undefined}
+          onClick={() => onFileClaim(policy)}
+          className="border-orange-500 text-orange-600 hover:bg-orange-50"
+        />
         <ActionButton
           label="Renew"
           enabled={canRenew}
@@ -175,7 +189,7 @@ export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, graceP
 /**
  * Row layout — used in table view on desktop.
  */
-export function PolicyRow({ policy, onRenew, onTerminate, currentLedger, gracePeriodLedgers, optimisticStatus, optimisticError }: PolicyCardProps) {
+export function PolicyRow({ policy, onRenew, onTerminate, onFileClaim, currentLedger, gracePeriodLedgers, optimisticStatus, optimisticError }: PolicyCardProps) {
   const { coverage_summary: cs, expiry_countdown: ec } = policy;
   const grace = gracePeriodLedgers ?? DEFAULT_GRACE_PERIOD_LEDGERS;
 
@@ -237,7 +251,20 @@ export function PolicyRow({ policy, onRenew, onTerminate, currentLedger, gracePe
         </span>
       </td>
       <td className="px-4 py-3 text-sm">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/policy/${encodeURIComponent(policy.holder)}/${policy.policy_id}`}
+            className="min-h-[44px] min-w-[44px] inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500"
+          >
+            View Details
+          </Link>
+          <ActionButton
+            label="File Claim"
+            enabled={policy.is_active}
+            disabledReason={!policy.is_active ? 'Policy is not active' : undefined}
+            onClick={() => onFileClaim(policy)}
+            className="border-orange-500 text-orange-600 hover:bg-orange-50"
+          />
           <ActionButton
             label="Renew"
             enabled={canRenew}

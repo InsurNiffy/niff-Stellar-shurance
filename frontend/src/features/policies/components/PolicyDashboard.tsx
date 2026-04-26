@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useWallet } from '@/hooks/use-wallet';
 import { useLatestLedger } from '@/hooks/use-latest-ledger';
 import { getConfig } from '@/config/env';
@@ -21,6 +22,7 @@ export function PolicyDashboard() {
   const { address } = useWallet();
   const { network } = getConfig();
   const currentLedger = useLatestLedger();
+  const router = useRouter();
 
   const [status, setStatus] = useState<PolicyStatusFilter>('all');
   const [sort, setSort] = useState<PolicySortField>('expiry');
@@ -34,6 +36,9 @@ export function PolicyDashboard() {
 
   const handleRenew = useCallback((policy: PolicyDto) => setRenewTarget(policy), []);
   const handleTerminate = useCallback((policy: PolicyDto) => setTerminateTarget(policy), []);
+  const handleFileClaim = useCallback((policy: PolicyDto) => {
+    router.push(`/claims/new?policyId=${policy.policy_id}&holder=${encodeURIComponent(policy.holder)}`);
+  }, [router]);
 
   const totalPages = Math.max(1, Math.ceil(total / 20));
 
@@ -107,6 +112,7 @@ export function PolicyDashboard() {
                 policy={p}
                 onRenew={handleRenew}
                 onTerminate={handleTerminate}
+                onFileClaim={handleFileClaim}
                 currentLedger={currentLedger}
                 optimisticStatus={entry?.status}
                 optimisticError={entry?.error}
@@ -136,6 +142,7 @@ export function PolicyDashboard() {
                     policy={p}
                     onRenew={handleRenew}
                     onTerminate={handleTerminate}
+                    onFileClaim={handleFileClaim}
                     currentLedger={currentLedger}
                     optimisticStatus={entry?.status}
                     optimisticError={entry?.error}
