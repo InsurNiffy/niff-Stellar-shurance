@@ -1,4 +1,4 @@
-# niff-Stellar-shurance
+# NiffyInsur
 
 Decentralized insurance platform built on the Stellar/Soroban blockchain.
 

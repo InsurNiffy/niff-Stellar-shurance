@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This feature covers two tightly related frontend concerns for the niff-Stellar-shurance platform:
+This feature covers two tightly related frontend concerns for the NiffyInsur platform:
 
 1. **Policy Detail Page** — a shareable, public-first page at `app/policies/[id]/page.tsx` that displays a policyholder's coverage summary, expiry countdown, premium history, linked claims with status badges, and contextual renewal or termination CTAs gated by on-chain rules and wallet authentication state.
 
