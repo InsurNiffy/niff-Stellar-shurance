@@ -65,6 +65,11 @@ describe('createQueryClient', () => {
     const client = createQueryClient();
     expect(client.getDefaultOptions().queries?.refetchIntervalInBackground).toBe(false);
   });
+
+  it('does not auto-retry mutations', () => {
+    const client = createQueryClient();
+    expect(client.getDefaultOptions().mutations?.retry).toBe(false);
+  });
 });
 
 describe('STALE_TIMES', () => {

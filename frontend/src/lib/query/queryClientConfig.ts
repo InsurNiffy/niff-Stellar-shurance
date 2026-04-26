@@ -20,7 +20,8 @@
  *
  * Retry policy
  * ------------
- *   - Max 3 attempts for transient errors (network, 5xx, 429).
+ *   - Reads: max 3 attempts for transient errors (network, 5xx, 429).
+ *   - Writes: no automatic mutation retries; users must explicitly retry.
  *   - No retry for 4xx client errors (except 429 Retry-After).
  *   - Exponential backoff: 1 s → 2 s → 4 s (capped at 30 s).
  *
@@ -93,10 +94,9 @@ export function createQueryClient(): QueryClient {
         refetchIntervalInBackground: false,
       },
       mutations: {
-        retry: (failureCount: number, error: unknown) => {
-          if (isNonRetryable(error)) return false;
-          return failureCount < 2;
-        },
+        // Writes must never auto-retry. Retrying a transaction submission can
+        // duplicate side effects; surface the error and require user action.
+        retry: false,
         retryDelay: (attempt: number) => retryDelay(attempt),
       },
     },
