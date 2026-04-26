@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/use-toast'
+import { useWallet } from '@/features/wallet'
+import { useLatestLedger } from '@/hooks/use-latest-ledger'
 import {
   fetchClaim,
   fetchEligibility,
@@ -31,24 +33,16 @@ import { VoteTally } from './vote-tally'
 
 interface ClaimVotePanelProps {
   claimId: string
-  /** Connected wallet address — null when no wallet connected */
-  walletAddress: string | null
-  /** Current Stellar ledger sequence for deadline calculation */
-  currentLedger: number
-  /** Called to request wallet signature for the given XDR */
-  requestSignature?: (xdr: string) => Promise<string>
 }
 
 type SubmitState = 'idle' | 'simulating' | 'confirming' | 'signing' | 'submitting' | 'done'
 
 const POLL_INTERVAL_MS = 8_000
 
-export function ClaimVotePanel({
-  claimId,
-  walletAddress,
-  currentLedger,
-  requestSignature,
-}: ClaimVotePanelProps) {
+export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
+  const { address: walletAddress, signTransaction } = useWallet()
+  const latestLedger = useLatestLedger()
+  const currentLedger = latestLedger ?? 0
   const { toast } = useToast()
 
   const [claim, setClaim] = useState<Claim | null>(null)
@@ -128,9 +122,7 @@ export function ClaimVotePanel({
     try {
       // In production, requestSignature opens the wallet popup with the XDR.
       // Here we pass a placeholder XDR; the backend builds the real transaction.
-      const signedXdr = requestSignature
-        ? await requestSignature(`vote:${claimId}:${pendingVote}`)
-        : `mock-signed-xdr-${Date.now()}`
+      const signedXdr = await signTransaction(`vote:${claimId}:${pendingVote}`)
 
       setSubmitState('submitting')
       const result = await submitVote(claimId, walletAddress, pendingVote, signedXdr)
