@@ -13,6 +13,7 @@ import type { TxRecord, TxType } from '@/lib/api/transaction-history'
 import { cn } from '@/lib/utils'
 
 import { useTransactionHistory } from '../hooks/useTransactionHistory'
+import { EmptyState } from '@/components/ui/empty-state'
 
 const FILTERS: { label: string; value: TxType }[] = [
   { label: 'All', value: 'all' },
@@ -190,14 +191,13 @@ export function TransactionHistory({ address }: Props) {
 
       {/* Empty state */}
       {!isLoading && !error && items.length === 0 && (
-        <div className="rounded-md border border-dashed p-8 text-center space-y-3">
-          <p className="text-sm text-muted-foreground">No transactions found.</p>
-          <div className="flex justify-center gap-2">
-            <Button size="sm" variant="outline" asChild>
-              <a href="/policy">Purchase Policy</a>
-            </Button>
-          </div>
-        </div>
+        <EmptyState
+          variant="transactions"
+          headline="No transactions yet"
+          description="Your transaction history will appear here once you purchase a policy or file a claim."
+          ctaLabel="Purchase Policy"
+          ctaHref="/policy"
+        />
       )}
 
       {/* Desktop table — hidden on mobile */}
