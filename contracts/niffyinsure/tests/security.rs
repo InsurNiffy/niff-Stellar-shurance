@@ -8,6 +8,7 @@
 //!   AUTH-02  Two-step rotation cannot be hijacked by unrelated signers
 //!   AUTH-03  initialize cannot be called twice
 //!   AUTH-04  accept_admin without a proposal reverts
+//!   AUTH-05  Asset allowlist updates reject non-admin callers
 //!   ARITH-01 Counter overflow panics rather than wrapping
 //!   TOKEN-01 Drain rejects zero / negative amounts
 //!   TOKEN-02 Non-admin cannot drain
@@ -199,6 +200,26 @@ fn auth01_non_admin_cannot_set_quorum_bps() {
         ],
     );
     assert!(client.try_admin_set_quorum_bps(&2500u32).is_err());
+}
+
+// ── AUTH-05: asset allowlist cannot be changed by non-admin ─────────────────
+
+#[test]
+fn auth05_non_admin_cannot_set_allowed_asset() {
+    let (env, client, _, _, rando) = make_non_admin_env();
+    let asset = Address::generate(&env);
+    env_with_single_auth(
+        &env,
+        &client.address,
+        &rando,
+        "set_allowed_asset",
+        soroban_sdk::vec![
+            &env,
+            soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&asset, &env),
+            soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&true, &env)
+        ],
+    );
+    assert!(client.try_set_allowed_asset(&asset, &true).is_err());
 }
 
 // ── AUTH-02: rotation hijack prevention ───────────────────────────────────────
