@@ -104,4 +104,52 @@ describe('VoteConfirmModal', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAttribute('aria-modal', 'true')
   })
+
+  it('calls onCancel when ESC key is pressed', () => {
+    render(<VoteConfirmModal {...defaultProps} />)
+    const dialog = screen.getByRole('dialog')
+    
+    // Simulate ESC key press
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape', keyCode: 27 })
+    
+    // Radix Dialog handles ESC internally and calls onOpenChange(false)
+    // which triggers onCancel in our implementation
+    expect(defaultProps.onCancel).toHaveBeenCalled()
+  })
+
+  it('does not dismiss when submitting (prevents accidental cancellation)', () => {
+    render(<VoteConfirmModal {...defaultProps} submitting={true} />)
+    
+    // Cancel button should be disabled during submission
+    const cancelButton = screen.getByRole('button', { name: /cancel/i })
+    expect(cancelButton).toBeDisabled()
+  })
+
+  it('displays vote option prominently in title', () => {
+    render(<VoteConfirmModal {...defaultProps} vote="Approve" />)
+    const title = screen.getByRole('heading', { name: /confirm approval vote/i })
+    expect(title).toBeInTheDocument()
+    
+    // Prominent vote display should be present
+    expect(screen.getByText(/you are voting to/i)).toBeInTheDocument()
+    expect(screen.getByText(/APPROVE/i)).toBeInTheDocument()
+    
+    // Icon should be present for visual prominence
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('explains what approve means for the claimant', () => {
+    render(<VoteConfirmModal {...defaultProps} vote="Approve" />)
+    expect(
+      screen.getByText(/if a quorum of eligible policyholders approves, the claimant becomes eligible for payout/i)
+    ).toBeInTheDocument()
+  })
+
+  it('explains what reject means for the claimant', () => {
+    render(<VoteConfirmModal {...defaultProps} vote="Reject" />)
+    expect(
+      screen.getByText(/if a quorum of eligible policyholders rejects, no payout will be issued/i)
+    ).toBeInTheDocument()
+  })
 })

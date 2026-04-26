@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { VoteOption, Claim } from '@/lib/schemas/vote'
+import { cn } from '@/lib/utils'
 
 interface VoteConfirmModalProps {
   open: boolean
@@ -66,11 +67,19 @@ export function VoteConfirmModal({
   const castCount = approveCount + rejectCount
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onCancel()}>
+    <Dialog open={open} onOpenChange={(v) => !v && !submitting && onCancel()}>
       <DialogContent
         aria-modal="true"
         aria-labelledby="vote-confirm-title"
         aria-describedby="vote-confirm-desc"
+        onEscapeKeyDown={(e) => {
+          // Prevent ESC during submission to avoid accidental cancellation
+          if (submitting) {
+            e.preventDefault()
+          } else {
+            onCancel()
+          }
+        }}
       >
         <DialogHeader>
           <DialogTitle id="vote-confirm-title" className="flex items-center gap-2">
@@ -82,8 +91,27 @@ export function VoteConfirmModal({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Prominent vote option display */}
+        <div
+          className={cn(
+            'rounded-lg border-2 px-4 py-3 text-center font-semibold',
+            vote === 'Approve'
+              ? 'border-green-500 bg-green-50 text-green-900 dark:bg-green-950 dark:text-green-100'
+              : 'border-red-500 bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-100'
+          )}
+          role="status"
+          aria-label={`You are voting to ${vote.toLowerCase()} this claim`}
+        >
+          <div className="flex items-center justify-center gap-2">
+            {copy.icon}
+            <span className="text-lg">
+              You are voting to <strong className="uppercase">{vote}</strong>
+            </span>
+          </div>
+        </div>
+
         {/* Governance explainer */}
-        <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+        <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100">
           {GOVERNANCE_EXPLAINER}
         </p>
 
@@ -95,14 +123,14 @@ export function VoteConfirmModal({
           >
             <p className="font-medium text-foreground">Current tally</p>
             <div className="flex justify-between text-muted-foreground">
-              <span className="text-green-700">Approve: {approveCount}</span>
-              <span className="text-red-700">Reject: {rejectCount}</span>
+              <span className="text-green-700 dark:text-green-400">Approve: {approveCount}</span>
+              <span className="text-red-700 dark:text-red-400">Reject: {rejectCount}</span>
               <span>{castCount} of {totalVoters} voted</span>
             </div>
           </div>
         )}
 
-        {/* Claim ID + irreversibility warning */}
+        {/* Claim ID + transaction info */}
         <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
           <p>
             Claim ID: <span className="font-mono">{claimId}</span>
@@ -113,7 +141,7 @@ export function VoteConfirmModal({
         {/* Irreversibility warning */}
         <div
           role="note"
-          className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-900"
+          className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-900 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-100"
         >
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
           <span>
