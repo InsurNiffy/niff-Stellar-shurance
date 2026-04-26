@@ -63,6 +63,12 @@ The contract keeps **`voting_duration_ledgers`** in instance storage (admin-set,
 | Admin bypass | Admin may bypass the open-claim guard only when `force_admin_bypass = true` |
 | Quorum | `quorum_bps` in instance storage; per-claim snapshot at filing; `admin_set_quorum_bps` + `QuorumUpdated` event |
 
+## Voter snapshot TTL
+
+At `file_claim`, the contract takes a snapshot of all eligible voters and stores it as `ClaimVoters(claim_id)` in **persistent** storage. This snapshot is used for all eligibility checks during the voting window.
+
+The snapshot has a TTL. If a claim remains open for an unusually long time (e.g. due to a pause), the snapshot may expire. Anyone can call `extend_claim_voters_snapshot_ttl(claim_id)` (permissionless) to refresh the TTL and keep the snapshot alive. The UI surfaces a warning when the snapshot is close to expiry.
+
 ## Verifying a Vote On-Chain
 
 1. Find the `claim_id` from the Claims board.

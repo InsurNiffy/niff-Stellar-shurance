@@ -35,6 +35,31 @@ T+72h  Payout transaction submitted (Approve) OR claim marked Rejected
 
 The claimant may call `withdraw_claim` while the claim is `Processing` and **no approve or reject votes have been cast**. After the first ballot, withdrawal is blocked so governance rounds cannot be manipulated. Withdrawn claims stay readable on-chain and in the indexer; surface them distinctly from `Rejected` on the claims board.
 
+## Evidence Hash Commitment
+
+Every evidence item submitted with a claim must include a **SHA-256 content hash** alongside the URL. This is enforced on-chain by the `niffyinsure` contract.
+
+```
+ClaimEvidenceEntry {
+  url:  String          // IPFS gateway URL or other content-addressed URI
+  hash: BytesN<32>      // SHA-256 digest of the file content (32 bytes)
+}
+```
+
+**Rules enforced at `file_claim`:**
+
+- The all-zero digest (`0x000…000`) is **rejected** — it indicates a missing or uncalculated hash.
+- Each `hash` must be the SHA-256 of the bytes at the corresponding `url`.
+- The contract stores `evidence_hashes` (a `Vec<BytesN<32>>`) in the on-chain `Claim` record in the same order as submitted.
+
+**Why this matters:**
+
+The hash is a cryptographic commitment. Off-chain services (the NestJS IPFS proxy and verification workers) download the content and compare its digest against the stored hash. A mismatch means the file was altered after filing — the claim can be flagged for review.
+
+**Frontend responsibility:**
+
+The frontend computes the SHA-256 of each file before upload and passes `contentSha256Hex` to the backend. The backend converts the hex string to `BytesN<32>` before building the Soroban transaction. Never submit a zero hash or skip the hash field.
+
 ## Rate Limiting
 
 The backend enforces per-wallet claim submission rate limits to prevent spam. On-chain, the contract spaces **successful** `file_claim` calls per holder using `LastClaimLedger` and `RATE_LIMIT_WINDOW_LEDGERS`. **Withdrawal does not count against that limit going forward:** the contract restores the holder’s previous rate-limit anchor (or clears it if this was their first filing), so a withdrawn mistaken claim does not force an extra full waiting period before refiling. The per-policy **one open claim** rule still applies while a claim is open; withdrawal clears the open slot like any other terminal resolution.
