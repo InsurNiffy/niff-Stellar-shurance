@@ -1,8 +1,12 @@
 # niffyInsure — Event Dictionary
 
 > **Schema version: 1**  
+> `SCHEMA_VERSION` in `events.rs` and `events.schema.ts` must stay in sync.  
 > Breaking changes (field removed / type changed) → semver-major contract release + `SCHEMA_VERSION` bump.  
 > Adding new optional fields is backward-compatible; no bump required.
+>
+> **Ownership:** the contract author is responsible for updating this file on every contract release.  
+> CI enforces that every event name in `events.rs` has a corresponding entry here (see `.github/workflows/ci.yml` — `check-event-dictionary` job).
 
 ## Units
 
@@ -41,7 +45,7 @@ The indexer discriminates events by `${topic[0]}:${topic[1]}`.
   "version": 1,
   "policy_id": 3,
   "amount": "5000000",
-  "image_hash": 2864434397,
+  "evidence_hashes": ["<32-byte hex>"],
   "filed_at": 1234567
 }
 ```
@@ -50,7 +54,7 @@ The indexer discriminates events by `${topic[0]}:${topic[1]}`.
 |-------|------|-------------|
 | `policy_id` | u32 | Per-holder policy identifier |
 | `amount` | string (stroops) | Requested payout |
-| `image_hash` | u64 | FNV-1a hash of IPFS CIDs |
+| `evidence_hashes` | string[] | SHA-256 digests (32 bytes each); on-chain commitment only |
 | `filed_at` | u32 (ledger) | Ledger when claim was filed |
 
 ---
@@ -120,6 +124,30 @@ Emitted when voting reaches majority **or** the vote window expires.
 
 ---
 
+### `claim_withdrawn` — claim withdrawn by claimant
+
+Emitted when the claimant withdraws their own claim before any votes are cast.
+Indexers must surface `Withdrawn` status distinctly on the claims board.
+
+**Topics:** `("niffyinsure", "claim_withdrawn", claim_id: u64)`
+
+```json
+{
+  "version": 1,
+  "policy_id": 3,
+  "claimant": "G...",
+  "at_ledger": 1234600
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `policy_id` | u32 | Per-holder policy identifier |
+| `claimant` | string (G…) | Address of the withdrawing claimant |
+| `at_ledger` | u32 (ledger) | Ledger of withdrawal |
+
+---
+
 ## Policy lifecycle events  (`namespace = "niffyinsure"`)
 
 ### `PolicyInitiated` — policy bound
@@ -166,7 +194,7 @@ Emitted when voting reaches majority **or** the vote window expires.
 
 ---
 
-### `PolicyTerminated` — policy terminated
+### `policy_terminated` — policy terminated
 
 **Topics:** `("niffyinsure", "policy_terminated", holder: Address, policy_id: u32)`
 
@@ -191,6 +219,52 @@ Emitted when voting reaches majority **or** the vote window expires.
 
 ---
 
+### `policy_expired` — policy expiry detected
+
+Emitted at most once per `(holder, policy_id, expiry_ledger)` term, either by the
+`process_expired` keeper entrypoint or by `renew_policy` when called on an already-expired policy.
+May be emitted with a delay relative to the actual expiry ledger if no keeper call occurred at that ledger.
+
+**Topics:** `("niffyinsure", "policy_expired", holder: Address, policy_id: u32)`
+
+```json
+{
+  "expiry_ledger": 2285767,
+  "reported_at_ledger": 2285800
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `expiry_ledger` | u32 (ledger) | Ledger at which the policy actually expired |
+| `reported_at_ledger` | u32 (ledger) | Ledger when the event was emitted (may differ from expiry_ledger) |
+
+> **Deduplication:** the backend notification service must deduplicate on `policy_id` to handle delayed keeper calls.
+
+---
+
+### `BeneficiaryUpdated` — payout beneficiary changed
+
+Emitted when a holder sets or changes their designated payout beneficiary.
+
+**Topics:** `("niffyinsure", "BeneficiaryUpdated", holder: Address, policy_id: u32)`
+
+```json
+{
+  "version": 1,
+  "old_beneficiary": "G...",
+  "new_beneficiary": "G...",
+  "at_ledger": 1234700
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_beneficiary` | string (G…) \| null | Previous beneficiary; null if unset |
+| `new_beneficiary` | string (G…) | New beneficiary address |
+
+---
+
 ## Admin / config events  (`namespace = "niffyins"`)
 
 | Event | Topics | Key payload fields |
@@ -203,6 +277,41 @@ Emitted when voting reaches majority **or** the vote window expires.
 | `adm_tok` | `(NS, "adm_tok")` | `old_token`, `new_token` |
 | `adm_paus` | `(NS, "adm_paus", admin)` | `paused: 0\|1` |
 | `adm_drn` | `(NS, "adm_drn", admin)` | `recipient`, `amount` (stroops) |
+| `quorum_updated` | `("niffyinsure", "quorum_updated")` | `old_bps: u32`, `new_bps: u32` |
+| `GracePeriodUpdated` | `("niffyinsure", "GracePeriodUpdated", admin)` | `old_ledgers: u32`, `new_ledgers: u32` |
+
+### `quorum_updated` — DAO quorum threshold changed
+
+**Topics:** `("niffyinsure", "quorum_updated")`
+
+```json
+{
+  "version": 1,
+  "old_bps": 5000,
+  "new_bps": 6000
+}
+```
+
+Does not retroactively affect claims already in `Processing`.
+
+---
+
+### `GracePeriodUpdated` — renewal grace period changed
+
+**Topics:** `("niffyinsure", "GracePeriodUpdated", admin: Address)`
+
+```json
+{
+  "version": 1,
+  "old_ledgers": 720,
+  "new_ledgers": 1440
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_ledgers` | u32 | Previous grace period in ledgers |
+| `new_ledgers` | u32 | New grace period in ledgers |
 
 ---
 

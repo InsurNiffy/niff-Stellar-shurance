@@ -78,6 +78,17 @@ export interface ClaimPaidEvent {
   at_ledger: number;
 }
 
+/** claim_withdrawn — emitted when claimant withdraws before any votes are cast.
+ *  topics: (NS_POLICY, "claim_withdrawn", claim_id: u64) */
+export interface ClaimWithdrawnEvent {
+  version: number;
+  /** Per-holder policy identifier (u32). */
+  policy_id: number;
+  /** Address of the withdrawing claimant (G…). */
+  claimant: string;
+  at_ledger: number;
+}
+
 // ── Policy lifecycle events ───────────────────────────────────────────────────
 
 /** pol_init — emitted by initiate_policy.
@@ -122,6 +133,35 @@ export interface PolicyTerminatedEvent {
   /** Number of open claims at termination time. */
   open_claims: number;
   at_ledger: number;
+}
+
+/** policy_expired — emitted when policy expiry is detected by keeper or renew_policy.
+ *  topics: (NS_POLICY, "policy_expired", holder: Address, policy_id: u32)
+ *  May be emitted with a delay; deduplicate on policy_id. */
+export interface PolicyExpiredEvent {
+  /** Ledger at which the policy actually expired. */
+  expiry_ledger: number;
+  /** Ledger when the event was emitted (may differ from expiry_ledger). */
+  reported_at_ledger: number;
+}
+
+/** BeneficiaryUpdated — emitted when a holder sets or changes their payout beneficiary.
+ *  topics: (NS_POLICY, "BeneficiaryUpdated", holder: Address, policy_id: u32) */
+export interface BeneficiaryUpdatedEvent {
+  version: number;
+  /** Previous beneficiary address (G…); null if previously unset. */
+  old_beneficiary: string | null;
+  /** New beneficiary address (G…). */
+  new_beneficiary: string;
+  at_ledger: number;
+}
+
+/** GracePeriodUpdated — emitted when admin changes the renewal grace period.
+ *  topics: (NS_POLICY, "GracePeriodUpdated", admin: Address) */
+export interface GracePeriodUpdatedEvent {
+  version: number;
+  old_ledgers: number;
+  new_ledgers: number;
 }
 
 // ── Admin / config events ─────────────────────────────────────────────────────
@@ -184,6 +224,23 @@ export interface DrainedEvent {
   amount: string;
 }
 
+/** quorum_updated — emitted by admin_set_quorum_bps.
+ *  topics: (NS_POLICY, "quorum_updated")
+ *  Does not affect claims already in Processing. */
+export interface QuorumUpdatedEvent {
+  version: number;
+  old_bps: number;
+  new_bps: number;
+}
+
+/** GracePeriodUpdated — emitted by admin when renewal grace period changes.
+ *  topics: (NS_POLICY, "GracePeriodUpdated", admin: Address) */
+export interface GracePeriodUpdatedAdminEvent {
+  version: number;
+  old_ledgers: number;
+  new_ledgers: number;
+}
+
 // ── Parser table ──────────────────────────────────────────────────────────────
 
 /**
@@ -195,9 +252,14 @@ export type EventKey =
   | 'niffyins:vote_cast'
   | 'niffyins:clm_final'
   | 'niffyins:clm_paid'
+  | 'niffyinsure:claim_withdrawn'
   | 'niffyinsure:PolicyInitiated'
   | 'niffyinsure:PolicyRenewed'
   | 'niffyinsure:policy_terminated'
+  | 'niffyinsure:policy_expired'
+  | 'niffyinsure:BeneficiaryUpdated'
+  | 'niffyinsure:quorum_updated'
+  | 'niffyinsure:GracePeriodUpdated'
   | 'niffyins:tbl_upd'
   | 'niffyins:asset_set'
   | 'niffyins:adm_prop'
@@ -239,6 +301,9 @@ export const EVENT_PARSERS: Record<
   'niffyins:clm_paid': {
     1: (r) => r as ClaimPaidEvent,
   },
+  'niffyinsure:claim_withdrawn': {
+    1: (r) => r as ClaimWithdrawnEvent,
+  },
   'niffyinsure:PolicyInitiated': {
     1: (r) => r as PolicyInitiatedEvent,
   },
@@ -247,6 +312,18 @@ export const EVENT_PARSERS: Record<
   },
   'niffyinsure:policy_terminated': {
     1: (r) => r as PolicyTerminatedEvent,
+  },
+  'niffyinsure:policy_expired': {
+    1: (r) => r as PolicyExpiredEvent,
+  },
+  'niffyinsure:BeneficiaryUpdated': {
+    1: (r) => r as BeneficiaryUpdatedEvent,
+  },
+  'niffyinsure:quorum_updated': {
+    1: (r) => r as QuorumUpdatedEvent,
+  },
+  'niffyinsure:GracePeriodUpdated': {
+    1: (r) => r as GracePeriodUpdatedAdminEvent,
   },
   'niffyins:tbl_upd': {
     1: (r) => r as PremiumTableUpdatedEvent,

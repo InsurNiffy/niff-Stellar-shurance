@@ -54,6 +54,35 @@ jobs:
             exit 1
           fi
 
+  # ── Event dictionary sync guard ──────────────────────────────────────────
+  check-event-dictionary:
+    name: Event dictionary sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check every event in events.rs has a dictionary entry
+        run: |
+          # Extract event names from #[contractevent] macro topic strings in events.rs
+          EVENT_RS=contracts/niffyinsure/src/events.rs
+          DICT=EVENT_DICTIONARY.md
+
+          # Collect the second topic (event name) from each #[contractevent(...)] line
+          missing=0
+          while IFS= read -r name; do
+            if ! grep -qF "\"${name}\"" "$DICT" && ! grep -qF "\`${name}\`" "$DICT"; then
+              echo "::error file=${EVENT_RS}::Event '${name}' is defined in events.rs but has no entry in EVENT_DICTIONARY.md"
+              missing=$((missing + 1))
+            fi
+          done < <(grep -oP '(?<=#\[contractevent\(topics = \[")[^"]+(?=",\s*")[^"]*(?="\])' "$EVENT_RS" | \
+                   grep -oP '(?<=", ")[^"]+')
+
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::$missing event(s) missing from EVENT_DICTIONARY.md. Add entries and re-push."
+            exit 1
+          fi
+          echo "✅ All events in events.rs are documented in EVENT_DICTIONARY.md"
+
   # ── Soroban ABI golden-vector drift guard ────────────────────────────────
   golden-vectors:
     name: Soroban ABI golden vectors
