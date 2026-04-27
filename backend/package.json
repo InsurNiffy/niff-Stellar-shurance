@@ -67,7 +67,7 @@
     "@types/form-data": "^2.2.1",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
-    "@willsoto/nestjs-prometheus": "^6.0.2",
+    "@willsoto/nestjs-prometheus": "^6.1.0",
     "axios": "^1.13.6",
     "bcrypt": "^5.1.1",
     "bullmq": "^5.71.1",
