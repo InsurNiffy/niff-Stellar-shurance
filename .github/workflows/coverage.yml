@@ -63,7 +63,7 @@ jobs:
           echo "Coverage check passed: ${LINE_COV}%"
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lcov-${{ github.sha }}
           path: lcov.info
