@@ -10,6 +10,7 @@ import {
   initDeploymentRegistry,
   isWarningRow,
 } from '../events/parser-registry';
+import { ClaimEventsService } from '../events/claim-events.service';
 import { rpc as SorobanRpc, scValToNative } from '@stellar/stellar-sdk';
 import { tryNormalizeAddress } from '../common/utils/normalize-address';
 
@@ -92,6 +93,7 @@ export class IndexerService {
     private readonly soroban: SorobanService,
     private readonly config: ConfigService,
     @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly claimEvents?: ClaimEventsService,
   ) {
     this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
@@ -321,6 +323,8 @@ export class IndexerService {
         (mainTopic === 'niffyinsure' && subTopic === 'claim_paid')
       ) {
         await this.handleClaimProcessed(tx, dataNative, event);
+      } else if (mainTopic === 'niffyins' && subTopic === 'tbl_upd') {
+        await this.handlePremiumTableUpdated();
       }
 
       await this.advanceCursorInTx(tx, network, event.ledger);
@@ -331,6 +335,14 @@ export class IndexerService {
     const holder = tryNormalizeAddress(getStringValue(data.holder)) ?? getStringValue(data.holder);
     const policyId = getNumberValue(data.policy_id);
     const id = `${holder}:${policyId}`;
+
+    // Extract the SEP-41 asset contract ID bound at policy initiation.
+    // Present in all new PolicyInitiated events; null for legacy policies
+    // created before multi-asset support was added.
+    const assetContractId =
+      data.asset != null && data.asset !== ''
+        ? getStringValue(data.asset)
+        : null;
 
     await tx.policy.upsert({
       where: { id },
@@ -345,12 +357,16 @@ export class IndexerService {
         isActive: true,
         startLedger: getNumberValue(data.start_ledger),
         endLedger: getNumberValue(data.end_ledger),
+        assetContractId,
         txHash: event.txHash,
         eventIndex: 0,
       },
       update: {
         isActive: true,
         endLedger: getNumberValue(data.end_ledger),
+        // Only update assetContractId if the event carries one; never overwrite
+        // a known asset with null (re-index safety for legacy rows).
+        ...(assetContractId != null ? { assetContractId } : {}),
         updatedAt: new Date(),
       },
     });
@@ -400,6 +416,13 @@ export class IndexerService {
         imageUrls: getStringArray(data.image_urls),
       },
     });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'PENDING',
+      updatedAt: new Date().toISOString(),
+      ledger: event.ledger,
+    });
   }
 
   private async handleVoteCast(
@@ -440,6 +463,13 @@ export class IndexerService {
         rejectVotes: getNumberValue(data.reject_votes),
       },
     });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'VOTING',
+      updatedAt: new Date().toISOString(),
+      ledger: event.ledger,
+    });
   }
 
   private async handleClaimProcessed(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
@@ -452,5 +482,22 @@ export class IndexerService {
         updatedAtLedger: event.ledger,
       },
     });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'PAID',
+      updatedAt: new Date(event.ledgerClosedAt).toISOString(),
+      ledger: event.ledger,
+    });
+  }
+
+  /**
+   * On-chain `tbl_upd` means the premium multiplier table was updated.
+   * Flush the entire quote simulation cache so subsequent requests
+   * re-simulate against the new on-chain multipliers.
+   */
+  private async handlePremiumTableUpdated(): Promise<void> {
+    await this.quoteSimulationCache?.invalidateAll();
+    this.logger.log('Quote simulation cache invalidated after tbl_upd event');
   }
 }

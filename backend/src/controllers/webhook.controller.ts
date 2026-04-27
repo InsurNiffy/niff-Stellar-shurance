@@ -1,14 +1,15 @@
 /**
  * POST /webhooks/:provider
+ * GET  /webhooks/queue/stats
+ * GET  /webhooks/deliveries          — admin: delivery history
+ * POST /webhooks/deliveries/:jobId/retry — admin: manual retry
  *
  * Flow:
  *   1. Parse :provider — reject unknown providers immediately.
  *   2. Read raw body (required for HMAC over exact bytes).
  *   3. IP allowlist check (inside verifyWebhook).
  *   4. Verify signature — reject with 400 on failure.
- *      Failures are logged without exposing secrets or raw signatures.
- *   5. Idempotency check — return 200 immediately for duplicates
- *      (provider sees success, no work is re-enqueued).
+ *   5. Idempotency check — return 200 immediately for duplicates.
  *   6. Enqueue job — non-blocking.
  *   7. Return 200 immediately to satisfy provider retry expectations.
  *
@@ -17,13 +18,15 @@
  *   - Verification failures log only provider + reason, never secrets or bodies.
  *   - Constant-time comparison is used in all provider verifiers.
  *   - Timestamp validation prevents replay attacks within the tolerance window.
+ *   - Admin endpoints (/deliveries) must be protected by admin auth middleware
+ *     at the router level — this controller does not enforce auth itself.
  */
 
 import { Request, Response, NextFunction } from "express";
 import { WebhookProvider } from "../types/webhook";
 import { verifyWebhook } from "../webhooks/verify";
 import { isDuplicate } from "../webhooks/idempotency";
-import { webhookQueue } from "../webhooks/queue";
+import { webhookQueue, getDeliveryHistory, retryFailedJob, getQueueStats } from "../webhooks/queue";
 import { getWebhookConfig } from "../webhooks/config";
 
 const SUPPORTED_PROVIDERS: WebhookProvider[] = ["github", "stripe", "generic"];
@@ -66,7 +69,6 @@ export function handleWebhook(
     });
 
     if (!result.ok) {
-      // Log securely — no secrets, no raw body, no signature values
       console.warn(
         `[webhook] verification failed provider=${provider} reason=${result.reason} ip=${clientIp}`
       );
@@ -75,7 +77,6 @@ export function handleWebhook(
       return;
     }
 
-    // Idempotency: return 200 for duplicates without re-enqueueing
     const key = idempotencyKey ?? `${provider}:${Date.now()}`;
     if (idempotencyKey && isDuplicate(provider, idempotencyKey)) {
       console.info(`[webhook] duplicate delivery skipped provider=${provider} key=${idempotencyKey}`);
@@ -83,7 +84,6 @@ export function handleWebhook(
       return;
     }
 
-    // Enqueue — non-blocking, response sent immediately after
     webhookQueue.add("webhook", {
       provider,
       idempotencyKey: key,
@@ -100,6 +100,30 @@ export function handleWebhook(
   }
 }
 
-export function getQueueStats(_req: Request, res: Response): void {
-  res.json(webhookQueue.stats());
+export async function getQueueStatsHandler(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await getQueueStats());
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** GET /webhooks/deliveries — admin: recent delivery history */
+export async function getDeliveryHistoryHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit ?? '100'), 10), 500);
+    res.json(await getDeliveryHistory(limit));
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** POST /webhooks/deliveries/:jobId/retry — admin: manually retry a failed job */
+export async function retryDeliveryHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await retryFailedJob(req.params.jobId);
+    res.json({ status: "retried" });
+  } catch (err) {
+    next(err);
+  }
 }

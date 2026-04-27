@@ -8,7 +8,7 @@ use niffyinsure::{
     NiffyInsureClient,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events, Ledger},
     vec, Address, Env, String,
 };
 
@@ -69,6 +69,42 @@ fn withdraw_unauthorized_reverts() {
 }
 
 #[test]
+fn withdraw_requires_claimant_auth() {
+    let (env, _, client, _, _) = setup();
+    let holder = Address::generate(&env);
+    seed(&client, &holder, 1_000_000, 10_000);
+    let details = String::from_str(&env, "x");
+    let urls = vec![&env];
+    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls, &None);
+
+    env.mock_auths(&[]);
+    assert!(client.try_withdraw_claim(&holder, &cid).is_err());
+}
+
+#[test]
+fn withdraw_emits_claim_withdrawn_event() {
+    let (env, _, client, _, _) = setup();
+    let holder = Address::generate(&env);
+    seed(&client, &holder, 1_000_000, 10_000);
+    let details = String::from_str(&env, "filed in error");
+    let urls = vec![&env];
+    let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls, &None);
+
+    client.withdraw_claim(&holder, &cid);
+
+    let all_events = env.events().all();
+    let mut found = false;
+    for (_, topics, _) in all_events.iter() {
+        let topic_debug = soroban_sdk::testutils::arbitrary::std::format!("{:?}", topics);
+        if topic_debug.contains("claim_withdrawn") {
+            found = true;
+        }
+    }
+
+    assert!(found, "withdrawal must emit claim_withdrawn");
+}
+
+#[test]
 fn withdraw_restores_rate_limit_anchor_for_refile() {
     let env = Env::default();
     env.mock_all_auths();
@@ -109,7 +145,8 @@ fn withdrawn_claim_cannot_be_finalized_or_paid() {
     let cid = client.file_claim(&holder, &1u32, &100_000i128, &details, &urls, &None);
     client.withdraw_claim(&holder, &cid);
 
-    env.ledger().with_mut(|l| l.sequence_number += RATE_LIMIT_WINDOW_LEDGERS + 10);
+    env.ledger()
+        .with_mut(|l| l.sequence_number += RATE_LIMIT_WINDOW_LEDGERS + 10);
     assert!(client.try_finalize_claim(&cid).is_err());
     assert!(client.try_process_claim(&cid).is_err());
 }

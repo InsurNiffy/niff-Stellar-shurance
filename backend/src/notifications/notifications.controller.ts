@@ -13,9 +13,58 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { NotificationsService } from './notifications.service';
 import { NotificationsConsumer } from './notifications.consumer';
 import { UpdatePreferencesDto, TriggerEventDto } from './dto/update-preferences.dto';
+import { NotificationPreferenceKey } from './notification-preference.types';
+
+const ALLOWED_PREFERENCE_KEYS: NotificationPreferenceKey[] = [
+  'renewalRemindersEnabled',
+  'claimUpdatesEnabled',
+];
 
 function isValidPublicKey(key: string): boolean {
   return /^G[A-Z2-7]{55}$/.test(key);
+}
+
+function validateNotificationPreferenceUpdate(
+  input: Record<string, unknown> | undefined,
+): {
+  renewalRemindersEnabled?: boolean;
+  claimUpdatesEnabled?: boolean;
+} {
+  const body = input ?? {};
+  const unknownFields = Object.keys(body).filter(
+    (key) => !ALLOWED_PREFERENCE_KEYS.includes(key as NotificationPreferenceKey),
+  );
+
+  if (unknownFields.length > 0) {
+    throw new BadRequestException({
+      code: 'UNKNOWN_NOTIFICATION_PREFERENCE_FIELDS',
+      message: `Unknown notification preference fields: ${unknownFields.join(', ')}`,
+    });
+  }
+
+  const hasInvalidValue = Object.entries(body).some(
+    ([key, value]) =>
+      ALLOWED_PREFERENCE_KEYS.includes(key as NotificationPreferenceKey) &&
+      typeof value !== 'boolean',
+  );
+
+  if (hasInvalidValue) {
+    throw new BadRequestException({
+      code: 'INVALID_NOTIFICATION_PREFERENCE_VALUE',
+      message: 'Notification preferences must be boolean values when provided.',
+    });
+  }
+
+  return {
+    renewalRemindersEnabled:
+      typeof body.renewalRemindersEnabled === 'boolean'
+        ? body.renewalRemindersEnabled
+        : undefined,
+    claimUpdatesEnabled:
+      typeof body.claimUpdatesEnabled === 'boolean'
+        ? body.claimUpdatesEnabled
+        : undefined,
+  };
 }
 
 @ApiTags('Notifications')
@@ -46,6 +95,26 @@ export class NotificationsController {
       telegramEnabled: p.telegramEnabled,
       telegramChatId: p.telegramChatId ? '***' : undefined,
     };
+  }
+
+  @Get('users/:userId/preferences')
+  @ApiOperation({ summary: 'Get per-user notification preferences' })
+  async getUserNotificationPreferences(@Param('userId') userId: string) {
+    const preferences = await this.service.getUserNotificationPreferences(userId);
+    return { userId, preferences };
+  }
+
+  @Put('users/:userId/preferences')
+  @ApiOperation({ summary: 'Update per-user notification preferences' })
+  async updateUserNotificationPreferences(
+    @Param('userId') userId: string,
+    @Body() body: Record<string, unknown> | undefined,
+  ) {
+    const preferences = await this.service.updateUserNotificationPreferences(
+      userId,
+      validateNotificationPreferenceUpdate(body),
+    );
+    return { userId, preferences };
   }
 
   /**

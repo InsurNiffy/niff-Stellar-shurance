@@ -9,7 +9,7 @@
 ///
 /// Production deployments SHOULD use a Stellar multisig account as admin.
 /// See SECURITY.md for the full threat matrix and multisig setup guidance.
-use soroban_sdk::{contracterror, contractevent, panic_with_error, Address, Env};
+use soroban_sdk::{contracterror, contractevent, contracttype, panic_with_error, Address, Env};
 
 use crate::storage;
 
@@ -49,23 +49,76 @@ pub enum AdminError {
     CannotSelfConfirm = 114,
     /// Admin action window out of bounds.
     InvalidAdminActionWindow = 115,
+    /// Sweep notice period has not elapsed since the proposal.
+    SweepNoticePeriodActive = 116,
+    /// Max evidence count outside the absolute hard bound.
+    MaxEvidenceCountOutOfBounds = 117,
 }
 
-/// Types for two-step high-risk admin actions (treasury rotation, token sweeps)
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Payload for a treasury-rotation proposal.
 #[contracttype]
-pub enum AdminAction {
-    TreasuryRotation { new_treasury: Address },
-    TokenSweep {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryRotationPayload {
+    pub new_treasury: Address,
+}
+
+/// Payload for a token-sweep proposal.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenSweepPayload {
+    pub asset: Address,
+    pub recipient: Address,
+    pub amount: i128,
+    pub reason_code: u32,
+}
+
+/// Discriminant tag for a pending admin action.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AdminActionTag {
+    TreasuryRotation,
+    TokenSweep,
+}
+
+/// Two-step high-risk admin action stored in pending state.
+///
+/// The tag + payload fields replace a single enum-with-struct-variants because
+/// Soroban `#[contracttype]` does not support enum variants with named fields.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminAction {
+    pub tag: AdminActionTag,
+    /// Set when tag == TreasuryRotation; None otherwise.
+    pub treasury_rotation: Option<TreasuryRotationPayload>,
+    /// Set when tag == TokenSweep; None otherwise.
+    pub token_sweep: Option<TokenSweepPayload>,
+}
+
+impl AdminAction {
+    pub fn treasury_rotation(new_treasury: Address) -> Self {
+        Self {
+            tag: AdminActionTag::TreasuryRotation,
+            treasury_rotation: Some(TreasuryRotationPayload { new_treasury }),
+            token_sweep: None,
+        }
+    }
+
+    pub fn token_sweep(
         asset: Address,
         recipient: Address,
         amount: i128,
         reason_code: u32,
-    },
+    ) -> Self {
+        Self {
+            tag: AdminActionTag::TokenSweep,
+            treasury_rotation: None,
+            token_sweep: Some(TokenSweepPayload { asset, recipient, amount, reason_code }),
+        }
+    }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingAdminAction {
     pub proposer: Address,
     pub action: AdminAction,
@@ -204,21 +257,26 @@ pub fn propose_admin_action(env: &Env, action: AdminAction) {
     .publish(env);
 }
 
-/// Confirm and execute a pending admin action. **Second signer** (≠ proposer) must authorize.
-/// Executes the action payload, then clears pending state.
-pub fn confirm_admin_action(env: &Env) {
+/// Confirm and execute a pending admin action.
+///
+/// `confirmer` must be a different address from the proposer (no self-confirmation).
+/// The confirmer must also be the current admin — this enforces that only the admin
+/// key holder can confirm, preventing arbitrary third parties from executing proposals.
+pub fn confirm_admin_action(env: &Env, confirmer: Address) {
+    confirmer.require_auth();
     storage::bump_instance(env);
 
     let pending = storage::get_pending_admin_action(env)
         .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdminAction));
 
-    // Check expiry
+    // Check expiry before anything else.
     let now = env.ledger().sequence();
     if now > pending.expiry_ledger {
         storage::clear_pending_admin_action(env);
         AdminActionExpired {
             proposer: pending.proposer.clone(),
-            action_id: pending.expiry_ledger.saturating_sub(storage::get_admin_action_window_ledgers(env)),
+            action_id: pending.expiry_ledger
+                .saturating_sub(storage::get_admin_action_window_ledgers(env)),
             expiry_ledger: pending.expiry_ledger,
             action: pending.action.clone(),
         }
@@ -226,30 +284,28 @@ pub fn confirm_admin_action(env: &Env) {
         panic_with_error!(env, AdminError::AdminActionExpired);
     }
 
-    // Second signer auth (different from proposer)
-    let confirmer = env.invoker();
+    // Confirmer must differ from proposer.
     if confirmer == pending.proposer {
         panic_with_error!(env, AdminError::CannotSelfConfirm);
     }
-    pending.proposer.require_auth();  // Proposer must also auth? Or just confirmer?
 
-    // Execute action
-    match pending.action.clone() {
-        AdminAction::TreasuryRotation { new_treasury } => {
+    // Execute action payload.
+    let action = pending.action.clone();
+    match action.tag {
+        AdminActionTag::TreasuryRotation => {
+            let p = action.treasury_rotation.clone()
+                .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdminAction));
             let old_treasury = storage::get_treasury(env);
-            storage::set_treasury(env, &new_treasury);
-            TreasuryUpdated {
-                old_treasury,
-                new_treasury,
-            }
-            .publish(env);
+            storage::set_treasury(env, &p.new_treasury);
+            TreasuryUpdated { old_treasury, new_treasury: p.new_treasury }.publish(env);
         }
-        AdminAction::TokenSweep { asset, recipient, amount, reason_code } => {
-            sweep_token_inner(env, asset, recipient, amount, reason_code);
+        AdminActionTag::TokenSweep => {
+            let p = action.token_sweep.clone()
+                .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdminAction));
+            sweep_token_inner(env, p.asset, p.recipient, p.amount, p.reason_code);
         }
     }
 
-    // Clear pending
     storage::clear_pending_admin_action(env);
     AdminActionConfirmed {
         proposer: pending.proposer,
@@ -384,6 +440,10 @@ pub fn sweep_token(env: &Env, asset: Address, recipient: Address, amount: i128, 
 }
 
 fn sweep_token_inner(env: &Env, asset: Address, recipient: Address, amount: i128, reason_code: u32) {
+    // Validation: amount must be > 0
+    if amount <= 0 {
+        panic_with_error!(env, AdminError::InvalidSweepAmount);
+    }
     // Validation: asset must be allowlisted (prevents arbitrary token sweeps)
     if !storage::is_allowed_asset(env, &asset) {
         panic_with_error!(env, AdminError::AssetNotAllowlisted);
@@ -392,6 +452,19 @@ fn sweep_token_inner(env: &Env, asset: Address, recipient: Address, amount: i128
     if let Some(cap) = storage::get_sweep_cap(env) {
         if amount > cap {
             panic_with_error!(env, AdminError::SweepCapExceeded);
+        }
+    }
+    // On-chain notice period: the pending action must have been proposed at least
+    // `sweep_notice_period_ledgers` ago before execution is allowed.
+    let notice_period = storage::get_sweep_notice_period_ledgers(env);
+    if notice_period > 0 {
+        let pending = storage::get_pending_admin_action(env)
+            .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdminAction));
+        let proposed_at = pending.expiry_ledger
+            .saturating_sub(storage::get_admin_action_window_ledgers(env));
+        let earliest_execution = proposed_at.saturating_add(notice_period);
+        if env.ledger().sequence() < earliest_execution {
+            panic_with_error!(env, AdminError::SweepNoticePeriodActive);
         }
     }
 
@@ -465,6 +538,14 @@ pub fn set_sweep_cap(env: &Env, cap: Option<i128>) {
     storage::set_sweep_cap(env, cap);
 }
 
+/// Set the on-chain notice period (in ledgers) that must elapse between a sweep
+/// proposal and its execution. Set to 0 to disable (not recommended for mainnet).
+/// Admin must authorize.
+pub fn set_sweep_notice_period(env: &Env, ledgers: u32) {
+    let _admin = require_admin(env);
+    storage::set_sweep_notice_period_ledgers(env, ledgers);
+}
+
 #[contractevent(topics = ["niffyinsure", "max_evidence_count_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaxEvidenceCountUpdated {
@@ -479,7 +560,7 @@ pub struct MaxEvidenceCountUpdated {
 pub fn set_max_evidence_count(env: &Env, new_count: u32) -> Result<(), AdminError> {
     let _admin = require_admin(env);
     if new_count > storage::MAX_EVIDENCE_COUNT_HARD_MAX {
-        return Err(AdminError::InvalidAddress); // reuse closest available error
+        return Err(AdminError::MaxEvidenceCountOutOfBounds);
     }
     let old_count = storage::get_max_evidence_count(env);
     storage::set_max_evidence_count(env, new_count);

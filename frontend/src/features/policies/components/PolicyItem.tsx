@@ -5,29 +5,47 @@ import { SECS_PER_LEDGER } from '@/lib/schemas/vote';
 import { PendingBadge } from '@/components/ui/PendingBadge';
 import type { OptimisticStatus } from '@/lib/optimistic';
 import type { PolicyDto } from '../api';
+import { formatTokenAmount } from '@/lib/formatTokenAmount';
 
-/** Format stroops → locale-aware XLM string (7 decimals). */
-export function formatXlm(stroops: string, locale?: string): string {
-  const n = Number(stroops) / 1e7;
-  return n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 7 });
+/** Format minor-unit token amount using decimals from the coverage_summary manifest. */
+export function formatXlm(stroops: string, locale?: string, decimals = 7): string {
+  return formatTokenAmount(stroops, decimals, locale ?? 'en-US')
 }
 
 /** Approximate wall-clock seconds remaining from ledgers_remaining. */
-function expiryLabel(ledgersRemaining: number): string {
-  if (ledgersRemaining <= 0) return 'Expired';
-  const totalSecs = ledgersRemaining * SECS_PER_LEDGER;
-  const days = Math.floor(totalSecs / 86400);
-  if (days > 0) return `${days}d remaining`;
-  const hours = Math.floor(totalSecs / 3600);
-  if (hours > 0) return `${hours}h remaining`;
-  return `${Math.floor(totalSecs / 60)}m remaining`;
+function expiryLabel(ledgersRemaining: number, graceLedgersRemaining?: number): string {
+  if (ledgersRemaining > 0) {
+    const totalSecs = ledgersRemaining * SECS_PER_LEDGER;
+    const days = Math.floor(totalSecs / 86400);
+    if (days > 0) return `${days}d remaining`;
+    const hours = Math.floor(totalSecs / 3600);
+    if (hours > 0) return `${hours}h remaining`;
+    return `${Math.floor(totalSecs / 60)}m remaining`;
+  }
+  if (graceLedgersRemaining !== undefined && graceLedgersRemaining > 0) {
+    const totalSecs = graceLedgersRemaining * SECS_PER_LEDGER;
+    const hours = Math.floor(totalSecs / 3600);
+    if (hours > 0) return `Grace period — ${hours}h to renew`;
+    return `Grace period — ${Math.floor(totalSecs / 60)}m to renew`;
+  }
+  return 'Expired';
 }
+
+// Ledger constants — must match contracts/niffyinsure/src/ledger.rs
+// RENEWAL_WINDOW_LEDGERS = 3 * 17_280 = 51_840 (~3 days)
+// DEFAULT_GRACE_PERIOD_LEDGERS = 17_280 (~1 day)
+// The backend expiry_countdown.ledgers_remaining is negative when past end_ledger.
+const RENEWAL_WINDOW_LEDGERS = 51_840;
+const DEFAULT_GRACE_PERIOD_LEDGERS = 17_280;
 
 interface PolicyCardProps {
   policy: PolicyDto;
   onRenew: (policy: PolicyDto) => void;
   onTerminate: (policy: PolicyDto) => void;
+  onFileClaim: (policy: PolicyDto) => void;
   currentLedger: number | null;
+  /** Admin-configured grace period in ledgers. Defaults to DEFAULT_GRACE_PERIOD_LEDGERS when not provided. */
+  gracePeriodLedgers?: number;
   optimisticStatus?: OptimisticStatus;
   optimisticError?: string;
 }
@@ -35,31 +53,40 @@ interface PolicyCardProps {
 /**
  * Card layout — used on mobile and when the user selects card view.
  * Actions are disabled with tooltip text when contract rules forbid them.
+ *
+ * Renewal window: [end - RENEWAL_WINDOW_LEDGERS, end + grace_period_ledgers)
+ * This matches the on-chain check in contracts/niffyinsure/src/ledger.rs:
+ *   is_in_renewal_window_with_grace(now, end, RENEWAL_WINDOW_LEDGERS, grace)
  */
-export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, optimisticStatus, optimisticError }: PolicyCardProps) {
+export function PolicyCard({ policy, onRenew, onTerminate, onFileClaim, currentLedger, gracePeriodLedgers, optimisticStatus, optimisticError }: PolicyCardProps) {
   const { coverage_summary: cs, expiry_countdown: ec } = policy;
+  const grace = gracePeriodLedgers ?? DEFAULT_GRACE_PERIOD_LEDGERS;
 
-  // Renewal gate: policy must be active and within 30 days (~518_400 ledgers) of expiry
-  const RENEWAL_WINDOW_LEDGERS = 518_400;
-  const canRenew =
-    policy.is_active &&
-    ec.ledgers_remaining > 0 &&
-    ec.ledgers_remaining <= RENEWAL_WINDOW_LEDGERS;
+  // ledgers_remaining is negative when past end_ledger (expired but possibly in grace)
+  const inRenewalWindow = ec.ledgers_remaining <= RENEWAL_WINDOW_LEDGERS;
+  const inGracePeriod = ec.ledgers_remaining <= 0 && ec.ledgers_remaining > -grace;
+  const graceLedgersRemaining = inGracePeriod ? ec.ledgers_remaining + grace : undefined;
+
+  const canRenew = policy.is_active && (inRenewalWindow || inGracePeriod);
   const renewDisabledReason = !policy.is_active
     ? 'Policy is not active'
-    : ec.ledgers_remaining <= 0
-      ? 'Policy has already expired'
+    : ec.ledgers_remaining <= -grace
+      ? 'Grace period has ended — policy has lapsed'
       : ec.ledgers_remaining > RENEWAL_WINDOW_LEDGERS
-        ? 'Renewal opens within 30 days of expiry'
+        ? 'Renewal opens within 3 days of expiry'
         : undefined;
 
   // Terminate gate: only active policies can be terminated
   const canTerminate = policy.is_active;
   const terminateDisabledReason = !policy.is_active ? 'Policy is already inactive' : undefined;
 
-  const statusLabel = policy.is_active ? 'Active' : 'Expired';
+  const statusLabel = policy.is_active
+    ? inGracePeriod ? 'Grace Period' : 'Active'
+    : 'Expired';
   const statusClass = policy.is_active
-    ? 'bg-green-100 text-green-800'
+    ? inGracePeriod
+      ? 'bg-yellow-100 text-yellow-800'
+      : 'bg-green-100 text-green-800'
     : 'bg-gray-100 text-gray-600';
 
   return (
@@ -104,7 +131,7 @@ export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, optimi
       {/* Expiry */}
       <div className="text-xs text-gray-500 space-y-0.5">
         <p>
-          <span className="font-medium text-gray-700">{expiryLabel(ec.ledgers_remaining)}</span>
+          <span className="font-medium text-gray-700">{expiryLabel(ec.ledgers_remaining, graceLedgersRemaining)}</span>
           {' '}· ledger {ec.end_ledger}
         </p>
         {currentLedger !== null && (
@@ -126,7 +153,20 @@ export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, optimi
       )}
 
       {/* Actions */}
-      <div className="flex gap-2 pt-1">
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Link
+          href={`/policy/${encodeURIComponent(policy.holder)}/${policy.policy_id}`}
+          className="min-h-[44px] min-w-[44px] inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500"
+        >
+          View Details
+        </Link>
+        <ActionButton
+          label="File Claim"
+          enabled={policy.is_active}
+          disabledReason={!policy.is_active ? 'Policy is not active' : undefined}
+          onClick={() => onFileClaim(policy)}
+          className="border-orange-500 text-orange-600 hover:bg-orange-50"
+        />
         <ActionButton
           label="Renew"
           enabled={canRenew}
@@ -149,28 +189,33 @@ export function PolicyCard({ policy, onRenew, onTerminate, currentLedger, optimi
 /**
  * Row layout — used in table view on desktop.
  */
-export function PolicyRow({ policy, onRenew, onTerminate, currentLedger, optimisticStatus, optimisticError }: PolicyCardProps) {
+export function PolicyRow({ policy, onRenew, onTerminate, onFileClaim, currentLedger, gracePeriodLedgers, optimisticStatus, optimisticError }: PolicyCardProps) {
   const { coverage_summary: cs, expiry_countdown: ec } = policy;
+  const grace = gracePeriodLedgers ?? DEFAULT_GRACE_PERIOD_LEDGERS;
 
-  const RENEWAL_WINDOW_LEDGERS = 518_400;
-  const canRenew =
-    policy.is_active &&
-    ec.ledgers_remaining > 0 &&
-    ec.ledgers_remaining <= RENEWAL_WINDOW_LEDGERS;
+  const inRenewalWindow = ec.ledgers_remaining <= RENEWAL_WINDOW_LEDGERS;
+  const inGracePeriod = ec.ledgers_remaining <= 0 && ec.ledgers_remaining > -grace;
+  const graceLedgersRemaining = inGracePeriod ? ec.ledgers_remaining + grace : undefined;
+
+  const canRenew = policy.is_active && (inRenewalWindow || inGracePeriod);
   const renewDisabledReason = !policy.is_active
     ? 'Policy is not active'
-    : ec.ledgers_remaining <= 0
-      ? 'Policy has already expired'
+    : ec.ledgers_remaining <= -grace
+      ? 'Grace period has ended — policy has lapsed'
       : ec.ledgers_remaining > RENEWAL_WINDOW_LEDGERS
-        ? 'Renewal opens within 30 days of expiry'
+        ? 'Renewal opens within 3 days of expiry'
         : undefined;
 
   const canTerminate = policy.is_active;
   const terminateDisabledReason = !policy.is_active ? 'Policy is already inactive' : undefined;
 
-  const statusLabel = policy.is_active ? 'Active' : 'Expired';
+  const statusLabel = policy.is_active
+    ? inGracePeriod ? 'Grace Period' : 'Active'
+    : 'Expired';
   const statusClass = policy.is_active
-    ? 'bg-green-100 text-green-800'
+    ? inGracePeriod
+      ? 'bg-yellow-100 text-yellow-800'
+      : 'bg-green-100 text-green-800'
     : 'bg-gray-100 text-gray-600';
 
   return (
@@ -202,11 +247,24 @@ export function PolicyRow({ policy, onRenew, onTerminate, currentLedger, optimis
       </td>
       <td className="px-4 py-3 text-sm">
         <span title={currentLedger !== null ? `Current ledger: ${currentLedger} · indexer may lag ~15 s` : undefined}>
-          {expiryLabel(ec.ledgers_remaining)}
+          {expiryLabel(ec.ledgers_remaining, graceLedgersRemaining)}
         </span>
       </td>
       <td className="px-4 py-3 text-sm">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/policy/${encodeURIComponent(policy.holder)}/${policy.policy_id}`}
+            className="min-h-[44px] min-w-[44px] inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500"
+          >
+            View Details
+          </Link>
+          <ActionButton
+            label="File Claim"
+            enabled={policy.is_active}
+            disabledReason={!policy.is_active ? 'Policy is not active' : undefined}
+            onClick={() => onFileClaim(policy)}
+            className="border-orange-500 text-orange-600 hover:bg-orange-50"
+          />
           <ActionButton
             label="Renew"
             enabled={canRenew}

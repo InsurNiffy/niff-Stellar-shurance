@@ -189,3 +189,53 @@ There is **no protocol reward** for keepers; operators run them to support produ
 ### Failure modes
 - `process_expired`: reverts with `PolicyLapseNotReached` until grace end; `OpenClaimsMustFinalize` if a claim is still open on that policy.
 - `process_deadline`: reverts with `VotingWindowStillOpen` until after the voting deadline ledger; `ClaimAlreadyTerminal` if already finalized; `ClaimNotProcessing` if the claim left `Processing` without being terminal (e.g. appeal flows); `CalculatorPaused` while claims are paused (unlike `finalize_claim`, which panics on pause).
+
+---
+
+## N. Admin Policy Termination with Open Claims (`allow_open_claims = true`)
+
+### Overview
+
+The `admin_terminate_policy` entrypoint accepts an `allow_open_claims` flag that,
+when set to `true`, terminates a policy even if a claim is currently in `Processing`.
+This is a **privileged governance action** with documented risks.
+
+### When to use
+
+Only use `allow_open_claims = true` when:
+
+1. The policy must be terminated immediately (e.g., confirmed fraud, regulatory action).
+2. The DAO has been notified and accepts that the in-flight claim will resolve independently.
+3. Legal has confirmed the termination does not violate the holder's claim rights.
+
+### What happens on-chain
+
+- The policy is set `is_active = false` immediately.
+- The `PolicyTerminated` event is emitted with `open_claim_bypass = 1` and `open_claims > 0`
+  as the on-chain warning signal for indexers and operators.
+- The in-flight claim vote **can still complete** after termination:
+  - If **approved**: `process_claim` can still execute the payout (payout guard checks
+    claim status, not policy status).
+  - If **rejected**: `on_reject` fires `ClaimRejected` and `StrikeIncremented` for
+    auditability, but **skips** `PolicyDeactivated` (policy already inactive).
+- Strike count is incremented on rejection even though the policy is inactive.
+- The `termination_reason` set at termination time is preserved; it is never overwritten
+  by `ExcessiveRejections` from a subsequent rejection.
+
+### Risks
+
+| Risk | Mitigation |
+|---|---|
+| Holder loses claim rights if vote is manipulated post-termination | DAO snapshot is frozen at `file_claim`; admin cannot alter voter eligibility |
+| Double-deactivation event spam | `on_reject` checks `policy.is_active` before emitting `PolicyDeactivated` |
+| Approved claim payout blocked | `process_claim` is gated on claim status only; payout proceeds normally |
+| Operator error (wrong policy) | Require two-step confirmation (propose + confirm) via `propose_admin_action` |
+
+### Recommended procedure
+
+1. Confirm the policy ID and holder address on a second channel.
+2. Notify the DAO via governance forum before executing.
+3. Call `admin_terminate_policy` with `allow_open_claims = true` from a multisig account.
+4. Monitor the `PolicyTerminated` event in the indexer for `open_claim_bypass = 1`.
+5. Track the in-flight claim to resolution; ensure payout or rejection is processed.
+6. Document the action in the audit log with reason code and DAO approval reference.

@@ -1,0 +1,67 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "ops"
+    commit-message:
+      prefix: "chore(actions)"
+
+  # Frontend npm
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "frontend"
+    commit-message:
+      prefix: "chore(deps/frontend)"
+    groups:
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+      storybook:
+        patterns:
+          - "@storybook/*"
+          - "storybook"
+      tanstack:
+        patterns:
+          - "@tanstack/*"
+
+  # Backend npm
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "backend"
+    commit-message:
+      prefix: "chore(deps/backend)"
+    groups:
+      nestjs:
+        patterns:
+          - "@nestjs/*"
+      opentelemetry:
+        patterns:
+          - "@opentelemetry/*"
+
+  # Rust / Cargo
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "contracts"
+    commit-message:
+      prefix: "chore(deps/cargo)"

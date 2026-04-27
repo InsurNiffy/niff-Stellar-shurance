@@ -1,67 +1,47 @@
 import { z } from 'zod'
 
-export const COVERAGE_TIERS = ['Basic', 'Standard', 'Premium'] as const
-export type CoverageTier = (typeof COVERAGE_TIERS)[number]
-
+// Mirrors backend/src/quote/dto/generate-premium.dto.ts
 export const QuoteFormSchema = z.object({
-  contractAddress: z.string()
-    .min(1, 'Contract address is required')
-    .regex(/^G[A-Z0-9]{55}$/, 'Invalid Stellar address format'),
-  
-  coverageAmount: z.number()
-    .min(100, 'Minimum coverage amount is 100 XLM')
-    .max(1000000, 'Maximum coverage amount is 1,000,000 XLM')
-    .positive('Coverage amount must be positive'),
-  
-  coverageTier: z.enum(COVERAGE_TIERS, {
+  policy_type: z.enum(['Auto', 'Health', 'Property'], {
+    message: 'Please select a policy type',
+  }),
+  region: z.enum(['Low', 'Medium', 'High'], {
+    message: 'Please select a region risk tier',
+  }),
+  coverage_tier: z.enum(['Basic', 'Standard', 'Premium'], {
     message: 'Please select a coverage tier',
   }),
-
-  riskCategory: z.enum(['LOW', 'MEDIUM', 'HIGH'], {
-    message: 'Please select a risk category'
-  }),
-  
-  contractType: z.enum(['DEFI_PROTOCOL', 'SMART_CONTRACT', 'LIQUIDITY_POOL', 'BRIDGE'], {
-    message: 'Please select a contract type'
-  }),
-  
-  duration: z.number()
-    .min(7, 'Minimum duration is 7 days')
-    .max(365, 'Maximum duration is 365 days')
-    .positive('Duration must be positive'),
-  
-  description: z.string()
-    .min(10, 'Description must be at least 10 characters')
-    .max(500, 'Description must not exceed 500 characters')
+  age: z
+    .number({ invalid_type_error: 'Age is required' })
+    .int('Age must be a whole number')
+    .min(1, 'Age must be at least 1')
+    .max(120, 'Age must be at most 120'),
+  risk_score: z
+    .number({ invalid_type_error: 'Risk score is required' })
+    .int('Risk score must be a whole number')
+    .min(1, 'Risk score must be between 1 and 10')
+    .max(10, 'Risk score must be between 1 and 10'),
+  source_account: z
+    .string()
+    .regex(/^G[A-Z2-7]{55}$/, 'Must be a valid Stellar public key (G...)')
     .optional()
     .or(z.literal('')),
-  
-  additionalCoverage: z.boolean(),
-  
-  customParameters: z.record(z.string(), z.any()).optional(),
 })
 
 export type QuoteFormData = z.infer<typeof QuoteFormSchema>
 
+// Response from POST /quote/generate-premium
 export const QuoteResponseSchema = z.object({
-  id: z.string(),
-  quoteId: z.string(),
-  premium: z.number(),
-  coverageAmount: z.number(),
-  currency: z.string(),
-  expiresAt: z.string(),
-  riskScore: z.number(),
-  terms: z.array(z.string()),
-  paymentAddress: z.string(),
-  createdAt: z.string(),
+  premiumStroops: z.string(),
+  premiumXlm: z.string(),
+  minResourceFee: z.string(),
+  source: z.enum(['simulation', 'local_fallback']),
+  inputs: z.object({
+    policy_type: z.string(),
+    region: z.string(),
+    age: z.number(),
+    risk_score: z.number(),
+  }),
 })
 
 export type QuoteResponse = z.infer<typeof QuoteResponseSchema>
-
-export const QuoteErrorSchema = z.object({
-  code: z.string(),
-  message: z.string(),
-  details: z.record(z.string(), z.any()).optional(),
-})
-
-export type QuoteError = z.infer<typeof QuoteErrorSchema>

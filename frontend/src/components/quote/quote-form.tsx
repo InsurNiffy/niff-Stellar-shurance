@@ -1,374 +1,380 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Loader2, AlertCircle, CheckCircle, Clock } from 'lucide-react'
-import { useState, useEffect } from 'react'
-import { useForm, Controller } from 'react-hook-form'
+import { AlertCircle, CheckCircle, Clock, Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import Link from 'next/link'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { NumericInput } from '@/components/ui/numeric-input'
-import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/use-toast'
-import { QuoteAPI, QuoteError, getQuoteErrorMessage } from '@/lib/api/quote'
-import { QuoteFormSchema, QuoteFormData, QuoteResponse } from '@/lib/schemas/quote'
+import { generatePremium, QuoteError, getQuoteErrorMessage, QUOTE_TTL_SECONDS } from '@/lib/api/quote'
+import { QuoteFormSchema, type QuoteFormData, type QuoteResponse } from '@/lib/schemas/quote'
+import { formatTokenAmount } from '@/lib/formatTokenAmount'
+import { useWallet } from '@/hooks/use-wallet'
 
+const STEPS = ['Policy Type', 'Region & Age', 'Coverage', 'Result'] as const
+type Step = 0 | 1 | 2 | 3
 
-interface QuoteFormProps {
-  onQuoteReceived?: (quote: QuoteResponse) => void
+function StepIndicator({ current }: { current: Step }) {
+  return (
+    <ol className="flex items-center gap-0 mb-8" aria-label="Quote steps">
+      {STEPS.map((label, i) => {
+        const done = i < current
+        const active = i === current
+        return (
+          <li key={label} className="flex items-center flex-1 last:flex-none">
+            <div className="flex flex-col items-center gap-1">
+              <span
+                className={[
+                  'w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border-2',
+                  done ? 'bg-blue-600 border-blue-600 text-white' : active ? 'border-blue-600 text-blue-600' : 'border-gray-300 text-gray-400',
+                ].join(' ')}
+                aria-current={active ? 'step' : undefined}
+              >
+                {done ? <CheckCircle className="w-4 h-4" /> : i + 1}
+              </span>
+              <span className={`text-xs hidden sm:block ${active ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
+                {label}
+              </span>
+            </div>
+            {i < STEPS.length - 1 && (
+              <div className={`flex-1 h-0.5 mx-2 ${done ? 'bg-blue-600' : 'bg-gray-200'}`} aria-hidden="true" />
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
 }
 
-export function QuoteForm({ onQuoteReceived }: QuoteFormProps) {
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null
+  return (
+    <p className="text-sm text-destructive flex items-center gap-1 mt-1" role="alert">
+      <AlertCircle className="h-3 w-3 flex-shrink-0" />
+      {message}
+    </p>
+  )
+}
+
+function SelectField({
+  id, label, error, children, ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement> & { id: string; label: string; error?: string }) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <select
+        id={id}
+        className={[
+          'w-full h-11 rounded-md border bg-background px-3 py-2 text-base ring-offset-background',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+          error ? 'border-destructive' : 'border-input',
+        ].join(' ')}
+        {...props}
+      >
+        {children}
+      </select>
+      <FieldError message={error} />
+    </div>
+  )
+}
+
+function NumberField({
+  id, label, error, ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { id: string; label: string; error?: string }) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <input
+        id={id}
+        type="number"
+        className={[
+          'w-full h-11 rounded-md border bg-background px-3 py-2 text-base ring-offset-background',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+          error ? 'border-destructive' : 'border-input',
+        ].join(' ')}
+        {...props}
+      />
+      <FieldError message={error} />
+    </div>
+  )
+}
+
+function TtlCountdown({ expiresAt, onExpired }: { expiresAt: number; onExpired: () => void }) {
+  const [remaining, setRemaining] = useState(() => Math.max(0, expiresAt - Date.now()))
+  const expiredRef = useRef(false)
+
+  useEffect(() => {
+    expiredRef.current = false
+    const id = setInterval(() => {
+      const r = Math.max(0, expiresAt - Date.now())
+      setRemaining(r)
+      if (r === 0 && !expiredRef.current) {
+        expiredRef.current = true
+        onExpired()
+      }
+    }, 1000)
+    return () => clearInterval(id)
+  }, [expiresAt, onExpired])
+
+  const secs = Math.floor(remaining / 1000)
+  const mins = Math.floor(secs / 60)
+  const s = secs % 60
+  const urgent = secs < 60
+
+  return (
+    <div className={`flex items-center gap-1.5 text-sm ${urgent ? 'text-orange-600' : 'text-muted-foreground'}`}>
+      <Clock className="h-4 w-4" />
+      <span>
+        {remaining === 0 ? 'Quote expired' : `Quote valid for ${mins}:${String(s).padStart(2, '0')}`}
+      </span>
+    </div>
+  )
+}
+
+export function QuoteForm() {
   const { toast } = useToast()
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [currentQuote, setCurrentQuote] = useState<QuoteResponse | null>(null)
-  const [isCalculating, setIsCalculating] = useState(false)
-  const [quoteStatus, setQuoteStatus] = useState('')
-  
+  const { address } = useWallet()
+  const [step, setStep] = useState<Step>(0)
+  const [loading, setLoading] = useState(false)
+  const [quote, setQuote] = useState<QuoteResponse | null>(null)
+  const [quoteExpiredAt, setQuoteExpiredAt] = useState<number | null>(null)
+  const [quoteExpired, setQuoteExpired] = useState(false)
+
   const {
     register,
     handleSubmit,
-    control,
-    watch,
-    formState: { errors, isValid, isDirty }
+    trigger,
+    formState: { errors },
+    getValues,
+    setValue,
   } = useForm<QuoteFormData>({
     resolver: zodResolver(QuoteFormSchema),
-    mode: 'onChange',
+    mode: 'onTouched',
     defaultValues: {
-      coverageAmount: 1000,
-      duration: 30,
-      riskCategory: 'MEDIUM',
-      contractType: 'DEFI_PROTOCOL',
-      additionalCoverage: false,
-    }
+      policy_type: undefined,
+      region: undefined,
+      coverage_tier: undefined,
+      age: undefined,
+      risk_score: 5,
+      source_account: '',
+    },
   })
 
-  const watchedValues = watch()
-
-  // Watch for form changes and trigger debounced calculation
+  // Pre-fill source_account from connected wallet
   useEffect(() => {
-    if (!isValid || !isDirty) {
-      setIsCalculating(false)
-      return
+    if (address) setValue('source_account', address)
+  }, [address, setValue])
+
+  const STEP_FIELDS: (keyof QuoteFormData)[][] = [
+    ['policy_type'],
+    ['region', 'age'],
+    ['coverage_tier', 'risk_score'],
+  ]
+
+  async function nextStep() {
+    if (step < 2) {
+      const valid = await trigger(STEP_FIELDS[step])
+      if (valid) setStep((s) => (s + 1) as Step)
     }
+  }
 
-    // Fire quote_started once per form session (first dirty + valid state)
-    if (!hasTrackedStart) {
-      setHasTrackedStart(true)
-      trackQuoteStarted({
-        riskCategory: watchedValues.riskCategory ?? 'MEDIUM',
-        contractType: watchedValues.contractType ?? 'DEFI_PROTOCOL',
-      })
-    }
+  function prevStep() {
+    if (step > 0) setStep((s) => (s - 1) as Step)
+  }
 
-    const timeout = setTimeout(async () => {
-      try {
-        setIsCalculating(true)
-        const quote = await QuoteAPI.getQuote(watchedValues)
-        setCurrentQuote(quote)
-        setQuoteStatus(`Quote updated: premium ${quote.premium} XLM for ${quote.coverageAmount} XLM coverage.`)
-      } catch (error) {
-        if (error instanceof QuoteError && error.code !== 'VALIDATION_ERROR') {
-          toast({
-            title: 'Calculation Error',
-            description: getQuoteErrorMessage(error),
-            variant: 'destructive'
-          })
-        }
-        setCurrentQuote(null)
-        setQuoteStatus('')
-      } finally {
-        setIsCalculating(false)
-      }
-    }, 800)
-
-    return () => clearTimeout(timeout)
-  }, [watchedValues, isValid, isDirty, toast, hasTrackedStart])
-
-  const onSubmit = async (data: QuoteFormData) => {
+  async function onSubmit(data: QuoteFormData) {
+    setLoading(true)
+    setQuote(null)
+    setQuoteExpired(false)
     try {
-      setIsSubmitting(true)
-      const quote = await QuoteAPI.getQuote(data)
-      setCurrentQuote(quote)
-      setQuoteStatus(`Quote confirmed: premium ${quote.premium} XLM.`)
-      onQuoteReceived?.(quote)
-      trackQuoteReceived({
-        riskCategory: data.riskCategory,
-        contractType: data.contractType,
-      })
-      
-      toast({
-        title: 'Quote Generated',
-        description: `Your premium is ${quote.premium} XLM for ${quote.coverageAmount} XLM coverage`,
-      })
-    } catch (error) {
-      if (error instanceof QuoteError) {
-        toast({
-          title: 'Quote Error',
-          description: getQuoteErrorMessage(error),
-          variant: 'destructive'
-        })
-      }
+      const result = await generatePremium(data)
+      setQuote(result)
+      setQuoteExpiredAt(Date.now() + QUOTE_TTL_SECONDS * 1000)
+      setStep(3)
+    } catch (err) {
+      const msg = err instanceof QuoteError ? getQuoteErrorMessage(err) : 'Failed to generate quote'
+      toast({ title: 'Quote Error', description: msg, variant: 'destructive' })
     } finally {
-      setIsSubmitting(false)
+      setLoading(false)
     }
   }
 
-  const formatCurrency = (amount: number, decimals: number = 2) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'decimal',
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }).format(amount)
+  function handleExpired() {
+    setQuoteExpired(true)
   }
 
-  const getTimeUntilExpiry = (expiresAt: string) => {
-    const expiry = new Date(expiresAt)
-    const now = new Date()
-    const diff = expiry.getTime() - now.getTime()
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    
-    if (diff <= 0) return 'Expired'
-    return `${hours}h ${minutes}m`
+  function resetForm() {
+    setStep(0)
+    setQuote(null)
+    setQuoteExpiredAt(null)
+    setQuoteExpired(false)
   }
+
+  const formData = getValues()
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 min-w-0">
-      {/* Live region announces quote updates to screen readers */}
-      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {isCalculating ? 'Calculating quote…' : quoteStatus}
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>Get Insurance Quote</CardTitle>
-          <CardDescription>
-            Fill in the details below to receive a personalized insurance quote for your smart contract.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+    <Card className="max-w-xl mx-auto">
+      <CardHeader>
+        <CardTitle>Get a Quote</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <StepIndicator current={step} />
+
+        {/* ── Step 0: Policy Type ─────────────────────────────────── */}
+        {step === 0 && (
+          <div className="space-y-6">
+            <SelectField
+              id="policy_type"
+              label="Policy Type"
+              error={errors.policy_type?.message}
+              {...register('policy_type')}
+            >
+              <option value="">Select a policy type…</option>
+              <option value="Auto">Auto</option>
+              <option value="Health">Health</option>
+              <option value="Property">Property</option>
+            </SelectField>
+            <div className="flex justify-end">
+              <Button type="button" onClick={nextStep}>Next</Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 1: Region & Age ────────────────────────────────── */}
+        {step === 1 && (
+          <div className="space-y-6">
+            <SelectField
+              id="region"
+              label="Region Risk Tier"
+              error={errors.region?.message}
+              {...register('region')}
+            >
+              <option value="">Select a region…</option>
+              <option value="Low">Low Risk</option>
+              <option value="Medium">Medium Risk</option>
+              <option value="High">High Risk</option>
+            </SelectField>
+            <NumberField
+              id="age"
+              label="Your Age"
+              min={1}
+              max={120}
+              error={errors.age?.message}
+              {...register('age', { valueAsNumber: true })}
+            />
+            <div className="flex justify-between">
+              <Button type="button" variant="outline" onClick={prevStep}>Back</Button>
+              <Button type="button" onClick={nextStep}>Next</Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 2: Coverage ────────────────────────────────────── */}
+        {step === 2 && (
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="contractAddress">Contract Address</Label>
-              <Input
-                id="contractAddress"
-                placeholder="G..."
-                {...register('contractAddress')}
-                className={errors.contractAddress ? 'border-destructive' : ''}
-              />
-              {errors.contractAddress && (
-                <p className="text-sm text-destructive flex items-center gap-1">
-                  <AlertCircle className="h-4 w-4" />
-                  {errors.contractAddress.message}
-                </p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="coverageAmount">Coverage Amount (XLM)</Label>
-                <Controller
-                  name="coverageAmount"
-                  control={control}
-                  render={({ field }) => (
-                    <NumericInput
-                      id="coverageAmount"
-                      decimals={2}
-                      prefix="XLM "
-                      error={errors.coverageAmount?.message}
-                      value={field.value}
-                      onChange={field.onChange}
-                      onBlur={field.onBlur}
-                    />
-                  )}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="duration">Duration (days)</Label>
-                <Controller
-                  name="duration"
-                  control={control}
-                  render={({ field }) => (
-                    <NumericInput
-                      id="duration"
-                      decimals={0}
-                      suffix=" days"
-                      error={errors.duration?.message}
-                      value={field.value}
-                      onChange={field.onChange}
-                      onBlur={field.onBlur}
-                    />
-                  )}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="riskCategory">Risk Category</Label>
-                <select
-                  id="riskCategory"
-                  {...register('riskCategory')}
-                  className={`w-full h-11 rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
-                    errors.riskCategory ? 'border-destructive' : ''
-                  }`}
-                >
-                  <option value="LOW">Low Risk</option>
-                  <option value="MEDIUM">Medium Risk</option>
-                  <option value="HIGH">High Risk</option>
-                </select>
-                {errors.riskCategory && (
-                  <p className="text-sm text-destructive">{errors.riskCategory.message}</p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="contractType">Contract Type</Label>
-                <select
-                  id="contractType"
-                  {...register('contractType')}
-                  className={`w-full h-11 rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
-                    errors.contractType ? 'border-destructive' : ''
-                  }`}
-                >
-                  <option value="DEFI_PROTOCOL">DeFi Protocol</option>
-                  <option value="SMART_CONTRACT">Smart Contract</option>
-                  <option value="LIQUIDITY_POOL">Liquidity Pool</option>
-                  <option value="BRIDGE">Bridge</option>
-                </select>
-                {errors.contractType && (
-                  <p className="text-sm text-destructive">{errors.contractType.message}</p>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="description">Description (Optional)</Label>
-              <textarea
-                id="description"
-                rows={3}
-                placeholder="Describe your contract and what it does..."
-                {...register('description')}
-                className={`w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
-                  errors.description ? 'border-destructive' : ''
-                }`}
-              />
-              {errors.description && (
-                <p className="text-sm text-destructive">{errors.description.message}</p>
-              )}
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="additionalCoverage"
-                {...register('additionalCoverage')}
-                className="rounded border-gray-300 h-5 w-5"
-              />
-              <Label htmlFor="additionalCoverage" className="text-sm">
-                Include additional coverage options
-              </Label>
-            </div>
-
-            {/* Sticky CTA on mobile */}
-            <div className="sticky-action-bar bg-background/95 backdrop-blur-sm border-t pt-3 -mx-6 px-6 sm:static sm:border-0 sm:bg-transparent sm:backdrop-blur-none sm:pt-0 sm:mx-0 sm:px-0">
-              <Button
-                type="submit"
-                disabled={!isValid || isSubmitting}
-                className="w-full"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Generating Quote...
-                  </>
+            <SelectField
+              id="coverage_tier"
+              label="Coverage Tier"
+              error={errors.coverage_tier?.message}
+              {...register('coverage_tier')}
+            >
+              <option value="">Select a tier…</option>
+              <option value="Basic">Basic</option>
+              <option value="Standard">Standard</option>
+              <option value="Premium">Premium</option>
+            </SelectField>
+            <NumberField
+              id="risk_score"
+              label="Risk Score (1–10)"
+              min={1}
+              max={10}
+              error={errors.risk_score?.message}
+              {...register('risk_score', { valueAsNumber: true })}
+            />
+            <div className="flex justify-between">
+              <Button type="button" variant="outline" onClick={prevStep}>Back</Button>
+              <Button type="submit" disabled={loading}>
+                {loading ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Calculating…</>
                 ) : (
                   'Get Quote'
                 )}
               </Button>
             </div>
           </form>
-        </CardContent>
-      </Card>
+        )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Quote Preview</CardTitle>
-          <CardDescription>
-            Your quote will appear here as you fill out the form.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isCalculating ? (
-            <div className="space-y-4">
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-8 w-1/2" />
-              <Skeleton className="h-4 w-2/3" />
-              <div className="pt-4">
-                <Skeleton className="h-12 w-full" />
+        {/* ── Step 3: Result ──────────────────────────────────────── */}
+        {step === 3 && quote && (
+          <div className="space-y-6">
+            {quoteExpired ? (
+              <div className="text-center space-y-4 py-4">
+                <AlertCircle className="h-10 w-10 text-orange-500 mx-auto" />
+                <p className="font-semibold text-gray-900">Quote expired</p>
+                <p className="text-sm text-muted-foreground">Premiums may have changed. Please re-simulate.</p>
+                <Button onClick={resetForm} variant="outline">Re-simulate</Button>
               </div>
-            </div>
-          ) : currentQuote ? (
-            <div className="space-y-6">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-primary">
-                  {formatCurrency(currentQuote.premium)} XLM
+            ) : (
+              <>
+                {quoteExpiredAt && (
+                  <TtlCountdown expiresAt={quoteExpiredAt} onExpired={handleExpired} />
+                )}
+
+                <div className="text-center py-2">
+                  <p className="text-sm text-muted-foreground mb-1">Annual Premium</p>
+                  <p className="text-4xl font-bold text-primary">
+                    {formatTokenAmount(quote.premiumXlm, 0)} XLM
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    ({quote.premiumStroops} stroops)
+                  </p>
                 </div>
-                <p className="text-sm text-muted-foreground">Premium</p>
-              </div>
 
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Coverage Amount</p>
-                  <p className="font-semibold">{formatCurrency(currentQuote.coverageAmount)} XLM</p>
+                <dl className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <dt className="text-muted-foreground">Policy Type</dt>
+                    <dd className="font-medium">{formData.policy_type}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Region</dt>
+                    <dd className="font-medium">{formData.region}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Coverage Tier</dt>
+                    <dd className="font-medium">{formData.coverage_tier}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Age</dt>
+                    <dd className="font-medium">{formData.age}</dd>
+                  </div>
+                </dl>
+
+                <Badge variant={quote.source === 'simulation' ? 'success' : 'secondary'}>
+                  {quote.source === 'simulation' ? 'Live simulation' : 'Local estimate'}
+                </Badge>
+
+                <div className="flex flex-col gap-3 pt-2">
+                  <Button asChild className="w-full">
+                    <Link
+                      href={`/policies?quote_type=${formData.policy_type}&quote_region=${formData.region}&quote_tier=${formData.coverage_tier}`}
+                    >
+                      Proceed to Policy
+                    </Link>
+                  </Button>
+                  <Button variant="outline" className="w-full" onClick={resetForm}>
+                    Start Over
+                  </Button>
                 </div>
-                <div>
-                  <p className="text-muted-foreground">Risk Score</p>
-                  <p className="font-semibold">{currentQuote.riskScore}/100</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-orange-500" />
-                <span className="text-sm text-muted-foreground">
-                  Expires in {getTimeUntilExpiry(currentQuote.expiresAt)}
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-sm font-semibold">Terms & Conditions</p>
-                <ul className="text-sm text-muted-foreground space-y-1">
-                  {currentQuote.terms.slice(0, 3).map((term, index) => (
-                    <li key={index} className="flex items-start gap-2">
-                      <CheckCircle className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
-                      {term}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <Badge variant={currentQuote.riskScore < 50 ? 'success' : currentQuote.riskScore < 75 ? 'warning' : 'destructive'}>
-                {currentQuote.riskScore < 50 ? 'Low Risk' : currentQuote.riskScore < 75 ? 'Medium Risk' : 'High Risk'}
-              </Badge>
-
-              <Button className="w-full" asChild>
-                <a href={`/policy?quoteId=${currentQuote.quoteId}`} onClick={() => trackBindStarted()}>
-                  Purchase Policy
-                </a>
-              </Button>
-            </div>
-          ) : (
-            <div className="text-center text-muted-foreground py-8">
-              <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>Fill in the form to see your quote preview</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+              </>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

@@ -25,6 +25,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { TenantModule } from './tenant/tenant.module';
 import { GraphqlApiModule } from './graphql/graphql.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { EventsModule } from './events/events.module';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { AppLoggerService } from './common/logger/app-logger.service';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
@@ -79,6 +80,7 @@ const IDEMPOTENCY_ROUTES = [
     TenantModule,
     GraphqlApiModule,
     MaintenanceModule,
+    EventsModule,
   ],
   controllers: [OracleHooksController, BetaCalculatorsController],
   providers: [RequestContextMiddleware, AppLoggerService],

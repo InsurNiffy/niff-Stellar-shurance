@@ -267,6 +267,36 @@ pub fn emit_claim_paid(
     .publish(env);
 }
 
+// ── Policy lifecycle events ─────────────────────────────────────────────────
+
+/// Emitted at most once per `(holder, policy_id, expiry_ledger)` policy term.
+#[contractevent(topics = ["niffyinsure", "policy_expired"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyExpiredData {
+    #[topic]
+    pub holder: Address,
+    #[topic]
+    pub policy_id: u32,
+    pub expiry_ledger: u32,
+    pub reported_at_ledger: u32,
+}
+
+pub fn emit_policy_expired(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+    expiry_ledger: u32,
+    reported_at_ledger: u32,
+) {
+    PolicyExpiredData {
+        holder: holder.clone(),
+        policy_id,
+        expiry_ledger,
+        reported_at_ledger,
+    }
+    .publish(env);
+}
+
 // ── Admin / config events ─────────────────────────────────────────────────────
 
 /// Emitted by `update_multiplier_table`.

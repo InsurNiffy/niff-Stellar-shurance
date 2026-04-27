@@ -1,6 +1,7 @@
 import { FileText, Image as ImageIcon, Wallet } from 'lucide-react';
 
 import { Card, CardContent } from '@/components/ui';
+import { formatTokenAmount } from '@/lib/formatTokenAmount';
 
 interface ReviewStepProps {
   data: {
@@ -10,9 +11,12 @@ interface ReviewStepProps {
   };
   policyId: string;
   onEdit?: (step: number) => void;
+  decimals?: number;
+  currency?: string;
+  locale?: string;
 }
 
-export function ReviewStep({ data, policyId, onEdit }: ReviewStepProps) {
+export function ReviewStep({ data, policyId, onEdit, decimals = 7, currency = 'XLM', locale = 'en-US' }: ReviewStepProps) {
   return (
     <div className="space-y-6 py-4">
       <div className="space-y-2">
@@ -41,7 +45,7 @@ export function ReviewStep({ data, policyId, onEdit }: ReviewStepProps) {
                     </button>
                   )}
                 </div>
-                <p className="text-lg font-bold">{data.amount} stroops</p>
+                <p className="text-lg font-bold">{formatTokenAmount(data.amount || '0', decimals, locale)} {currency}</p>
                 <p className="text-xs text-muted-foreground">Policy ID: #{policyId}</p>
               </div>
             </div>

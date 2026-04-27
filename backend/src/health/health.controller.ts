@@ -7,6 +7,7 @@ import {
 } from '@nestjs/terminus';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PrismaHealthIndicator } from './prisma.health';
+import { RedisHealthIndicator } from './redis.health';
 
 @ApiTags('health')
 @Controller('health')
@@ -14,6 +15,7 @@ export class HealthController {
   constructor(
     private health: HealthCheckService,
     private prismaHealth: PrismaHealthIndicator,
+    private redisHealth: RedisHealthIndicator,
   ) {}
 
   @Get()
@@ -24,6 +26,7 @@ export class HealthController {
   check(): Promise<HealthCheckResult> {
     return this.health.check([
       (): Promise<HealthIndicatorResult> => this.prismaHealth.isHealthy('prisma'),
+      (): Promise<HealthIndicatorResult> => this.redisHealth.isHealthy('redis'),
     ]);
   }
 }

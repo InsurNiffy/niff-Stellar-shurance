@@ -6,6 +6,7 @@ import { useWallet } from '@/hooks/use-wallet';
 import { getConfig } from '@/config/env';
 import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@/components/ui';
 import { AlertTriangle, ArrowLeft } from 'lucide-react';
+import { formatTokenAmount } from '@/lib/formatTokenAmount';
 
 const { apiUrl: API_BASE_URL } = getConfig();
 
@@ -127,8 +128,8 @@ export default function PolicyDetailPage() {
   return (
     <div className="container max-w-3xl py-10 space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.back()} className="h-9 w-9 shrink-0">
-          <ArrowLeft className="h-5 w-5" />
+        <Button variant="ghost" size="icon" onClick={() => router.back()} className="h-9 w-9 shrink-0" aria-label="Go back">
+          <ArrowLeft className="h-5 w-5" aria-hidden="true" />
         </Button>
         <h1 className="text-2xl font-semibold tracking-tight">Policy #{policy.policy_id}</h1>
       </div>
@@ -137,7 +138,7 @@ export default function PolicyDetailPage() {
         <Card className="border-amber-500/50 bg-amber-500/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2 text-amber-900 dark:text-amber-100">
-              <AlertTriangle className="h-5 w-5 shrink-0" />
+              <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden="true" />
               Payout address differs from your wallet
             </CardTitle>
           </CardHeader>
@@ -173,12 +174,16 @@ export default function PolicyDetailPage() {
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground">Coverage (stroops)</p>
-              <p className="font-mono">{policy.coverage_summary.coverage_amount}</p>
+              <p className="text-muted-foreground">Coverage</p>
+              <p className="font-mono">
+                {formatTokenAmount(policy.coverage_summary.coverage_amount, policy.coverage_summary.decimals)} {policy.coverage_summary.currency}
+              </p>
             </div>
             <div>
-              <p className="text-muted-foreground">Premium (stroops)</p>
-              <p className="font-mono">{policy.coverage_summary.premium_amount}</p>
+              <p className="text-muted-foreground">Premium</p>
+              <p className="font-mono">
+                {formatTokenAmount(policy.coverage_summary.premium_amount, policy.coverage_summary.decimals)} {policy.coverage_summary.currency}
+              </p>
             </div>
             <div className="sm:col-span-2">
               <p className="text-muted-foreground">Payout beneficiary</p>
