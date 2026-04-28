@@ -35,14 +35,61 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y binaryen
 
-      - name: Build release Wasm + compute SHA-256
-        run: bash scripts/wasm-release.sh
+      - name: Build release Wasm + reproducibility check + update registry
+        run: bash scripts/wasm-release.sh --network testnet
+        env:
+          SLACK_OPS_WEBHOOK: ${{ secrets.SLACK_OPS_WEBHOOK }}
 
       - name: Verify artifact exists and print hash
         run: |
           ARTIFACT=$(ls artifacts/niffyinsure-*.wasm | grep -v sha256 | head -1)
           echo "ARTIFACT=$ARTIFACT" >> "$GITHUB_ENV"
           echo "SHA256=$(cat ${ARTIFACT}.sha256)"
+
+      # ── Second independent build for cross-environment reproducibility ──
+      - name: Second build for reproducibility cross-check
+        run: |
+          ARTIFACT=$(ls artifacts/niffyinsure-*.wasm | grep -v sha256 | head -1)
+          HASH1=$(awk '{print $1}' "${ARTIFACT}.sha256")
+
+          # Rebuild from scratch in a clean target dir
+          cargo build --target wasm32-unknown-unknown --release
+          wasm-opt -Oz --strip-debug \
+            target/wasm32-unknown-unknown/release/niffyinsure.wasm \
+            -o artifacts/niffyinsure.crosscheck.wasm
+          HASH2=$(sha256sum artifacts/niffyinsure.crosscheck.wasm | awk '{print $1}')
+          rm -f artifacts/niffyinsure.crosscheck.wasm
+
+          echo "Build 1 hash: $HASH1"
+          echo "Build 2 hash: $HASH2"
+          if [ "$HASH1" = "$HASH2" ]; then
+            echo "✅ Cross-environment reproducibility confirmed"
+          else
+            echo "❌ Hash mismatch across builds — non-deterministic output detected"
+            exit 1
+          fi
+
+      - name: Commit updated deployment registry
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add contracts/deployment-registry.json
+          git diff --cached --quiet || \
+            git commit -m "chore(registry): update deployment registry for ${{ github.ref_name }}"
+          git push origin HEAD:main || echo "Registry push skipped (no changes or branch protection)"
+
+      - name: Post-release version() verification (testnet)
+        if: env.CONTRACT_ID_TESTNET != ''
+        run: bash scripts/wasm-release.sh --verify --network testnet
+        env:
+          CONTRACT_ID_TESTNET: ${{ secrets.CONTRACT_ID_TESTNET }}
+
+      - name: Send release notification to ops channel
+        if: success()
+        run: bash scripts/wasm-release.sh --skip-opt --notify --network testnet
+        env:
+          SLACK_OPS_WEBHOOK: ${{ secrets.SLACK_OPS_WEBHOOK }}
+          CONTRACT_ID_TESTNET: ${{ secrets.CONTRACT_ID_TESTNET }}
 
       - name: Upload artifact to workflow run
         uses: actions/upload-artifact@v4
