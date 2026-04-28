@@ -5,7 +5,21 @@
 ```bash
 make wasm-release
 # or
-bash scripts/wasm-release.sh
+bash scripts/wasm-release.sh [--skip-opt] [--network <testnet|mainnet|futurenet>] [--verify] [--notify]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--skip-opt` | Skip `wasm-opt` pass (use raw binary) |
+| `--network` | Target network for registry update and version check |
+| `--verify` | Call `version()` entrypoint after build to confirm deployed contract version |
+| `--notify` | Send release notification to the ops Slack channel (`SLACK_OPS_WEBHOOK` env var required) |
+
+Full release with verification and notification:
+```bash
+SLACK_OPS_WEBHOOK=https://hooks.slack.com/... \
+CONTRACT_ID_TESTNET=C... \
+bash scripts/wasm-release.sh --network testnet --verify --notify
 ```
 
 Outputs:
@@ -102,3 +116,80 @@ Record the expected hash in `contracts/deployment-registry.json` under `expected
 - `Cargo.lock` is committed; dependency updates require explicit PR review.
 - `cargo audit` should be run before each release (add to CI as needed).
 - No `*` version ranges in `Cargo.toml`; all dependencies are pinned with `=`.
+
+---
+
+## Rollback procedure
+
+Use this procedure when a bad WASM release is detected (hash mismatch, version() failure, or runtime regression).
+
+### Step 1 — Identify the last known-good release
+
+```bash
+# List recent GitHub releases and their attached .sha256 files
+gh release list --limit 10
+gh release download <last-good-tag> --pattern "*.sha256" --dir /tmp/rollback
+cat /tmp/rollback/*.sha256
+```
+
+### Step 2 — Download the last known-good artifact
+
+```bash
+gh release download <last-good-tag> --pattern "*.wasm" --dir /tmp/rollback
+ARTIFACT=/tmp/rollback/niffyinsure-<version>-<last-good-tag>.wasm
+```
+
+### Step 3 — Verify the artifact hash before re-deploying
+
+```bash
+EXPECTED=$(awk '{print $1}' /tmp/rollback/*.sha256)
+ACTUAL=$(sha256sum "$ARTIFACT" | awk '{print $1}')
+[ "$EXPECTED" = "$ACTUAL" ] && echo "✅ Hash OK" || { echo "❌ Corrupt artifact"; exit 1; }
+```
+
+### Step 4 — Re-deploy the known-good WASM
+
+```bash
+stellar contract deploy \
+  --wasm "$ARTIFACT" \
+  --network <testnet|mainnet> \
+  --source <deployer-key>
+```
+
+### Step 5 — Confirm rollback with version() check
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --network <testnet|mainnet> \
+  -- version
+# Must return the version string of the known-good release
+```
+
+### Step 6 — Update the deployment registry
+
+Edit `contracts/deployment-registry.json` and set:
+- `expectedWasmHash` → hash of the rolled-back artifact
+- `expectedVersion`  → version of the rolled-back artifact
+- `deployedVersion`  → confirmed output of `version()`
+- `deployedAt`       → timestamp of the rollback
+
+Commit and push the registry update with a message like:
+```
+fix(registry): rollback niffyinsure to <last-good-tag> on <network>
+```
+
+### Step 7 — Notify the team
+
+Post in the ops channel with:
+- Which tag was rolled back to
+- Which network was affected
+- Root cause (if known)
+- Link to the incident or GitHub issue
+
+### Prevention checklist
+
+- [ ] Never re-push a git tag — create a new patch tag instead
+- [ ] Always run `--verify` after every deploy
+- [ ] Keep the last 3 release artifacts in GitHub Releases (90-day retention in Actions)
+- [ ] Treat any `version()` mismatch as a rollback trigger
