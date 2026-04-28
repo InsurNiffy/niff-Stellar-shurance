@@ -181,7 +181,7 @@ Neither entrypoint can approve a claim without quorum math, change vote tallies,
 
 ### Recommended cadence
 - **Claims:** Poll or stream ledgers; for each open claim with `voting_deadline_ledger < current_ledger`, submit `process_deadline`. Typical spacing: every ledger, or every 1–5 ledgers if batching simulations (~5 s target per ledger on Mainnet).
-- **Policies:** For each tracked `(holder, policy_id)` (from indexer), call `process_expired` once `current_ledger >= end_ledger + grace`. Daily or weekly scans are enough if the indexer backfills; tighter cadence improves UI accuracy for “lapsed” state.
+- **Policies:** For each tracked `(holder, policy_id)` (from indexer), call `process_expired` once `current_ledger >= end_ledger + grace`. Daily or weekly scans are enough if the indexer backfills; tighter cadence improves UI accuracy for "lapsed" state.
 
 ### Incentives
 There is **no protocol reward** for keepers; operators run them to support product liveness (deadlines, lapsed flags) and their own UX. Use a dedicated funded account only for network fees.
@@ -189,6 +189,306 @@ There is **no protocol reward** for keepers; operators run them to support produ
 ### Failure modes
 - `process_expired`: reverts with `PolicyLapseNotReached` until grace end; `OpenClaimsMustFinalize` if a claim is still open on that policy.
 - `process_deadline`: reverts with `VotingWindowStillOpen` until after the voting deadline ledger; `ClaimAlreadyTerminal` if already finalized; `ClaimNotProcessing` if the claim left `Processing` without being terminal (e.g. appeal flows); `CalculatorPaused` while claims are paused (unlike `finalize_claim`, which panics on pause).
+
+---
+
+## 7. Indexer Reindex Procedure
+
+Use this procedure when the indexer has missed ledgers, is significantly behind, or data integrity issues require a full replay from a known-good ledger.
+
+### Prerequisites
+- Admin access to the backend deployment environment
+- `DATABASE_URL` and `SOROBAN_RPC_URL` env vars available
+- Confirm the target start ledger with the team (check `indexer_cursors` table or last known-good checkpoint)
+
+### Step-by-step
+
+**1. Identify the gap**
+```bash
+# Check current indexer cursor position
+psql $DATABASE_URL -c "SELECT contract_id, last_ledger_seq, updated_at FROM indexer_cursors ORDER BY updated_at DESC;"
+
+# Check current Stellar network ledger
+curl $SOROBAN_RPC_URL -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger","params":{}}'
+```
+
+**2. Stop the indexer**
+```bash
+# Kubernetes
+kubectl scale deployment niffyinsure-indexer --replicas=0 -n production
+
+# Docker Compose
+docker compose stop indexer
+```
+
+**3. Reset the cursor to the desired start ledger**
+```bash
+# Replace <CONTRACT_ID> and <START_LEDGER> with actual values
+psql $DATABASE_URL -c "
+  UPDATE indexer_cursors
+  SET last_ledger_seq = <START_LEDGER>, updated_at = NOW()
+  WHERE contract_id = '<CONTRACT_ID>';
+"
+```
+
+> **Warning:** Setting `START_LEDGER` too far back will cause the indexer to replay
+> already-processed events. The indexer uses upsert semantics for `raw_events`, so
+> duplicate ledger processing is safe but will increase DB load and catch-up time.
+
+**4. (Optional) Purge stale derived data for the replay range**
+```bash
+# Only needed if derived tables (e.g. claims, policies) may have corrupt rows
+# from the affected ledger range. Confirm with engineering before running.
+psql $DATABASE_URL -c "
+  DELETE FROM raw_events
+  WHERE ledger_seq >= <START_LEDGER> AND ledger_seq <= <END_LEDGER>;
+"
+```
+
+**5. Restart the indexer**
+```bash
+# Kubernetes
+kubectl scale deployment niffyinsure-indexer --replicas=1 -n production
+
+# Docker Compose
+docker compose start indexer
+```
+
+**6. Monitor catch-up progress**
+```bash
+# Watch the cursor advance
+watch -n 5 'psql $DATABASE_URL -c "SELECT last_ledger_seq, updated_at FROM indexer_cursors;"'
+
+# Check Prometheus metric
+curl http://localhost:3000/metrics | grep indexer_lag_ledgers
+```
+
+Alert threshold: `indexer_lag_ledgers > 500` → investigate RPC latency or increase `INDEXER_BATCH_SIZE` (see `backend/docs/indexer-runbook.md`).
+
+**7. Verify data integrity post-reindex**
+```bash
+# Confirm event counts are consistent
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM raw_events WHERE ledger_seq >= <START_LEDGER>;"
+
+# Spot-check a known claim or policy from the replayed range
+psql $DATABASE_URL -c "SELECT id, status, updated_at FROM claims WHERE id = '<KNOWN_CLAIM_ID>';"
+```
+
+**8. Sign off**
+- [ ] Cursor is at or near current network ledger
+- [ ] No `indexer_lag_ledgers` alert firing
+- [ ] Spot-check of replayed data passes
+- [ ] Engineer sign-off: _name, date_
+
+---
+
+## 8. Contract Upgrade Procedure
+
+Use this procedure to deploy a new WASM build to the Soroban contract and update all downstream references.
+
+### Prerequisites
+- Rust toolchain with `wasm32-unknown-unknown` target installed
+- Stellar CLI (`stellar`) configured with the admin/upgrade keypair
+- Access to the secrets manager to update `NIFFYINSURE_EXPECTED_WASM_HASH`
+- DAO approval or governance vote reference (required for Mainnet upgrades)
+
+### Step-by-step
+
+**1. Build and verify the WASM**
+```bash
+# Build optimised release WASM
+cargo build --release --target wasm32-unknown-unknown
+
+# Compute the hash
+sha256sum target/wasm32-unknown-unknown/release/niffyinsure.wasm
+# Record this value as NEW_WASM_HASH
+```
+
+**2. Verify WASM drift baseline (pre-upgrade)**
+```bash
+# Confirm current on-chain hash matches the expected hash before proceeding
+curl -X POST https://api.example.com/admin/maintenance/check-wasm-drift \
+  -H "Authorization: Bearer $ADMIN_JWT"
+# Expected: no drift alert. If drift is already present, investigate before upgrading.
+```
+
+**3. Upload the new WASM to the network**
+```bash
+stellar contract upload \
+  --wasm target/wasm32-unknown-unknown/release/niffyinsure.wasm \
+  --source <UPGRADE_KEYPAIR_ALIAS> \
+  --network mainnet
+# Note the returned WASM hash — must match NEW_WASM_HASH from step 1.
+```
+
+**4. Execute the upgrade**
+```bash
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source <UPGRADE_KEYPAIR_ALIAS> \
+  --network mainnet \
+  -- upgrade \
+  --new_wasm_hash <NEW_WASM_HASH>
+```
+
+**5. Update the expected hash in secrets manager**
+```bash
+# AWS Secrets Manager example
+aws secretsmanager update-secret \
+  --secret-id NIFFYINSURE_EXPECTED_WASM_HASH \
+  --secret-string "<NEW_WASM_HASH>"
+```
+
+**6. Update the deployment registry**
+```json
+// contracts/deployment-registry.json
+{
+  "contractName": "niffyinsure",
+  "contractId": "<CONTRACT_ID>",
+  "expectedWasmHash": "<NEW_WASM_HASH>",
+  "deployedAt": "<ISO_TIMESTAMP>"
+}
+```
+
+**7. Verify WASM drift post-upgrade**
+```bash
+# Trigger a drift check — should return clean (no mismatch)
+curl -X POST https://api.example.com/admin/maintenance/check-wasm-drift \
+  -H "Authorization: Bearer $ADMIN_JWT"
+
+# Confirm no open drift alerts
+psql $DATABASE_URL -c "SELECT * FROM wasm_drift_alerts WHERE resolved_at IS NULL;"
+```
+
+**8. Resolve any pre-existing drift alerts**
+```sql
+UPDATE wasm_drift_alerts
+SET resolved_at = NOW()
+WHERE contract_name = 'niffyinsure' AND resolved_at IS NULL;
+```
+
+**9. Rollback procedure**
+If the upgrade introduces a regression:
+1. Re-upload the previous WASM build (keep the artifact from the prior release).
+2. Call `upgrade` with the old `WASM_HASH`.
+3. Revert `NIFFYINSURE_EXPECTED_WASM_HASH` in secrets manager to the old hash.
+4. Revert `contracts/deployment-registry.json`.
+5. Re-run drift check to confirm clean state.
+6. Document the rollback in the audit log with reason and DAO notification reference.
+
+**Sign-off checklist:**
+- [ ] New WASM hash verified against local build artifact
+- [ ] Drift check clean post-upgrade
+- [ ] `deployment-registry.json` updated and merged
+- [ ] Secrets manager updated
+- [ ] DAO / governance approval reference recorded
+- [ ] Engineer sign-off: _name, date_
+
+---
+
+## 9. Emergency Pause Procedure
+
+Use this procedure to halt claim processing or policy operations during a critical incident (e.g., smart contract exploit, oracle manipulation, regulatory hold).
+
+### Pause scope
+
+| Pause flag | Effect | Entrypoint |
+|---|---|---|
+| `claims_paused` | Blocks new claim filings and `finalize_claim`; `process_deadline` returns `CalculatorPaused` instead of panicking | `admin_set_claims_paused(true)` |
+| `policy_paused` | Blocks new policy purchases | `admin_set_policy_paused(true)` |
+
+### Prerequisites
+- Admin keypair with `ADMIN` role on the contract
+- Incident channel open (Slack `#incidents` or equivalent)
+- At least one other engineer notified before executing on Mainnet
+
+### Step-by-step
+
+**1. Assess and declare incident**
+- Open an incident in the incident tracker (PagerDuty / Linear).
+- Post in `#incidents`: contract address, observed anomaly, proposed pause scope.
+- Get verbal/async acknowledgement from one other engineer.
+
+**2. Pause claims (if claim processing is affected)**
+```bash
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source <ADMIN_KEYPAIR_ALIAS> \
+  --network mainnet \
+  -- admin_set_claims_paused \
+  --paused true
+```
+
+**3. Pause policy purchases (if policy issuance is affected)**
+```bash
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source <ADMIN_KEYPAIR_ALIAS> \
+  --network mainnet \
+  -- admin_set_policy_paused \
+  --paused true
+```
+
+**4. Verify pause is active**
+```bash
+# Attempt a test claim filing — should return CalculatorPaused / PolicyPaused
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source <TEST_KEYPAIR_ALIAS> \
+  --network mainnet \
+  -- file_claim \
+  --policy_id <TEST_POLICY_ID> \
+  --description "pause verification test"
+# Expected: transaction fails with CalculatorPaused or equivalent error
+```
+
+**5. Monitor and communicate**
+- Post pause confirmation in `#incidents` with transaction hash.
+- Notify DAO / community via governance forum if pause is expected to last > 1 hour.
+- Update the incident tracker with pause timestamp and scope.
+
+**6. Investigate root cause**
+- Pull relevant logs: `grep '"level":"error"' /var/log/app/app.log | tail -200`
+- Check Stellar explorer for anomalous transactions in the affected ledger range.
+- Review `wasm_drift_alerts` for unexpected contract changes.
+
+**7. Resume operations (rollback steps)**
+
+Once the incident is resolved and root cause is confirmed safe:
+
+```bash
+# Resume claims
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source <ADMIN_KEYPAIR_ALIAS> \
+  --network mainnet \
+  -- admin_set_claims_paused \
+  --paused false
+
+# Resume policy purchases
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source <ADMIN_KEYPAIR_ALIAS> \
+  --network mainnet \
+  -- admin_set_policy_paused \
+  --paused false
+```
+
+**8. Post-incident**
+- Verify normal operations: submit a test claim in staging, confirm it processes.
+- Resolve the incident in PagerDuty / Linear.
+- Write a post-mortem within 5 business days covering: timeline, root cause, impact, and mitigations.
+- Document the pause/resume in the audit log with incident reference.
+
+**Sign-off checklist:**
+- [ ] Pause confirmed active on-chain
+- [ ] Incident declared and team notified
+- [ ] Root cause identified before resuming
+- [ ] Resume confirmed active on-chain
+- [ ] Post-mortem scheduled or completed
+- [ ] Engineer sign-off: _name, date_
 
 ---
 
