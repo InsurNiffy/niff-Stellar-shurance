@@ -4,7 +4,7 @@ VERSION    := $(shell cargo metadata --no-deps --format-version 1 | python -c "i
 GIT_TAG    := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
 ARTIFACT   := artifacts/niffyinsure-$(VERSION)-$(GIT_TAG).wasm
 
-.PHONY: build test fmt lint sha clean wasm-release wasm-opt-check
+.PHONY: build test fmt lint sha clean wasm-release wasm-opt-check check-env
 
 build:
 	cargo build --target wasm32-unknown-unknown --release
@@ -58,3 +58,9 @@ clean:
 generate-client:
 	cd backend && npm run export-spec
 	cd frontend && npm run generate-client
+
+# ── Local dev env check ───────────────────────────────────────────────────────
+# Validates backend/.env and frontend/.env.local contain all required vars.
+# Usage: make check-env
+check-env:
+	npx ts-node scripts/check-env-local.ts

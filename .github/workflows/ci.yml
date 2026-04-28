@@ -156,6 +156,9 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      - name: Check .env.example is up to date
+        run: npm run env:example:check
+
       - name: Check OpenAPI spec is up to date
         run: |
           npm run export-spec
