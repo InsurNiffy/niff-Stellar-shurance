@@ -1,5 +1,38 @@
 import bundleAnalyzer from '@next/bundle-analyzer'
 import createNextIntlPlugin from 'next-intl/plugin'
+import { z } from 'zod'
+
+// ---------------------------------------------------------------------------
+// Build-time guard: fail fast when required NEXT_PUBLIC_* vars are missing.
+// This runs during `next build` so misconfigured deployments are caught in CI
+// before any code is shipped, not at runtime in production.
+// ---------------------------------------------------------------------------
+const publicEnvSchema = z.object({
+  NEXT_PUBLIC_API_URL: z.string().url('NEXT_PUBLIC_API_URL must be a valid URL'),
+  NEXT_PUBLIC_SOROBAN_RPC_URL: z
+    .string()
+    .url('NEXT_PUBLIC_SOROBAN_RPC_URL must be a valid URL')
+    .optional(),
+  NEXT_PUBLIC_HORIZON_URL: z
+    .string()
+    .url('NEXT_PUBLIC_HORIZON_URL must be a valid URL')
+    .optional(),
+  NEXT_PUBLIC_NETWORK: z.enum(['testnet', 'public']).optional(),
+  NEXT_PUBLIC_CAPTCHA_PROVIDER: z.enum(['turnstile', 'hcaptcha']).optional(),
+})
+
+const buildEnvResult = publicEnvSchema.safeParse(process.env)
+if (!buildEnvResult.success) {
+  const messages = buildEnvResult.error.issues
+    .map((e) => `  ${e.path.join('.')}: ${e.message}`)
+    .join('\n')
+  // eslint-disable-next-line no-console
+  console.error(
+    `\n[next.config] ❌ Missing or invalid required environment variables:\n${messages}\n` +
+      'Set these in .env.local (development) or your deployment environment (production).\n'
+  )
+  process.exit(1)
+}
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts')
 const withBundleAnalyzer = bundleAnalyzer({
