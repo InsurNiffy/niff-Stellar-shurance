@@ -65,7 +65,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "esutils": "^2.0.3",
     "fast-check": "^4.6.0",
-    "jest": "^29",
+    "jest": "^30",
     "jest-environment-jsdom": "^30.3.0",
     "openapi-typescript": "7.13.0",
     "postcss": "^8.5.8",
