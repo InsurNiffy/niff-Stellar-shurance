@@ -82,7 +82,7 @@
     "formdata-node": "^6.0.3",
     "graphql": "^16.13.2",
     "graphql-depth-limit": "^1.1.0",
-    "graphql-query-complexity": "^0.12.0",
+    "graphql-query-complexity": "^1.1.0",
     "graphql-redis-subscriptions": "^2.7.0",
     "helmet": "^7.1.0",
     "ioredis": "^5.4.1",
