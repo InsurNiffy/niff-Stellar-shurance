@@ -29,5 +29,5 @@ soroban-sdk = { version = "=25.3.1", features = [] }
 [dev-dependencies]
 soroban-sdk = { version = "=25.3.1", features = ["testutils"] }
 premium_calculator = { path = "../../contracts/premium_calculator", features = ["testutils"] }
-ed25519-dalek = { version = "=2.1.1", features = ["rand_core"] }
+ed25519-dalek = { version = "=2.2.0", features = ["rand_core"] }
 rand = { version = "=0.8.5", features = ["std"] }
