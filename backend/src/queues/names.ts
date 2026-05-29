@@ -9,6 +9,7 @@
 export const QUEUE_NAMES = [
   "claim-events",   // Soroban event indexing → DB writes
   "claim-payouts",  // Approved claim → token transfer trigger
+  "tx-submit",      // Async Soroban transaction submission
 ] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];

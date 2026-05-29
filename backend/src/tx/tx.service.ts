@@ -40,6 +40,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -58,6 +59,8 @@ import { RedisService } from '../cache/redis.service';
 import { BuildTxDto, ContractFunctionEnum } from './dto/build-tx.dto';
 import { SubmitTxDto } from './dto/submit-tx.dto';
 import { SorobanService } from '../rpc/soroban.service';
+import { enqueueTxSubmit } from './tx.queue';
+import { getTxState, setTxState, TxState } from './tx.state';
 
 const { Api, assembleTransaction } = SorobanRpc;
 
@@ -215,7 +218,47 @@ export class TxService {
     } satisfies BuildResult;
   }
 
-  // ─── Submit ──────────────────────────────────────────────────────────────────
+  // ─── Submit (async — enqueue and return immediately) ─────────────────────────
+
+  /**
+   * Enqueue a signed XDR for async Soroban submission.
+   * Returns immediately with { jobId, status: 'queued' }.
+   */
+  async enqueueSubmit(dto: SubmitTxDto): Promise<{ jobId: string; status: 'queued' }> {
+    // Validate XDR structure before enqueuing — fail fast on bad input
+    this.parseAndValidateXdr(dto.signed_xdr);
+
+    const jobId = await enqueueTxSubmit({
+      signed_xdr: dto.signed_xdr,
+      idempotency_key: dto.idempotency_key,
+    });
+
+    // Write initial queued state so GET /tx/status/:jobId is immediately usable
+    await setTxState(this.redisService, {
+      jobId,
+      status: 'queued',
+      updatedAt: new Date().toISOString(),
+    });
+
+    this.logger.log(`Enqueued tx job=${jobId}`);
+    return { jobId, status: 'queued' };
+  }
+
+  /**
+   * Fetch the latest lifecycle state for a job from Redis.
+   */
+  async getStatus(jobId: string): Promise<TxState> {
+    const state = await getTxState(this.redisService, jobId);
+    if (!state) {
+      throw new NotFoundException({
+        code: 'JOB_NOT_FOUND',
+        message: `No transaction job found for id ${jobId}. It may have expired or never existed.`,
+      });
+    }
+    return state;
+  }
+
+  // ─── Submit (sync — kept for backward compatibility / internal use) ──────────
 
   async submit(dto: SubmitTxDto): Promise<SubmitResult> {
     // Idempotency: return cached result if key was seen before

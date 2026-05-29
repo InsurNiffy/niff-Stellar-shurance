@@ -1,5 +1,5 @@
 /**
- * TxController — POST /tx/build and POST /tx/submit
+ * TxController — POST /tx/build, POST /tx/submit, GET /tx/status/:jobId
  *
  * Rate limits:
  *  - /tx/build  : 10 req/min per IP (protects Soroban RPC simulation quota)
@@ -15,14 +15,17 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiParam,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -42,27 +45,16 @@ export class TxController {
    *
    * Assembles an unsigned invokeHostFunction transaction with simulation-derived
    * footprints and fee estimates. Pass simulate=true to inspect resources only.
-   *
-   * The returned unsignedXdr must be signed by the wallet and submitted via
-   * POST /api/tx/submit. The backend never holds private keys.
-   *
-   * Errors: ACCOUNT_NOT_FOUND, WRONG_NETWORK, CONTRACT_NOT_DEPLOYED,
-   *         SIMULATION_FAILED, INSUFFICIENT_BALANCE, UNSUPPORTED_FUNCTION
    */
   @Post('build')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({
-    summary: 'Assemble unsigned Soroban transaction',
-    description:
-      'Builds an invokeHostFunction transaction with simulation-derived footprints. ' +
-      'Pass simulate=true to get resource estimates without building the full envelope.',
-  })
-  @ApiResponse({ status: 200, description: 'Unsigned XDR + fee estimates (or simulation resources)' })
-  @ApiResponse({ status: 400, description: 'Validation / account / simulation error — structured code + message' })
-  @ApiResponse({ status: 429, description: 'Rate limited — 10 req/min per IP' })
+  @ApiOperation({ summary: 'Assemble unsigned Soroban transaction' })
+  @ApiResponse({ status: 200, description: 'Unsigned XDR + fee estimates' })
+  @ApiResponse({ status: 400, description: 'Validation / account / simulation error' })
+  @ApiResponse({ status: 429, description: 'Rate limited' })
   @ApiResponse({ status: 503, description: 'Contract not deployed or RPC unavailable' })
   async build(@Body() dto: BuildTxDto) {
     return this.txService.build(dto);
@@ -71,31 +63,43 @@ export class TxController {
   /**
    * POST /api/tx/submit
    *
-   * Validates the signed XDR envelope structure, then submits to the Soroban RPC.
-   * Supports idempotency_key (UUID v4) — re-submitting the same key within 10 min
-   * returns the cached result without hitting the network again.
-   *
-   * Errors: INVALID_XDR, FEE_BUMP_NOT_SUPPORTED, MISSING_SIGNATURES,
-   *         EMPTY_OPERATIONS, INVALID_OPERATION_TYPE, TX_BAD_SEQ, TX_BAD_AUTH,
-   *         TX_INSUFFICIENT_FEE, TX_INSUFFICIENT_BALANCE, TX_NO_ACCOUNT,
-   *         TX_FAILED, TX_TOO_EARLY, TX_TOO_LATE, TX_INTERNAL_ERROR
+   * Validates the signed XDR envelope structure, enqueues it for async
+   * Soroban RPC submission, and returns immediately with { jobId, status: 'queued' }.
+   * Poll GET /api/tx/status/:jobId for the final result.
    */
   @Post('submit')
-  @HttpCode(HttpStatus.OK)
+  @HttpCode(HttpStatus.ACCEPTED)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Submit signed XDR to the Stellar network',
+    summary: 'Enqueue signed XDR for async Soroban submission',
     description:
-      'Validates the signed envelope before submission. ' +
-      'Supports idempotency_key to safely retry without double-submitting.',
+      'Validates the signed envelope then enqueues it. Returns immediately with jobId. ' +
+      'Poll GET /tx/status/:jobId for the final result.',
   })
-  @ApiResponse({ status: 200, description: 'Submission result with hash and status' })
-  @ApiResponse({ status: 400, description: 'Malformed XDR or missing signatures — structured code + message' })
-  @ApiResponse({ status: 429, description: 'Rate limited — 20 req/min per IP' })
-  @ApiResponse({ status: 503, description: 'RPC unavailable' })
+  @ApiResponse({ status: 202, description: '{ jobId, status: "queued" }' })
+  @ApiResponse({ status: 400, description: 'Malformed XDR or missing signatures' })
+  @ApiResponse({ status: 429, description: 'Rate limited' })
   async submit(@Body() dto: SubmitTxDto) {
-    return this.txService.submit(dto);
+    return this.txService.enqueueSubmit(dto);
+  }
+
+  /**
+   * GET /api/tx/status/:jobId
+   *
+   * Returns the latest lifecycle state for a queued transaction job.
+   * States: queued → processing → success | failed
+   */
+  @Get('status/:jobId')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get async transaction job status' })
+  @ApiParam({ name: 'jobId', description: 'Job ID returned by POST /tx/submit' })
+  @ApiResponse({ status: 200, description: 'TxState object with status and result details' })
+  @ApiResponse({ status: 404, description: 'Job not found or expired' })
+  async getStatus(@Param('jobId') jobId: string) {
+    return this.txService.getStatus(jobId);
   }
 }
