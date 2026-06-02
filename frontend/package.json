@@ -75,7 +75,7 @@
     "openapi-typescript": "7.13.0",
     "postcss": "^8.5.8",
     "storybook": "^10.3.5",
-    "tailwindcss": "^4.2.2",
+    "tailwindcss": "^4.3.0",
     "ts-jest": "^29.4.6",
     "typescript": "^5"
   },
