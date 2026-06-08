@@ -51,7 +51,7 @@
     "@playwright/test": "^1.49.0",
     "@storybook/addon-essentials": "^8.6.0",
     "@storybook/addon-interactions": "^8.6.0",
-    "@storybook/nextjs": "^10.3.5",
+    "@storybook/nextjs": "^10.4.2",
     "@storybook/react": "^10.3.5",
     "@tailwindcss/postcss": "^4.2.2",
     "@tanstack/react-query-devtools": "^5.80.7",
@@ -74,7 +74,7 @@
     "jest-environment-jsdom": "^30.3.0",
     "openapi-typescript": "7.13.0",
     "postcss": "^8.5.8",
-    "storybook": "^10.3.5",
+    "storybook": "^10.4.2",
     "tailwindcss": "^4.2.2",
     "ts-jest": "^29.4.6",
     "typescript": "^5"
