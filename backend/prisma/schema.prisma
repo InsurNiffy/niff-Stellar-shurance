@@ -479,6 +479,7 @@ model Post {
   body          String     @db.VarChar(10000)
   status        PostStatus @default(DRAFT)
   authorAddress String     @map("author_address")
+  publishAt     DateTime?  @map("publish_at")
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
   deletedAt     DateTime?  @map("deleted_at")
@@ -487,6 +488,7 @@ model Post {
   @@index([authorAddress])
   @@index([deletedAt])
   @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
+  @@index([publishAt])
   @@map("posts")
 }
 
