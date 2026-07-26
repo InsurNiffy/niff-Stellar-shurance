@@ -11,7 +11,6 @@ import { useWallet } from '@/features/wallet'
 import { WalletConnectButton } from '@/features/wallet'
 import { useTransactionStatus } from '@/hooks/useTransactionStatus'
 import { getConfig } from '@/config/env'
-import { ChainReadError } from '@/lib/api/chain'
 import {
   initiatePolicy,
   submitSignedPolicy,
@@ -251,7 +250,7 @@ export function WalletSignStep({ coverageData, quote, quoteExpiresAt, onBack, on
       console.warn('Allowance check failed, proceeding without pre-flight:', err)
       await performPolicyInitiation()
     }
-  }, [address, coverageData, isQuoteExpired, premiumStroops, contractId, performPolicyInitiation])
+  }, [address, isQuoteExpired, premiumStroops, contractId, performPolicyInitiation])
 
   const handleApproveSpending = useCallback(async () => {
     if (!address || !allowanceInfo) return

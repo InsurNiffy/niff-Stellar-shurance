@@ -229,7 +229,7 @@ interface PendingAdminAction {
 }
 
 function CooldownStatus({ jwt }: { jwt: string }) {
-  const [pending, setPending] = useState<PendingAdminAction | null>(null)
+  const [pending, _setPending] = useState<PendingAdminAction | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {

@@ -34,19 +34,19 @@ export function PurchaseWizard() {
   const [coverageData, setCoverageData] = useState<Partial<QuoteFormData>>({})
   const [quote, setQuote] = useState<QuoteResponse | null>(null)
   const [quoteExpiresAt, setQuoteExpiresAt] = useState<number | null>(null)
+  const [coverageFormKey, setCoverageFormKey] = useState(0)
   const restoredRef = useRef(false)
 
   useEffect(() => {
-    if (restoredRef.current) return
+    if (!hasDraft || restoredRef.current) return
     restoredRef.current = true
-    if (hasDraft) {
-      const draft = loadDraft()
-      if (draft) {
-        setStep(draft.step)
-        setCoverageData(draft.coverageData)
-        setQuote(draft.quote)
-        setQuoteExpiresAt(draft.quoteExpiresAt)
-      }
+    const draft = loadDraft()
+    if (draft) {
+      setStep(draft.step)
+      setCoverageData(draft.coverageData)
+      setQuote(draft.quote)
+      setQuoteExpiresAt(draft.quoteExpiresAt)
+      setCoverageFormKey((k) => k + 1)
     }
   }, [hasDraft, loadDraft])
 
@@ -126,6 +126,7 @@ export function PurchaseWizard() {
         <CardContent>
           {step === 0 && (
             <CoverageDetailsStep
+              key={coverageFormKey}
               defaultValues={coverageData}
               onNext={handleCoverageNext}
               onChange={handleCoverageChange}
