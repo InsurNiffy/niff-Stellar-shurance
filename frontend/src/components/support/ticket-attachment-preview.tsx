@@ -27,7 +27,6 @@ function isPdfMime(mime: string) {
 
 function ImagePreview({ url, fileName }: { url: string; fileName: string }) {
   return (
-  // eslint-disable-next-line @next/next/no-img-element -- ticket attachments use arbitrary customer URLs
     <img
       src={url}
       alt={`Attachment preview: ${fileName}`}
