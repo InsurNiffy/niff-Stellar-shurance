@@ -20,6 +20,7 @@ import {
   computeNetworkMismatch,
   type WalletNetworkResolution,
 } from '@/features/wallet/utils/networkMismatch'
+import { walletSupportsSilentReconnect } from '@/features/wallet/utils/silentReconnect'
 
 export type WalletId = typeof FREIGHTER_ID | typeof XBULL_ID | typeof LOBSTR_ID
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -122,7 +123,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (sessionRaw) {
       try {
         const session = JSON.parse(sessionRaw) as WalletSession
-        reconnect(session)
+        void reconnect(session)
       } catch {
         localStorage.removeItem(LS_WALLET_SESSION)
       }
@@ -131,12 +132,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   async function reconnect(session: WalletSession) {
+    const canSilentReconnect = await walletSupportsSilentReconnect(session.walletId)
+    if (!canSilentReconnect) {
+      return
+    }
+
     try {
       StellarWalletsKit.setWallet(session.walletId)
       const { address: addr } = await StellarWalletsKit.getAddress()
-      
+
       if (addr) {
-        // Validate reconnected public key matches stored value (Requirement: clear if mismatched)
         if (addr !== session.publicKey) {
           console.warn('Wallet address mismatch during reconnect. Clearing session.')
           localStorage.removeItem(LS_WALLET_SESSION)
@@ -149,13 +154,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         await refreshWalletNetwork()
       }
     } catch {
-      // Failed to reconnect (extension locked or unavailable)
-      // Requirement: show a non-blocking banner if it fails.
-      toast({
-        title: 'Reconnect failed',
-        description: 'Unable to auto-reconnect to your wallet. Please unlock your extension or connect manually.',
-        variant: 'default', // non-blocking (not 'destructive' if we want it subtle)
-      })
+      // Silent reconnect failed — leave manual connect available; no error UI.
     }
   }
 
