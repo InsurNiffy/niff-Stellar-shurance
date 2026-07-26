@@ -33,6 +33,8 @@ jest.mock('@/components/ui/use-toast', () => ({
   toast: jest.fn(() => ({ dismiss: mockDismiss, id: 'toast-1', update: jest.fn() })),
 }))
 
+const mockedToast = toast as unknown as jest.Mock
+
 describe('SessionTimeoutModal (wallet session expiry warning)', () => {
   beforeEach(() => {
     mockWallet.connectionStatus = 'connected'
@@ -41,7 +43,7 @@ describe('SessionTimeoutModal (wallet session expiry warning)', () => {
     mockIdleTimeout.showWarning = false
     mockIdleTimeout.stayLoggedIn.mockReset()
     mockDismiss.mockReset()
-    ;(toast as jest.Mock).mockClear()
+    mockedToast.mockClear()
   })
 
   it('renders nothing in the DOM (toast-only UI)', () => {
@@ -51,13 +53,13 @@ describe('SessionTimeoutModal (wallet session expiry warning)', () => {
 
   it('does not show a warning toast before the idle warning threshold', () => {
     render(<SessionTimeoutModal />)
-    expect(toast).not.toHaveBeenCalled()
+    expect(mockedToast).not.toHaveBeenCalled()
   })
 
   it('shows a warning toast when idle warning threshold is reached', () => {
     mockIdleTimeout.showWarning = true
     render(<SessionTimeoutModal />)
-    expect(toast).toHaveBeenCalledWith(
+    expect(mockedToast).toHaveBeenCalledWith(
       expect.objectContaining({
         variant: 'warning',
         title: 'Wallet session expiring soon',
@@ -70,8 +72,10 @@ describe('SessionTimeoutModal (wallet session expiry warning)', () => {
     mockIdleTimeout.showWarning = true
     render(<SessionTimeoutModal />)
 
-    const toastArgs = (toast as jest.Mock).mock.calls[0][0]
-    const actionEl = toastArgs.action as React.ReactElement
+    const toastArgs = mockedToast.mock.calls[0][0] as {
+      action: React.ReactElement<{ onClick: () => void }>
+    }
+    const actionEl = toastArgs.action
     act(() => {
       actionEl.props.onClick()
     })
@@ -84,6 +88,6 @@ describe('SessionTimeoutModal (wallet session expiry warning)', () => {
     mockWallet.connectionStatus = 'disconnected'
     mockIdleTimeout.showWarning = true
     render(<SessionTimeoutModal />)
-    expect(toast).not.toHaveBeenCalled()
+    expect(mockedToast).not.toHaveBeenCalled()
   })
 })
