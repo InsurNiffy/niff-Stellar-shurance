@@ -1,10 +1,11 @@
 /**
  * @jest-environment jsdom
  */
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, act } from '@testing-library/react'
 import React from 'react'
 
 import { SessionTimeoutModal } from '../SessionTimeoutModal'
+import { toast } from '@/components/ui/use-toast'
 
 const mockWallet = { connectionStatus: 'connected' as string, disconnect: jest.fn() }
 const mockRouter = { push: jest.fn() }
@@ -21,54 +22,68 @@ jest.mock('@/lib/hooks/useAuth', () => ({
   setJwt: jest.fn(),
 }))
 
-// Override useIdleTimeout to control showWarning directly
+const mockDismiss = jest.fn()
 const mockIdleTimeout = { showWarning: false, stayLoggedIn: jest.fn() }
+
 jest.mock('@/hooks/use-idle-timeout', () => ({
   useIdleTimeout: () => mockIdleTimeout,
 }))
 
-describe('SessionTimeoutModal', () => {
+jest.mock('@/components/ui/use-toast', () => ({
+  toast: jest.fn(() => ({ dismiss: mockDismiss, id: 'toast-1', update: jest.fn() })),
+}))
+
+describe('SessionTimeoutModal (wallet session expiry warning)', () => {
   beforeEach(() => {
     mockWallet.connectionStatus = 'connected'
     mockWallet.disconnect.mockReset()
     mockRouter.push.mockReset()
     mockIdleTimeout.showWarning = false
     mockIdleTimeout.stayLoggedIn.mockReset()
+    mockDismiss.mockReset()
+    ;(toast as jest.Mock).mockClear()
   })
 
-  it('renders nothing when wallet is disconnected', () => {
-    mockWallet.connectionStatus = 'disconnected'
+  it('renders nothing in the DOM (toast-only UI)', () => {
     const { container } = render(<SessionTimeoutModal />)
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('does not show modal when showWarning is false', () => {
+  it('does not show a warning toast before the idle warning threshold', () => {
     render(<SessionTimeoutModal />)
-    expect(screen.queryByTestId('session-timeout-modal')).not.toBeInTheDocument()
+    expect(toast).not.toHaveBeenCalled()
   })
 
-  it('shows modal when showWarning is true', () => {
+  it('shows a warning toast when idle warning threshold is reached', () => {
     mockIdleTimeout.showWarning = true
     render(<SessionTimeoutModal />)
-    expect(screen.getByTestId('session-timeout-modal')).toBeInTheDocument()
-    expect(screen.getByText(/session expiring soon/i)).toBeInTheDocument()
-    expect(screen.getByText(/2 minutes/i)).toBeInTheDocument()
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        variant: 'warning',
+        title: 'Wallet session expiring soon',
+        duration: 0,
+      }),
+    )
   })
 
-  it('calls stayLoggedIn when Stay logged in is clicked', () => {
+  it('extends the session when stay connected is chosen', () => {
     mockIdleTimeout.showWarning = true
     render(<SessionTimeoutModal />)
-    fireEvent.click(screen.getByTestId('stay-logged-in-btn'))
+
+    const toastArgs = (toast as jest.Mock).mock.calls[0][0]
+    const actionEl = toastArgs.action as React.ReactElement
+    act(() => {
+      actionEl.props.onClick()
+    })
+
     expect(mockIdleTimeout.stayLoggedIn).toHaveBeenCalledTimes(1)
+    expect(mockDismiss).toHaveBeenCalled()
   })
 
-  it('disconnects and redirects when Log out now is clicked', async () => {
+  it('does not warn when the wallet is disconnected', () => {
+    mockWallet.connectionStatus = 'disconnected'
     mockIdleTimeout.showWarning = true
-    mockWallet.disconnect.mockResolvedValue(undefined)
     render(<SessionTimeoutModal />)
-    fireEvent.click(screen.getByTestId('logout-now-btn'))
-    // Allow async disconnect to resolve
-    await Promise.resolve()
-    expect(mockWallet.disconnect).toHaveBeenCalled()
+    expect(toast).not.toHaveBeenCalled()
   })
 })
