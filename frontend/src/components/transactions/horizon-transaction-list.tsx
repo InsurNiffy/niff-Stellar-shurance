@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Search } from 'lucide-react'
 
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -78,6 +79,7 @@ export function HorizonTransactionList({ account }: HorizonTransactionListProps)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [typeFilter, setTypeFilter] = useState<string>('')
   const loadMoreRef = useRef<HTMLDivElement | null>(null)
 
   const loadPage = useCallback(
@@ -127,6 +129,16 @@ export function HorizonTransactionList({ account }: HorizonTransactionListProps)
     return () => observer.disconnect()
   }, [cursor, hasMore, isLoading, isLoadingMore, loadPage])
 
+  const operationTypes = useMemo(() => {
+    const types = new Set(records.map((r) => r.type))
+    return Array.from(types).sort()
+  }, [records])
+
+  const filteredRecords = useMemo(() => {
+    if (!typeFilter) return records
+    return records.filter((r) => r.type === typeFilter)
+  }, [records, typeFilter])
+
   if (!account) {
     return (
       <p className="text-sm text-muted-foreground text-center py-8">
@@ -143,24 +155,71 @@ export function HorizonTransactionList({ account }: HorizonTransactionListProps)
     )
   }
 
+  // Genuinely empty: no transactions at all for this wallet
   if (!isLoading && records.length === 0) {
     return (
       <EmptyState
         variant="transactions"
         headline="No transactions yet"
-        description="Your on-chain activity will appear here once you interact with the protocol."
-        ctaLabel="View Policies"
-        ctaHref="/policies"
+        description="Your on-chain activity will appear here once you interact with the protocol. Purchase a policy or file a claim to get started."
+        ctaLabel="Purchase a Policy"
+        ctaHref="/purchase"
+        secondaryLabel="File a Claim"
+        onSecondaryClick={() => { window.location.href = '/claims' }}
       />
     )
   }
 
   return (
     <section aria-label="Transaction history" className="space-y-3">
+      {!isLoading && records.length > 0 && (
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            aria-label="Filter by type"
+            className="rounded-md border border-input bg-background px-3 py-1.5 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">All types</option>
+            {operationTypes.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          {typeFilter && (
+            <button
+              type="button"
+              onClick={() => setTypeFilter('')}
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Clear filter
+            </button>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <LoadingRows />
+      ) : filteredRecords.length === 0 ? (
+        // Filtered-to-empty: transactions exist but filter hides them all
+        <div
+          role="status"
+          className="flex flex-col items-center py-12 text-center gap-2"
+        >
+          <p className="text-sm font-medium text-gray-900">No matching transactions</p>
+          <p className="text-sm text-muted-foreground">
+            No transactions match the current filter. Try selecting a different type or clear the filter.
+          </p>
+          <button
+            type="button"
+            onClick={() => setTypeFilter('')}
+            className="mt-2 text-sm text-blue-600 underline underline-offset-2 hover:text-blue-700"
+          >
+            Clear filter
+          </button>
+        </div>
       ) : (
-        records.map((op) => <TransactionRow key={op.id} op={op} />)
+        filteredRecords.map((op) => <TransactionRow key={op.id} op={op} />)
       )}
 
       <div
