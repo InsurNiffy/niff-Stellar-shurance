@@ -13,6 +13,19 @@ type FinalizedClaim = {
   updatedAt: Date;
 };
 
+export interface ClaimFeedItemDto {
+  id: number;
+  url: string;
+  title: string;
+  policyId: string;
+  creatorAddress: string;
+  amount: string;
+  asset: string;
+  status: string;
+  summary: string;
+  updatedAt: string;
+}
+
 @Injectable()
 export class FeedsService {
   private readonly baseUrl: string;
@@ -39,8 +52,14 @@ export class FeedsService {
     return this.claimsAtomFeedCache as string;
   }
 
-  async buildClaimsAtomFeed(): Promise<string> {
-    const claims = await this.prisma.claim.findMany({
+  /** Same underlying data as the Atom feed, as structured JSON (Accept: application/json). */
+  async buildClaimsJsonFeed(): Promise<ClaimFeedItemDto[]> {
+    const claims = await this.getFinalizedClaims();
+    return claims.map((claim) => this.buildJsonItem(claim));
+  }
+
+  private async getFinalizedClaims(): Promise<FinalizedClaim[]> {
+    return this.prisma.claim.findMany({
       where: { isFinalized: true, deletedAt: null },
       orderBy: { updatedAt: 'desc' },
       take: 50,
@@ -55,6 +74,10 @@ export class FeedsService {
         updatedAt: true,
       },
     });
+  }
+
+  async buildClaimsAtomFeed(): Promise<string> {
+    const claims = await this.getFinalizedClaims();
 
     const feedUpdated =
       claims.length > 0 ? claims[0].updatedAt.toISOString() : new Date().toISOString();
@@ -96,6 +119,27 @@ Amount: ${this.escapeXml(claim.amount)} ${this.escapeXml(asset)}
 Outcome: ${outcome.toUpperCase()}
 Finalized: ${claim.updatedAt.toISOString()}</content>
   </entry>`;
+  }
+
+  private buildJsonItem(claim: FinalizedClaim): ClaimFeedItemDto {
+    const outcome = claim.status.toLowerCase();
+    const asset = claim.asset ?? 'XLM';
+    const summary = claim.description
+      ? claim.description.slice(0, 200)
+      : `Claim #${claim.id} for policy ${claim.policyId} was ${outcome}.`;
+
+    return {
+      id: claim.id,
+      url: `${this.baseUrl}/claims/${claim.id}`,
+      title: `Claim #${claim.id} — ${outcome.toUpperCase()} (${claim.amount} ${asset})`,
+      policyId: claim.policyId,
+      creatorAddress: claim.creatorAddress,
+      amount: claim.amount,
+      asset,
+      status: outcome,
+      summary,
+      updatedAt: claim.updatedAt.toISOString(),
+    };
   }
 
   private escapeXml(s: string): string {
