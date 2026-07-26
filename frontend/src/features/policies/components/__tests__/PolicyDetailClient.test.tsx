@@ -161,6 +161,6 @@ describe('PolicyDetailClient', () => {
       </QueryClientProvider>
     )
 
-    expect(screen.getByText('Policy expired')).toBeInTheDocument()
+    expect(screen.getByText(/Policy expired — grace period active/i)).toBeInTheDocument()
   })
 })

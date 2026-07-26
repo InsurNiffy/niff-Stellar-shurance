@@ -141,6 +141,24 @@ export interface CreateProposalParams {
   proposedValue: string
 }
 
+export interface OperatorDelegation {
+  id: string
+  delegate: string
+  expiryLedger: number
+  ledgersRemaining: number
+  grantedBy: string
+  grantedAt: string
+}
+
+export interface EvidenceLimits {
+  minEvidenceCount: number
+  maxEvidenceCount: number
+}
+
+export interface KeeperActionResult {
+  txHash: string
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────
 
 export const adminApi = {
@@ -244,5 +262,74 @@ export const adminApi = {
       method: 'POST',
       headers: authHeaders(jwt),
       body: JSON.stringify(params),
+    }),
+
+  listVoters: (jwt: string) =>
+    apiFetch<RegisteredVoter[]>(`${base()}/governance/voters`, {
+      headers: authHeaders(jwt),
+    }),
+
+  batchRegisterVoters: (jwt: string, voters: string[]) =>
+    apiFetch<{ unsignedXdr: string }>(`${base()}/governance/voters/batch-register`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ voters }),
+    }),
+
+  removeVoter: (jwt: string, voter: string) =>
+    apiFetch<{ unsignedXdr: string }>(`${base()}/governance/voters/remove`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ voter }),
+    }),
+
+  getQuorum: (jwt: string) =>
+    apiFetch<QuorumSettings>(`${base()}/governance/quorum`, {
+      headers: authHeaders(jwt),
+    }),
+
+  setQuorum: (jwt: string, bps: number) =>
+    apiFetch<{ unsignedXdr: string }>(`${base()}/governance/quorum`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ bps }),
+    }),
+
+  getQuorumImpact: (jwt: string, bps: number) =>
+    apiFetch<QuorumImpact>(`${base()}/governance/quorum/impact?bps=${bps}`, {
+      headers: authHeaders(jwt),
+    }),
+
+  listDelegations: (jwt: string) =>
+    apiFetch<OperatorDelegation[]>(`${base()}/delegations`, {
+      headers: authHeaders(jwt),
+    }),
+
+  grantDelegation: (
+    jwt: string,
+    params: { delegate: string; expiryLedger: number },
+  ) =>
+    apiFetch<OperatorDelegation>(`${base()}/delegations`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify(params),
+    }),
+
+  revokeDelegation: (jwt: string, delegationId: string) =>
+    apiFetch<void>(`${base()}/delegations/${encodeURIComponent(delegationId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(jwt),
+    }),
+
+  getEvidenceLimits: (jwt: string) =>
+    apiFetch<EvidenceLimits>(`${base()}/governance/evidence-limits`, {
+      headers: authHeaders(jwt),
+    }),
+
+  setEvidenceLimits: (jwt: string, min: number, max: number) =>
+    apiFetch<KeeperActionResult>(`${base()}/governance/evidence-limits`, {
+      method: 'PATCH',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ min, max }),
     }),
 }

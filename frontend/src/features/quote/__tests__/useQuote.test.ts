@@ -12,7 +12,13 @@ jest.mock('../api', () => ({
 
 const mockFetchQuote = fetchQuote as jest.MockedFunction<typeof fetchQuote>
 
-const baseInputs = {
+import type { QuoteFormData } from '@/lib/schemas/quote'
+
+type QuoteInputs = Required<
+  Pick<QuoteFormData, 'policy_type' | 'region' | 'coverage_tier' | 'age' | 'risk_score'>
+>
+
+const baseInputs: QuoteInputs = {
   policy_type: 'Auto' as const,
   region: 'Medium' as const,
   coverage_tier: 'Standard' as const,
@@ -50,8 +56,8 @@ describe('useQuote debounce', () => {
 
   it('does not simulate until the debounce window elapses', async () => {
     const { rerender } = renderHook(
-      ({ inputs }) => useQuote(inputs, QUOTE_DEBOUNCE_MS),
-      { initialProps: { inputs: { ...baseInputs, coverage_tier: 'Basic' as const } } },
+      ({ inputs }: { inputs: QuoteInputs }) => useQuote(inputs, QUOTE_DEBOUNCE_MS),
+      { initialProps: { inputs: { ...baseInputs, coverage_tier: 'Basic' } } },
     )
 
     expect(mockFetchQuote).not.toHaveBeenCalled()
@@ -77,17 +83,17 @@ describe('useQuote debounce', () => {
 
   it('rapid successive coverage changes result in a single simulation for the final value', async () => {
     const { rerender } = renderHook(
-      ({ inputs }) => useQuote(inputs, QUOTE_DEBOUNCE_MS),
-      { initialProps: { inputs: { ...baseInputs, coverage_tier: 'Basic' as const, age: 20 } } },
+      ({ inputs }: { inputs: QuoteInputs }) => useQuote(inputs, QUOTE_DEBOUNCE_MS),
+      { initialProps: { inputs: { ...baseInputs, coverage_tier: 'Basic', age: 20 } } },
     )
 
     // Simulate rapid keystrokes / slider ticks before debounce fires.
     await act(async () => {
-      rerender({ inputs: { ...baseInputs, coverage_tier: 'Standard' as const, age: 21 } })
+      rerender({ inputs: { ...baseInputs, coverage_tier: 'Standard', age: 21 } })
       jest.advanceTimersByTime(50)
-      rerender({ inputs: { ...baseInputs, coverage_tier: 'Premium' as const, age: 22 } })
+      rerender({ inputs: { ...baseInputs, coverage_tier: 'Premium', age: 22 } })
       jest.advanceTimersByTime(50)
-      rerender({ inputs: { ...baseInputs, coverage_tier: 'Premium' as const, age: 35 } })
+      rerender({ inputs: { ...baseInputs, coverage_tier: 'Premium', age: 35 } })
     })
 
     expect(mockFetchQuote).not.toHaveBeenCalled()
@@ -115,8 +121,8 @@ describe('useQuote debounce', () => {
       .mockResolvedValueOnce(mockQuote({ premiumXlm: '2.5' }))
 
     const { rerender, result } = renderHook(
-      ({ inputs }) => useQuote(inputs, QUOTE_DEBOUNCE_MS),
-      { initialProps: { inputs: { ...baseInputs, coverage_tier: 'Basic' as const } } },
+      ({ inputs }: { inputs: QuoteInputs }) => useQuote(inputs, QUOTE_DEBOUNCE_MS),
+      { initialProps: { inputs: { ...baseInputs, coverage_tier: 'Basic' } } },
     )
 
     await act(async () => {
@@ -125,7 +131,7 @@ describe('useQuote debounce', () => {
     await waitFor(() => expect(mockFetchQuote).toHaveBeenCalledTimes(1))
 
     await act(async () => {
-      rerender({ inputs: { ...baseInputs, coverage_tier: 'Premium' as const } })
+      rerender({ inputs: { ...baseInputs, coverage_tier: 'Premium' } })
       jest.advanceTimersByTime(QUOTE_DEBOUNCE_MS)
     })
 

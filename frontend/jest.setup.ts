@@ -17,8 +17,25 @@ if (!globalThis.crypto?.subtle) {
   });
 }
 
-// Polyfill File.arrayBuffer for jsdom
-if (typeof File !== 'undefined' && !File.prototype.arrayBuffer) {
+// Polyfill fetch for jsdom when the test runtime does not provide it
+if (typeof globalThis.fetch === 'undefined') {
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      text: async () => '',
+      blob: async () => new Blob(),
+      arrayBuffer: async () => new ArrayBuffer(0),
+      headers: { get: () => null, has: () => false },
+    }) as unknown as Response) as typeof fetch;
+}
+
+// Polyfill File.arrayBuffer for jsdom when missing only
+if (
+  typeof File !== 'undefined' &&
+  typeof File.prototype.arrayBuffer !== 'function'
+) {
   File.prototype.arrayBuffer = function () {
     return new Promise<ArrayBuffer>((resolve, reject) => {
       const reader = new FileReader();
@@ -29,17 +46,26 @@ if (typeof File !== 'undefined' && !File.prototype.arrayBuffer) {
   };
 }
 
-// Mock window.matchMedia
-Object.defineProperty(window, 'matchMedia', {
-  writable: true,
-  value: jest.fn().mockImplementation((query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: jest.fn(),
-    removeListener: jest.fn(),
-    addEventListener: jest.fn(),
-    removeEventListener: jest.fn(),
-    dispatchEvent: jest.fn(),
-  })),
-});
+// Mock window.matchMedia (jsdom only — skip in @jest-environment node)
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: jest.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })),
+  });
+}
+
+if (typeof document !== 'undefined' && typeof document.execCommand !== 'function') {
+  Object.defineProperty(document, 'execCommand', {
+    value: jest.fn(() => true),
+    configurable: true,
+  });
+}

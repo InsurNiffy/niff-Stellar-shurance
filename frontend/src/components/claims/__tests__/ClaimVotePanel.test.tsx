@@ -113,7 +113,7 @@ describe('ClaimVotePanel', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(screen.getByText(/confirm approval vote/i)).toBeInTheDocument()
     expect(screen.getByText(/this action is irreversible/i)).toBeInTheDocument()
-    expect(screen.getByText(/claim id:.*CLAIM-123/i)).toBeInTheDocument()
+    expect(screen.getByText('CLAIM-123')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /sign & approve/i }))
 
