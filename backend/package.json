@@ -113,7 +113,7 @@
     "@nestjs/schematics": "^11.1.0",
     "@nestjs/testing": "^11.1.19",
     "@testcontainers/postgresql": "10.10.4",
-    "@testcontainers/redis": "10.10.4",
+    "@testcontainers/redis": "12.0.4",
     "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.17",
     "@types/dompurify": "^3.0.5",
