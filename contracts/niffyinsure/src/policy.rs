@@ -68,6 +68,8 @@ pub enum PolicyError {
     InsufficientSolvency = 124,
     /// Terms hash is all-zero (uninitialized). A non-zero SHA-256 digest is required at bind time.
     InvalidTermsHash = 125,
+    /// Supplied address is the zero address, which cannot hold funds or authorize transactions.
+    ZeroAddress = 126,
 }
 
 #[contracttype]
@@ -349,6 +351,24 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
     }
 }
 
+/// Reject the zero address early, before any auth or storage writes.
+/// The zero address cannot authorize transactions and would permanently lock funds.
+///
+/// In Soroban a "zero" Stellar account is a 32-byte all-zero Ed25519 key encoded
+/// as `GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF`.
+/// This helper is a cheap, allocation-free guard that should be called at every
+/// entrypoint that accepts a `holder`, `beneficiary`, or `admin` address.
+pub fn require_non_zero(env: &Env, addr: &Address) -> Result<(), PolicyError> {
+    let zero = Address::from_string(&soroban_sdk::String::from_str(
+        env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
+    if *addr == zero {
+        return Err(PolicyError::ZeroAddress);
+    }
+    Ok(())
+}
+
 /// Returns true when treasury balance covers approved obligations plus `new_coverage`
 /// at or above the configured minimum solvency ratio.
 pub fn check_solvency_ratio(env: &Env, asset: &Address, new_coverage: i128) -> bool {
@@ -403,6 +423,12 @@ pub fn initiate_policy(
 ) -> Result<Policy, PolicyError> {
     // Check granular pause: policy binding should be blocked if bind_paused
     storage::assert_bind_not_paused(env);
+
+    // Zero-address guard: reject all-zero holder or beneficiary before any state changes.
+    require_non_zero(env, &holder)?;
+    if let Some(ref b) = beneficiary {
+        require_non_zero(env, b)?;
+    }
 
     // Policy type registry check: if the registry is enabled, the requested type
     // must be registered and active. If the registry has never been used, all types
@@ -614,6 +640,11 @@ pub fn set_beneficiary(
     new_beneficiary: Option<Address>,
 ) -> Result<(), PolicyError> {
     holder.require_auth();
+
+    // Zero-address guard: reject all-zero beneficiary before any state changes.
+    if let Some(ref b) = new_beneficiary {
+        require_non_zero(env, b)?;
+    }
 
     let mut policy = storage::get_policy(env, &holder, policy_id).ok_or(PolicyError::NotFound)?;
 
