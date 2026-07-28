@@ -43,11 +43,12 @@ export function PurchaseWizard() {
   const [coverageData, setCoverageData] = useState<Partial<QuoteFormData>>({})
   const [quote, setQuote] = useState<QuoteResponse | null>(null)
   const [quoteExpiresAt, setQuoteExpiresAt] = useState<number | null>(null)
+  const [coverageFormKey, setCoverageFormKey] = useState(0)
   const restoredRef = useRef(false)
   const completedRef = useRef(false)
 
   useEffect(() => {
-    if (restoredRef.current) return
+    if (!hasDraft || restoredRef.current) return
     restoredRef.current = true
 
     // A shared quote link takes priority over any saved draft. Only the
@@ -159,6 +160,7 @@ export function PurchaseWizard() {
         <CardContent>
           {step === 0 && (
             <CoverageDetailsStep
+              key={coverageFormKey}
               defaultValues={coverageData}
               onNext={handleCoverageNext}
               onChange={handleCoverageChange}

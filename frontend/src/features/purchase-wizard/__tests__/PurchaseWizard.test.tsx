@@ -61,6 +61,48 @@ jest.mock('@/lib/formatTokenAmount', () => ({
   formatTokenAmount: (v: string) => v,
 }))
 
+jest.mock('@/components/policy/PolicyTypeSelector', () => ({
+  PolicyTypeSelector: ({
+    value,
+    onChange,
+  }: {
+    value?: string
+    onChange: (val: string) => void
+  }) => (
+    <select
+      aria-label="Policy Type"
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Select…</option>
+      <option value="Auto">Auto</option>
+      <option value="Health">Health</option>
+      <option value="Property">Property</option>
+    </select>
+  ),
+}))
+
+jest.mock('@/components/ui/region-combobox', () => ({
+  RegionCombobox: ({
+    value,
+    onChange,
+  }: {
+    value?: string
+    onChange: (val: string) => void
+  }) => (
+    <select
+      aria-label="Region Risk Tier"
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Select…</option>
+      <option value="Low">Low</option>
+      <option value="Medium">Medium</option>
+      <option value="High">High</option>
+    </select>
+  ),
+}))
+
 // Minimal localStorage mock
 const localStorageMock = (() => {
   let store: Record<string, string> = {}
@@ -74,6 +116,9 @@ const localStorageMock = (() => {
 Object.defineProperty(window, 'localStorage', { value: localStorageMock })
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+const MOCK_WALLET_ADDRESS =
+  'GBCPNZ6S7RK5N4BX6HBXBCX7P5QNBOJZFGDWBZBXCLK5T6KHWOPTLR3I'
 
 import { PurchaseWizard } from '../PurchaseWizard'
 
@@ -98,10 +143,17 @@ async function fillStep1AndSubmit() {
   fireEvent.click(screen.getByRole('button', { name: /get quote/i }))
 }
 
+function signAndSubmitButton() {
+  return screen.getByRole('button', { name: 'Sign & Submit' })
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockGeneratePremium.mockReset()
+  mockInitiatePolicy.mockReset()
+  mockSubmitSignedPolicy.mockReset()
   localStorageMock.clear()
   mockSearchParams = new URLSearchParams()
   mockWalletState.address = null
@@ -179,8 +231,8 @@ describe('PurchaseWizard — Step 2: Quote Review', () => {
     renderWizard()
     await fillStep1AndSubmit()
     await waitFor(() => {
-      expect(screen.getByText('1.0 XLM')).toBeInTheDocument()
-      expect(screen.getByText('10000000')).toBeInTheDocument() // stroops
+      expect(screen.getByText(/1\.0 XLM/)).toBeInTheDocument()
+      expect(screen.getByText(/10000000/)).toBeInTheDocument()
       expect(screen.getByText('Live simulation')).toBeInTheDocument()
     })
   })
@@ -204,7 +256,7 @@ describe('PurchaseWizard — Step 2: Quote Review', () => {
     await waitFor(() => screen.getByRole('button', { name: /retry/i }))
     fireEvent.click(screen.getByRole('button', { name: /retry/i }))
     await waitFor(() => {
-      expect(screen.getByText('1.0 XLM')).toBeInTheDocument()
+      expect(screen.getByText(/1\.0 XLM/)).toBeInTheDocument()
     })
   })
 
@@ -226,7 +278,7 @@ describe('PurchaseWizard — Step 2: Quote Review', () => {
     await waitFor(() => screen.getByRole('button', { name: /proceed to sign/i }))
     fireEvent.click(screen.getByRole('button', { name: /proceed to sign/i }))
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /sign & submit/i })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Sign & Submit' })).toBeInTheDocument()
     })
   })
 
@@ -252,7 +304,9 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
     await fillStep1AndSubmit()
     await waitFor(() => screen.getByRole('button', { name: /proceed to sign/i }))
     fireEvent.click(screen.getByRole('button', { name: /proceed to sign/i }))
-    await waitFor(() => screen.getByRole('button', { name: /sign & submit/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Sign & Submit' })).toBeInTheDocument()
+    })
   }
 
   it('shows wallet connect prompt when disconnected', async () => {
@@ -262,42 +316,42 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
   })
 
   it('shows Sign & Submit button when wallet connected', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     await advanceToStep3()
-    expect(screen.getByRole('button', { name: /sign & submit/i })).toBeInTheDocument()
+    expect(signAndSubmitButton()).toBeInTheDocument()
   })
 
   it('shows processing state during initiation', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockImplementation(() => new Promise(() => {}))
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(screen.getByRole('status', { hidden: true })).toBeInTheDocument()
     })
   })
 
   it('shows signing state after initiation succeeds', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
     mockWalletState.signTransaction.mockImplementation(() => new Promise(() => {}))
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(screen.getByText(/waiting for wallet signature/i)).toBeInTheDocument()
     })
   })
 
   it('handles wallet rejection gracefully', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
     mockWalletState.signTransaction.mockRejectedValue(new Error('User rejected the request'))
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
       expect(screen.getByText(/rejected the transaction/i)).toBeInTheDocument()
@@ -307,26 +361,26 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
   })
 
   it('resets to idle state on Try Again click after rejection', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
     mockWalletState.signTransaction.mockRejectedValue(new Error('User rejected'))
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => screen.getByRole('button', { name: /try again/i }))
     fireEvent.click(screen.getByRole('button', { name: /try again/i }))
     await waitFor(() => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /sign & submit/i })).not.toBeDisabled()
+      expect(signAndSubmitButton()).not.toBeDisabled()
     })
   })
 
   it('prevents duplicate submissions', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockImplementation(() => new Promise(() => {}))
     await advanceToStep3()
-    const btn = screen.getByRole('button', { name: /sign & submit/i })
+    const btn = signAndSubmitButton()
     fireEvent.click(btn)
     fireEvent.click(btn)
     await waitFor(() => {
@@ -335,20 +389,20 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
   })
 
   it('enters polling state after successful submission', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
     mockWalletState.signTransaction.mockResolvedValue('signed-xdr')
     mockSubmitSignedPolicy.mockResolvedValue({ policyId: 'pol-1', txHash: 'txhash123' })
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(screen.getByText(/confirming on-chain/i)).toBeInTheDocument()
     })
   })
 
   it('redirects to policy page on SUCCESS polling status', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
     mockWalletState.signTransaction.mockResolvedValue('signed-xdr')
@@ -356,14 +410,14 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
     mockTxStatus.status = 'SUCCESS'
 
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith('/policies/pol-1')
     })
   })
 
   it('shows error on FAILED polling status', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
     mockWalletState.signTransaction.mockResolvedValue('signed-xdr')
@@ -371,7 +425,7 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
     mockTxStatus.status = 'FAILED'
 
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
       expect(screen.getByText(/transaction failed on-chain/i)).toBeInTheDocument()
@@ -379,7 +433,7 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
   })
 
   it('shows timeout error on NOT_FOUND_TIMEOUT polling status', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
     mockWalletState.signTransaction.mockResolvedValue('signed-xdr')
@@ -387,18 +441,18 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
     mockTxStatus.status = 'NOT_FOUND_TIMEOUT'
 
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(screen.getByText(/not confirmed in time/i)).toBeInTheDocument()
     })
   })
 
   it('shows backend error on initiation failure', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockInitiatePolicy.mockRejectedValue(new Error('Insufficient balance'))
     await advanceToStep3()
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(signAndSubmitButton())
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
       expect(screen.getByText(/insufficient balance/i)).toBeInTheDocument()
@@ -406,12 +460,12 @@ describe('PurchaseWizard — Step 3: Wallet Sign & Submit', () => {
   })
 
   it('navigates back to step 2 on Back click', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     await advanceToStep3()
     fireEvent.click(screen.getByRole('button', { name: /back/i }))
     await waitFor(() => {
-      expect(screen.getByText(/quote review/i)).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Quote Review' })).toBeInTheDocument()
     })
   })
 })
@@ -450,13 +504,16 @@ describe('PurchaseWizard — Draft Persistence', () => {
     localStorageMock.setItem('niffyinsur-draft-purchase-wizard', JSON.stringify(draft))
     mockGeneratePremium.mockResolvedValue(MOCK_QUOTE)
     renderWizard()
-    await waitFor(() => {
-      expect(screen.getByText(/quote review/i)).toBeInTheDocument()
-    })
+    await waitFor(
+      () => {
+        expect(screen.getByRole('heading', { name: 'Quote Review' })).toBeInTheDocument()
+      },
+      { timeout: 3000 },
+    )
   })
 
   it('clears draft after successful policy creation', async () => {
-    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.address = MOCK_WALLET_ADDRESS
     mockWalletState.connectionStatus = 'connected'
     mockGeneratePremium.mockResolvedValue(MOCK_QUOTE)
     mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
@@ -468,8 +525,8 @@ describe('PurchaseWizard — Draft Persistence', () => {
     await fillStep1AndSubmit()
     await waitFor(() => screen.getByRole('button', { name: /proceed to sign/i }))
     fireEvent.click(screen.getByRole('button', { name: /proceed to sign/i }))
-    await waitFor(() => screen.getByRole('button', { name: /sign & submit/i }))
-    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+    await waitFor(() => signAndSubmitButton())
+    fireEvent.click(signAndSubmitButton())
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith('/policies/pol-1')

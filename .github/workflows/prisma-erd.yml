@@ -13,7 +13,7 @@ permissions:
 jobs:
   generate-erd:
     name: Generate ERD
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     defaults:
       run:
         working-directory: backend
@@ -36,6 +36,8 @@ jobs:
         run: npm install --no-save prisma-erd-generator
 
       - name: Generate ERD (SVG)
+        env:
+          PUPPETEER_ARGS: '--no-sandbox'
         run: |
           printf '\ngenerator erd {\n  provider = "prisma-erd-generator"\n  output   = "../docs/.erd.svg"\n}\n' \
             >> prisma/schema.prisma
@@ -51,7 +53,7 @@ jobs:
           rm docs/.erd.svg
 
       - name: Commit ERD
-        uses: stefanzweifel/git-auto-commit-action@8621c40c2e8d34bd70b07b9e65c8ef45e80cfe4c # v5.0.1
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "docs: regenerate ERD from schema changes"
           file_pattern: backend/docs/erd.png

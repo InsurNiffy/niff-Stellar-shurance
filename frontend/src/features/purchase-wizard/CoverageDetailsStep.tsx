@@ -58,11 +58,13 @@ export function CoverageDetailsStep({ defaultValues, onNext, onChange }: Props) 
     }
   }, [address, defaultValues.source_account, setValue])
 
-  // Persist draft on every change
-  const values = watch()
+  // Persist draft on field changes (subscribe — avoid depending on `watch()` object identity)
   useEffect(() => {
-    onChange(values)
-  }, [values, onChange])
+    const subscription = watch((data) => {
+      onChange(data)
+    })
+    return () => subscription.unsubscribe()
+  }, [watch, onChange])
 
   return (
     <form
