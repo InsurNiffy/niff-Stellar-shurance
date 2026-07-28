@@ -10,8 +10,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockPush = jest.fn()
+let mockSearchParams = new URLSearchParams()
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => mockSearchParams,
 }))
 
 const mockWalletState = {
@@ -153,6 +155,7 @@ beforeEach(() => {
   mockInitiatePolicy.mockReset()
   mockSubmitSignedPolicy.mockReset()
   localStorageMock.clear()
+  mockSearchParams = new URLSearchParams()
   mockWalletState.address = null
   mockWalletState.connectionStatus = 'disconnected'
   mockWalletState.signTransaction.mockReset()
@@ -550,6 +553,39 @@ describe('PurchaseWizard — Draft Persistence', () => {
     })
   })
 
+  it('prefills coverage details from a valid shared quote link', async () => {
+    mockSearchParams = new URLSearchParams({
+      policy_type: 'Health',
+      region: 'High',
+      coverage_tier: 'Premium',
+      age: '45',
+      risk_score: '7',
+      premium_xlm: '2.5',
+      premium_stroops: '25000000',
+    })
+    renderWizard()
+    await waitFor(() => {
+      const select = screen.getByLabelText(/policy type/i) as HTMLSelectElement
+      expect(select.value).toBe('Health')
+    })
+    expect((screen.getByLabelText(/your age/i) as HTMLInputElement).value).toBe('45')
+  })
+
+  it('falls back to the normal blank start when the shared link is invalid', async () => {
+    mockSearchParams = new URLSearchParams({
+      policy_type: 'NotARealType',
+      region: 'High',
+      coverage_tier: 'Premium',
+      age: '45',
+      risk_score: '7',
+    })
+    renderWizard()
+    await waitFor(() => {
+      const select = screen.getByLabelText(/policy type/i) as HTMLSelectElement
+      expect(select.value).toBe('')
+    })
+  })
+
   it('ignores draft with wrong schema version', async () => {
     const draft = {
       _v: 99, // wrong version
@@ -595,5 +631,49 @@ describe('PurchaseWizard — Accessibility', () => {
     await waitFor(() => {
       expect(screen.getByRole('status', { name: /loading quote/i })).toBeInTheDocument()
     })
+  })
+})
+
+describe('PurchaseWizard — Navigation Guard', () => {
+  it('registers beforeunload handler when wizard has entered data', async () => {
+    const addSpy = jest.spyOn(window, 'addEventListener')
+    renderWizard()
+    fireEvent.change(screen.getByLabelText(/policy type/i), { target: { value: 'Auto' } })
+    await waitFor(() => {
+      expect(addSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    })
+    addSpy.mockRestore()
+  })
+
+  it('does not register beforeunload handler for empty wizard', () => {
+    const addSpy = jest.spyOn(window, 'addEventListener')
+    renderWizard()
+    const beforeUnloadCalls = addSpy.mock.calls.filter(([event]) => event === 'beforeunload')
+    expect(beforeUnloadCalls).toHaveLength(0)
+    addSpy.mockRestore()
+  })
+
+  it('removes beforeunload handler after successful completion', async () => {
+    const removeSpy = jest.spyOn(window, 'removeEventListener')
+    mockWalletState.address = 'GTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGH'
+    mockWalletState.connectionStatus = 'connected'
+    mockGeneratePremium.mockResolvedValue(MOCK_QUOTE)
+    mockInitiatePolicy.mockResolvedValue({ transactionXdr: 'xdr123', quoteId: 'q1' })
+    mockWalletState.signTransaction.mockResolvedValue('signed-xdr')
+    mockSubmitSignedPolicy.mockResolvedValue({ policyId: 'pol-1', txHash: 'txhash123' })
+    mockTxStatus.status = 'SUCCESS'
+
+    renderWizard()
+    await fillStep1AndSubmit()
+    await waitFor(() => screen.getByRole('button', { name: /proceed to sign/i }))
+    fireEvent.click(screen.getByRole('button', { name: /proceed to sign/i }))
+    await waitFor(() => screen.getByRole('button', { name: /sign & submit/i }))
+    fireEvent.click(screen.getByRole('button', { name: /sign & submit/i }))
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/policies/pol-1')
+    })
+    expect(removeSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    removeSpy.mockRestore()
   })
 })

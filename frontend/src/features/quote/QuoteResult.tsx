@@ -71,6 +71,7 @@ export function QuoteResult({ status, quote, error, inputs }: Props) {
   const symbol = quote.tokenSymbol ?? 'XLM'
   const decimals = quote.tokenDecimals ?? 7
   const protocolFeeBps = quote.protocolFeeBps ?? 500
+  const _protocolFeeStroops = BigInt(quote.premiumStroops) * BigInt(protocolFeeBps) / BigInt(10000)
 
   return (
     <div className="space-y-5" aria-live="polite" aria-atomic="true">

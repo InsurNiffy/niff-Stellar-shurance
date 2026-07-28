@@ -18,6 +18,7 @@ process.env.CONTRACT_ID = process.env.CONTRACT_ID ?? 'CTEST000000000000000000000
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-jwt-secret-at-least-32-characters-long!!';
 process.env.ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'test-admin-token-at-least-24-chars!!';
 process.env.FRONTEND_ORIGINS = process.env.FRONTEND_ORIGINS ?? 'http://localhost:3001';
+process.env.API_BASE_URL = process.env.API_BASE_URL ?? 'http://localhost:3000';
 process.env.ADMIN_CORS_ORIGINS = process.env.ADMIN_CORS_ORIGINS ?? '';
 process.env.CAPTCHA_SECRET_KEY = process.env.CAPTCHA_SECRET_KEY ?? 'dev-skip';
 process.env.IP_HASH_SALT = process.env.IP_HASH_SALT ?? 'test-ip-hash-salt-32-chars-minimum!!';
