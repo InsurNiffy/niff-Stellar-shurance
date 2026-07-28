@@ -485,6 +485,11 @@ pub fn initiate_policy(
     if base_amount <= 0 {
         return Err(PolicyError::InvalidCoverage);
     }
+    // Coverage floor check (issue #787)
+    let min_coverage = storage::get_min_coverage_amount(env);
+    if base_amount < min_coverage {
+        return Err(PolicyError::InvalidCoverage);
+    }
     // Terms hash must be non-zero: all-zero digest is rejected as uninitialized.
     if terms_hash == BytesN::from_array(env, &[0u8; 32]) {
         return Err(PolicyError::InvalidTermsHash);
@@ -566,6 +571,13 @@ pub fn initiate_policy(
         .checked_add(ledger::POLICY_DURATION_LEDGERS)
         .ok_or(PolicyError::LedgerOverflow)?;
 
+    // Issue #782: query token decimals at bind time and cache for payout math.
+    let token_decimals = storage::get_asset_decimals(env, &asset).unwrap_or_else(|| {
+        let args = soroban_sdk::vec![env];
+        env.invoke_contract::<u32>(&asset, &soroban_sdk::Symbol::new(env, "decimals"), args)
+    });
+    storage::set_asset_decimals(env, &asset, token_decimals);
+
     let policy = Policy {
         holder: holder.clone(),
         policy_id,
@@ -585,6 +597,7 @@ pub fn initiate_policy(
         strike_count: 0,
         metadata_uri,
         terms_hash: terms_hash.clone(),
+        token_decimals,
     };
 
     validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
