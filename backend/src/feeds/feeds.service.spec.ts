@@ -94,3 +94,57 @@ describe('FeedsService', () => {
     expect(xml).not.toContain('<entry>');
   });
 });
+
+describe('FeedsService — JSON feed', () => {
+  it('returns the same claims as structured JSON items', async () => {
+    const service = new FeedsService(makePrisma(sampleClaims) as never, makeConfig() as never);
+    const items = await service.buildClaimsJsonFeed();
+
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+      id: 42,
+      policyId: 'GABC:1',
+      creatorAddress: 'GABC123',
+      amount: '1000',
+      asset: 'USDC',
+      status: 'approved',
+    });
+    expect(items[0].title).toContain('Claim #42');
+    expect(items[0].url).toBe('https://example.com/claims/42');
+  });
+
+  it('defaults asset to XLM when null', async () => {
+    const service = new FeedsService(makePrisma(sampleClaims) as never, makeConfig() as never);
+    const items = await service.buildClaimsJsonFeed();
+    expect(items[1].asset).toBe('XLM');
+  });
+
+  it('does not XML-escape text content', async () => {
+    const claimWithSpecialChars = [{
+      ...sampleClaims[0],
+      description: 'Fire & <storm> "damage"',
+    }];
+    const service = new FeedsService(makePrisma(claimWithSpecialChars) as never, makeConfig() as never);
+    const items = await service.buildClaimsJsonFeed();
+    expect(items[0].summary).toBe('Fire & <storm> "damage"');
+  });
+
+  it('returns an empty array when there are no finalized claims', async () => {
+    const service = new FeedsService(makePrisma([]) as never, makeConfig() as never);
+    const items = await service.buildClaimsJsonFeed();
+    expect(items).toEqual([]);
+  });
+
+  it('queries the same finalized/non-deleted/limit-50 criteria as the Atom feed', async () => {
+    const prisma = makePrisma([]);
+    const service = new FeedsService(prisma as never, makeConfig() as never);
+    await service.buildClaimsJsonFeed();
+    expect(prisma.claim.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isFinalized: true, deletedAt: null },
+        take: 50,
+        orderBy: { updatedAt: 'desc' },
+      }),
+    );
+  });
+});

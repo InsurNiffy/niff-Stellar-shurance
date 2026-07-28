@@ -1,15 +1,44 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Search } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Download } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   fetchHorizonTransactions,
   type HorizonOperationRecord,
 } from '@/lib/api/horizon-transactions'
+import { downloadTransactionsCsv } from '@/lib/export-transactions-csv'
 import { cn } from '@/lib/utils'
+
+import { TransactionFilterBar } from './TransactionFilterBar'
+import { DEFAULT_TRANSACTION_FILTERS, type TransactionFilters } from './types'
+
+function assetCodeOf(op: HorizonOperationRecord): string {
+  return op.asset_code ?? 'XLM'
+}
+
+function matchesFilters(op: HorizonOperationRecord, filters: TransactionFilters): boolean {
+  if (filters.asset !== 'all' && assetCodeOf(op) !== filters.asset) return false
+
+  if (filters.status === 'success' && !op.transaction_successful) return false
+  if (filters.status === 'failed' && op.transaction_successful) return false
+
+  const createdAt = new Date(op.created_at).getTime()
+  if (filters.startDate) {
+    const start = new Date(filters.startDate).getTime()
+    if (createdAt < start) return false
+  }
+  if (filters.endDate) {
+    // Treat the end date as inclusive of the whole day.
+    const end = new Date(filters.endDate).getTime() + 24 * 60 * 60 * 1000
+    if (createdAt >= end) return false
+  }
+
+  return true
+}
 
 function formatOperationSummary(op: HorizonOperationRecord): string {
   const parts = [op.type]
@@ -70,9 +99,15 @@ function LoadingRows() {
 
 interface HorizonTransactionListProps {
   account: string | null
+  filters?: TransactionFilters
+  onFiltersChange?: (filters: TransactionFilters) => void
 }
 
-export function HorizonTransactionList({ account }: HorizonTransactionListProps) {
+export function HorizonTransactionList({
+  account,
+  filters = DEFAULT_TRANSACTION_FILTERS,
+  onFiltersChange,
+}: HorizonTransactionListProps) {
   const [records, setRecords] = useState<HorizonOperationRecord[]>([])
   const [cursor, setCursor] = useState<string | undefined>()
   const [hasMore, setHasMore] = useState(false)
@@ -129,15 +164,15 @@ export function HorizonTransactionList({ account }: HorizonTransactionListProps)
     return () => observer.disconnect()
   }, [cursor, hasMore, isLoading, isLoadingMore, loadPage])
 
-  const operationTypes = useMemo(() => {
-    const types = new Set(records.map((r) => r.type))
-    return Array.from(types).sort()
+  const assetOptions = useMemo(() => {
+    const codes = new Set(records.map(assetCodeOf))
+    return Array.from(codes).sort()
   }, [records])
 
-  const filteredRecords = useMemo(() => {
-    if (!typeFilter) return records
-    return records.filter((r) => r.type === typeFilter)
-  }, [records, typeFilter])
+  const filteredRecords = useMemo(
+    () => records.filter((op) => matchesFilters(op, filters)),
+    [records, filters],
+  )
 
   if (!account) {
     return (
@@ -172,52 +207,29 @@ export function HorizonTransactionList({ account }: HorizonTransactionListProps)
 
   return (
     <section aria-label="Transaction history" className="space-y-3">
-      {!isLoading && records.length > 0 && (
-        <div className="flex items-center gap-2">
-          <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            aria-label="Filter by type"
-            className="rounded-md border border-input bg-background px-3 py-1.5 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+      {!isLoading && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => downloadTransactionsCsv(records)}
           >
-            <option value="">All types</option>
-            {operationTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-          {typeFilter && (
-            <button
-              type="button"
-              onClick={() => setTypeFilter('')}
-              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            >
-              Clear filter
-            </button>
-          )}
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
         </div>
       )}
 
       {isLoading ? (
         <LoadingRows />
       ) : filteredRecords.length === 0 ? (
-        // Filtered-to-empty: transactions exist but filter hides them all
-        <div
-          role="status"
-          className="flex flex-col items-center py-12 text-center gap-2"
-        >
-          <p className="text-sm font-medium text-gray-900">No matching transactions</p>
-          <p className="text-sm text-muted-foreground">
-            No transactions match the current filter. Try selecting a different type or clear the filter.
-          </p>
-          <button
-            type="button"
-            onClick={() => setTypeFilter('')}
-            className="mt-2 text-sm text-blue-600 underline underline-offset-2 hover:text-blue-700"
-          >
-            Clear filter
-          </button>
-        </div>
+        <EmptyState
+          variant="transactions"
+          headline="No matching transactions"
+          description="No transactions match the selected filters. Try adjusting or clearing them."
+          secondaryLabel="Clear filters"
+          onSecondaryClick={() => onFiltersChange?.(DEFAULT_TRANSACTION_FILTERS)}
+        />
       ) : (
         filteredRecords.map((op) => <TransactionRow key={op.id} op={op} />)
       )}

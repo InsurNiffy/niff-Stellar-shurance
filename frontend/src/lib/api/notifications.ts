@@ -1,10 +1,21 @@
 import { apiFetch } from './fetch'
 import { getConfig } from '@/config/env'
 
+export interface ChannelPreferences {
+  email: boolean
+  push: boolean
+  inApp: boolean
+}
+
 export interface NotificationPreferences {
   renewalRemindersEnabled: boolean
   claimUpdatesEnabled: boolean
   voteRemindersEnabled: boolean
+  channels: {
+    renewalReminders: ChannelPreferences
+    claimUpdates: ChannelPreferences
+    voteReminders: ChannelPreferences
+  }
 }
 
 export async function getNotificationPreferences(
