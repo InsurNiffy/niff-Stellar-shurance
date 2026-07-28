@@ -440,6 +440,15 @@ pub fn cancel_admin_action(env: &Env) {
 /// Propose a new admin (step 1 of two-step rotation). Current admin must authorize.
 pub fn propose_admin(env: &Env, new_admin: Address) {
     let current = require_admin(env);
+    // Zero-address guard: the zero address cannot authorize the accept_admin call.
+    if new_admin
+        == Address::from_string(&soroban_sdk::String::from_str(
+            env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ))
+    {
+        panic_with_error!(env, AdminError::InvalidAddress);
+    }
     storage::set_pending_admin(env, &new_admin);
     AdminProposed {
         old_admin: current.clone(),
