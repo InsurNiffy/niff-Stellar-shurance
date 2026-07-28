@@ -335,6 +335,7 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::CommitmentNotFound => "no vote commitment found for this voter",
         Error::CommitmentMismatch => "revealed vote does not match the prior commitment",
         Error::DuplicateEvidence => "evidence array contains a duplicate url/hash pair",
+        Error::SelfVoteNotAllowed => "claimant cannot vote on their own claim",
         Error::PageSizeTooLarge => "requested page size exceeds the hard query cap",
         Error::EscalationDeadlineNotFuture => "escalation deadline must be in the future",
         Error::EscalationDeadlineNotEarlier => {
