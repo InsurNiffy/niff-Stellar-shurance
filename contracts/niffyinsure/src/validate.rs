@@ -139,6 +139,8 @@ pub enum Error {
     EscalationDeadlineNotFuture = 82,
     /// Escalation deadline must be earlier than the current voting deadline.
     EscalationDeadlineNotEarlier = 83,
+    /// Claim ID counter would overflow u64::MAX.
+    ClaimIdOverflow = 85,
 }
 
 pub fn check_claim_evidence_update(

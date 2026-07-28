@@ -325,7 +325,7 @@ pub fn file_claim(
     let duration = storage::get_voting_duration_ledgers(env);
     let voting_deadline_ledger = now.checked_add(duration).ok_or(Error::Overflow)?;
 
-    let claim_id = storage::next_claim_id(env);
+    let claim_id = storage::next_claim_id(env)?;
     let mut status_history: Vec<ClaimStatusHistoryEntry> = Vec::new(env);
     push_status_transition(&mut status_history, ClaimStatus::Processing, now);
     storage::snapshot_claim_voters(env, claim_id);
