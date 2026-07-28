@@ -165,7 +165,7 @@ function SecretVoteSelector({
   )
 }
 
-export function CommitRevealFlow({ claimId, commitReveal, onCommit, onReveal }: CommitRevealFlowProps) {
+export function CommitRevealFlow({ claimId: _claimId, commitReveal, onCommit, onReveal }: CommitRevealFlowProps) {
   const latestLedger = useLatestLedger()
   const currentLedger = latestLedger ?? 0
 

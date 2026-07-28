@@ -35,7 +35,7 @@ export function TransferPolicyModal({
   onSuccess,
 }: TransferPolicyModalProps) {
   const { toast } = useToast()
-  const { address } = useWallet()
+  const { address: _address } = useWallet()
   const [step, setStep] = useState<'input' | 'review' | 'signing' | 'done' | 'error'>('input')
   const [newHolder, setNewHolder] = useState('')
   const [error, setError] = useState<string | null>(null)

@@ -114,6 +114,7 @@ export function HorizonTransactionList({
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [typeFilter, setTypeFilter] = useState<string>('')
   const loadMoreRef = useRef<HTMLDivElement | null>(null)
 
   const loadPage = useCallback(
@@ -189,14 +190,17 @@ export function HorizonTransactionList({
     )
   }
 
+  // Genuinely empty: no transactions at all for this wallet
   if (!isLoading && records.length === 0) {
     return (
       <EmptyState
         variant="transactions"
         headline="No transactions yet"
-        description="Your on-chain activity will appear here once you interact with the protocol."
-        ctaLabel="View Policies"
-        ctaHref="/policies"
+        description="Your on-chain activity will appear here once you interact with the protocol. Purchase a policy or file a claim to get started."
+        ctaLabel="Purchase a Policy"
+        ctaHref="/purchase"
+        secondaryLabel="File a Claim"
+        onSecondaryClick={() => { window.location.href = '/claims' }}
       />
     )
   }
