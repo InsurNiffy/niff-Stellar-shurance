@@ -139,10 +139,8 @@ pub enum Error {
     EscalationDeadlineNotFuture = 82,
     /// Escalation deadline must be earlier than the current voting deadline.
     EscalationDeadlineNotEarlier = 83,
-    /// Coverage amount is below the configured minimum floor.
-    CoverageBelowFloor = 85,
-    /// Voter cap per claim has been reached.
-    VoterCapReached = 86,
+    /// Claim ID counter would overflow u64::MAX.
+    ClaimIdOverflow = 85,
 }
 
 pub fn check_claim_evidence_update(

@@ -438,6 +438,7 @@ pub fn cancel_admin_action(env: &Env) {
 }
 
 /// Propose a new admin (step 1 of two-step rotation). Current admin must authorize.
+/// Sets a time-locked expiry based on the configured admin action window.
 pub fn propose_admin(env: &Env, new_admin: Address) {
     let current = require_admin(env);
     // Zero-address guard: the zero address cannot authorize the accept_admin call.
@@ -449,7 +450,11 @@ pub fn propose_admin(env: &Env, new_admin: Address) {
     {
         panic_with_error!(env, AdminError::InvalidAddress);
     }
+    let window = storage::get_admin_action_window_ledgers(env);
+    let now = env.ledger().sequence();
+    let expiry = now.saturating_add(window);
     storage::set_pending_admin(env, &new_admin);
+    storage::set_pending_admin_expiry(env, expiry);
     AdminProposed {
         old_admin: current.clone(),
         new_admin,
@@ -460,9 +465,17 @@ pub fn propose_admin(env: &Env, new_admin: Address) {
 
 /// Accept a pending admin proposal. The *pending* admin must authorize.
 /// `pending` is read from storage — cannot be spoofed via parameter.
+/// Proposal must be accepted before the expiry ledger (time lock).
 pub fn accept_admin(env: &Env) {
     let pending = storage::get_pending_admin(env)
         .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdmin));
+    let expiry = storage::get_pending_admin_expiry(env)
+        .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdmin));
+    let now = env.ledger().sequence();
+    if now > expiry {
+        storage::clear_pending_admin(env);
+        panic_with_error!(env, AdminError::AdminActionExpired);
+    }
     pending.require_auth();
     let old_admin = storage::get_admin(env);
     storage::set_admin(env, &pending);
