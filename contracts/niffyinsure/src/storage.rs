@@ -69,6 +69,8 @@ pub enum DataKey {
     // ── Instance tier ────────────────────────────────────────────────────
     Admin,
     PendingAdmin,
+    /// Expiry ledger for pending admin proposal (time lock).
+    PendingAdminExpiry,
     Token,
     /// Address where collected premiums are sent.
     Treasury,
@@ -298,8 +300,19 @@ pub fn get_pending_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::PendingAdmin)
 }
 
+pub fn set_pending_admin_expiry(env: &Env, expiry_ledger: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingAdminExpiry, &expiry_ledger);
+}
+
+pub fn get_pending_admin_expiry(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::PendingAdminExpiry)
+}
+
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
+    env.storage().instance().remove(&DataKey::PendingAdminExpiry);
 }
 
 // ── New: Pending Admin Action ─────────────────────────────────────────────────
@@ -643,12 +656,12 @@ pub fn get_claim_counter(env: &Env) -> u64 {
         .unwrap_or(0u64)
 }
 
-pub fn next_claim_id(env: &Env) -> u64 {
+pub fn next_claim_id(env: &Env) -> Result<u64, crate::validate::Error> {
     let next = get_claim_counter(env)
         .checked_add(1)
-        .unwrap_or_else(|| panic!("claim_id overflow"));
+        .ok_or(crate::validate::Error::ClaimIdOverflow)?;
     env.storage().instance().set(&DataKey::ClaimCounter, &next);
-    next
+    Ok(next)
 }
 
 // ── Voters (instance) ─────────────────────────────────────────────────────────
@@ -806,6 +819,19 @@ pub fn get_policy_counter(env: &Env, holder: &Address) -> u32 {
         .unwrap_or(0u32)
 }
 
+/// Atomically increment and return the next policy ID for a holder.
+///
+/// This function reads, increments, stores, and returns the policy ID counter
+/// in a single operation to ensure atomicity and prevent duplicate IDs under
+/// concurrent calls. The counter is stored in persistent storage per holder.
+///
+/// # Returns
+/// The next sequential policy ID (u32) for the given holder.
+///
+/// # Storage
+/// - Reads: `PolicyCounter(holder)` from persistent storage
+/// - Writes: Increments and stores the new value
+/// - Extends TTL to prevent eviction
 pub fn next_policy_id(env: &Env, holder: &Address) -> u32 {
     let key = DataKey::PolicyCounter(holder.clone());
     let next: u32 = env.storage().persistent().get(&key).unwrap_or(0u32) + 1;
