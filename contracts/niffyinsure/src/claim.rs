@@ -443,7 +443,8 @@ pub fn withdraw_claim(env: &Env, claimant: &Address, claim_id: u64) -> Result<()
 
 /// Cast a vote on a pending claim.
 ///
-/// Window check: `now <= claim.voting_deadline_ledger` (inclusive; see `ledger::is_claim_voting_open`).
+/// Claimants may not vote on their own claims, and the window check uses
+/// `now <= claim.voting_deadline_ledger` (inclusive; see `ledger::is_claim_voting_open`).
 /// Returns the updated `ClaimStatus` after tallying.
 pub fn vote_on_claim(
     env: &Env,
@@ -458,6 +459,10 @@ pub fn vote_on_claim(
 
     if claim.status.is_terminal() {
         return Err(Error::ClaimAlreadyTerminal);
+    }
+
+    if voter == &claim.claimant {
+        return Err(Error::SelfVoteNotAllowed);
     }
 
     // Voting window: use per-claim deadline frozen at filing (not current admin config).

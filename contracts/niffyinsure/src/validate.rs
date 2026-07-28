@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, Bytes, BytesN, Env, String, Vec};
+use soroban_sdk::{contracterror, Bytes, BytesN, Env, Map, String, Vec};
 
 use crate::types::{
     Claim, ClaimEvidenceEntry, MultiplierTable, Policy, RiskInput, DETAILS_MAX_LEN,
@@ -131,6 +131,8 @@ pub enum Error {
     CommitmentMismatch = 79,
     /// Evidence array contains a duplicate (url, hash) pair.
     DuplicateEvidence = 80,
+    /// Claimant attempted to vote on their own pending claim.
+    SelfVoteNotAllowed = 84,
     /// Requested page_size exceeds the hard cap for this query.
     PageSizeTooLarge = 81,
     /// Escalation deadline must be strictly after the current ledger.
@@ -258,16 +260,14 @@ pub fn check_claim_fields(
         // Validate evidence URL format
         validate_evidence_url(env, &entry.url)?;
     }
-    // Reject duplicate (url, hash) pairs within the same submission.
-    let n = evidence.len();
-    for i in 0..n {
-        let a = evidence.get(i).unwrap();
-        for j in (i + 1)..n {
-            let b = evidence.get(j).unwrap();
-            if a.url == b.url && a.hash == b.hash {
-                return Err(Error::DuplicateEvidence);
-            }
+    // Reject duplicate (url, hash) pairs within the same submission in O(n) time.
+    let mut seen: Map<(String, BytesN<32>), bool> = Map::new(env);
+    for entry in evidence.iter() {
+        let key = (entry.url.clone(), entry.hash.clone());
+        if seen.contains_key(&key) {
+            return Err(Error::DuplicateEvidence);
         }
+        seen.set(&key, &true);
     }
     Ok(())
 }

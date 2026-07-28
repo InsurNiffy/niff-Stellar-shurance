@@ -77,6 +77,32 @@ fn duplicate_url_and_hash_reverts_with_duplicate_evidence() {
 }
 
 #[test]
+fn all_duplicate_entries_revert() {
+    let (env, client, _, _) = setup();
+    let holder = Address::generate(&env);
+    client.test_seed_policy(&holder, &1u32, &1_000_000i128, &999_999u32);
+
+    let entry = niffyinsure::types::ClaimEvidenceEntry {
+        url: String::from_str(&env, "ipfs://samehash"),
+        hash: non_zero_hash(&env),
+    };
+    let mut evidence = Vec::new(&env);
+    evidence.push_back(entry.clone());
+    evidence.push_back(entry.clone());
+    evidence.push_back(entry);
+
+    let result = client.try_file_claim(
+        &holder,
+        &1u32,
+        &100_000i128,
+        &String::from_str(&env, "test claim"),
+        &evidence,
+        &None,
+    );
+    assert!(result.is_err(), "all-duplicate evidence must be rejected");
+}
+
+#[test]
 fn same_url_different_hash_is_allowed() {
     let (env, client, _, _) = setup();
     let holder = Address::generate(&env);
