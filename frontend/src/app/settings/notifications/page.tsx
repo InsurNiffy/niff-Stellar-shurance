@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
+import { CheckCircle, AlertCircle, Loader2, Bell } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -143,6 +143,38 @@ const NOTIFICATION_TYPES: { channelKey: ChannelKey; enabledKey: EnabledKey; id: 
   },
 ]
 
+// Sample notification previews for each type (#1123)
+const NOTIFICATION_PREVIEWS: Record<EnabledKey, { title: string; body: string }> = {
+  renewalRemindersEnabled: {
+    title: 'Policy renewal reminder',
+    body: 'Your policy POL-0042 expires in 7 days. Renew now to stay covered.',
+  },
+  claimUpdatesEnabled: {
+    title: 'Claim status update',
+    body: 'Claim CLM-0117 has moved from Open → Approved. Your payout is being processed.',
+  },
+  voteRemindersEnabled: {
+    title: 'Vote reminder',
+    body: 'You haven\'t voted on claim CLM-0091 yet. Voting closes in 12 hours.',
+  },
+}
+
+function NotificationPreview({ enabledKey }: { enabledKey: EnabledKey }) {
+  const preview = NOTIFICATION_PREVIEWS[enabledKey]
+  return (
+    <div
+      aria-label="Sample notification preview"
+      className="flex items-start gap-3 rounded-lg border bg-muted/50 px-4 py-3 text-sm"
+    >
+      <Bell className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+      <div>
+        <p className="font-medium leading-none mb-1">{preview.title}</p>
+        <p className="text-xs text-muted-foreground">{preview.body}</p>
+      </div>
+    </div>
+  )
+}
+
 export default function NotificationsPage() {
   const { jwt } = useAuth()
   const { address } = useWallet()
@@ -153,6 +185,8 @@ export default function NotificationsPage() {
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
+  // Track which notification type to preview (#1123)
+  const [previewType, setPreviewType] = useState<EnabledKey>('renewalRemindersEnabled')
 
   useEffect(() => {
     if (!address || !jwt) {
@@ -268,7 +302,12 @@ export default function NotificationsPage() {
           {!loading && !fetchError && draft && (
             <>
               {NOTIFICATION_TYPES.map(({ channelKey, enabledKey, id, label, description }) => (
-                <div key={id} className="space-y-1">
+                <div
+                  key={id}
+                  className="space-y-1"
+                  onMouseEnter={() => setPreviewType(enabledKey)}
+                  onFocus={() => setPreviewType(enabledKey)}
+                >
                   <ToggleRow
                     id={id}
                     label={label}
@@ -286,6 +325,14 @@ export default function NotificationsPage() {
                   />
                 </div>
               ))}
+
+              {/* Notification preview panel (#1123) */}
+              <div className="pt-2">
+                <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Preview
+                </p>
+                <NotificationPreview enabledKey={previewType} />
+              </div>
 
               <div className="flex items-center gap-3 pt-2">
                 <Button

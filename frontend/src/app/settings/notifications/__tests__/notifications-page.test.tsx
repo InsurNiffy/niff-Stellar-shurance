@@ -250,3 +250,71 @@ describe('NotificationsPage — Per-channel toggles', () => {
     expect(voteEmailToggle).toBeDisabled()
   })
 })
+
+describe('NotificationsPage — Notification preview (#1123)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockGet.mockResolvedValue(defaultPrefs)
+    mockPatch.mockResolvedValue(undefined)
+  })
+
+  it('shows a preview panel after preferences load', async () => {
+    render(<NotificationsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: /policy renewal reminders/i })).toBeInTheDocument()
+    })
+
+    expect(screen.getByLabelText(/sample notification preview/i)).toBeInTheDocument()
+  })
+
+  it('preview updates when hovering a different notification type', async () => {
+    render(<NotificationsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: /claim status updates/i })).toBeInTheDocument()
+    })
+
+    // Default preview is for renewal reminders
+    expect(screen.getByLabelText(/sample notification preview/i)).toHaveTextContent(/renewal/i)
+
+    // Hover over claim updates section
+    const claimSection = screen.getByRole('switch', { name: /claim status updates/i }).closest('div')!
+    claimSection.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/sample notification preview/i)).toHaveTextContent(/claim/i)
+    })
+  })
+
+  it('preview never triggers a real notification or side effect', async () => {
+    const notificationSpy = jest.spyOn(window, 'Notification' as never)
+
+    render(<NotificationsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/sample notification preview/i)).toBeInTheDocument()
+    })
+
+    // No real Notification was constructed
+    expect(notificationSpy).not.toHaveBeenCalled()
+    notificationSpy.mockRestore()
+  })
+
+  it('saving preferences works as before when preview is shown', async () => {
+    render(<NotificationsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: /vote reminders/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('switch', { name: /vote reminders/i }))
+    await userEvent.click(screen.getByRole('button', { name: /save preferences/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/preferences saved/i)).toBeInTheDocument()
+    })
+
+    expect(mockPatch).toHaveBeenCalledTimes(1)
+  })
+})
