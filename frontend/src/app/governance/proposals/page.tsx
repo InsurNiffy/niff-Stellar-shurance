@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { adminApi, type GovernanceProposal, type ProposalStatus } from '@/lib/api/admin'
+import { GovernanceProposalDiscussion } from '@/components/governance/governance-proposal-discussion'
 
 function isStaff(jwt: string | null): boolean {
   if (!jwt) return false
@@ -48,6 +49,19 @@ function formatDate(iso: string) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso))
 }
 
+function authorFromJwt(jwt: string): string {
+  try {
+    const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as {
+      sub?: string
+      wallet?: string
+      address?: string
+    }
+    return payload.sub ?? payload.wallet ?? payload.address ?? 'Community member'
+  } catch {
+    return 'Community member'
+  }
+}
+
 export default function GovernanceProposalsPage() {
   const { jwt } = useAuth()
   const staff = isStaff(jwt)
@@ -71,13 +85,13 @@ export default function GovernanceProposalsPage() {
         </div>
         <Link href="/admin" className="text-sm text-primary underline underline-offset-2">Back to dashboard</Link>
       </div>
-      <ProposalList jwt={jwt} />
+      <ProposalList jwt={jwt} author={authorFromJwt(jwt)} />
       {staff && <CreateProposalForm jwt={jwt} />}
     </main>
   )
 }
 
-function ProposalList({ jwt }: { jwt: string }) {
+function ProposalList({ jwt, author }: { jwt: string; author: string }) {
   const [proposals, setProposals] = useState<GovernanceProposal[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -188,6 +202,8 @@ function ProposalList({ jwt }: { jwt: string }) {
                 <span>Voting deadline: {formatDate(p.votingDeadline)}</span>
                 {quorumReached && <Badge variant="success">Quorum met</Badge>}
               </div>
+
+              <GovernanceProposalDiscussion proposalId={p.id} author={author} />
             </CardContent>
           </Card>
         )

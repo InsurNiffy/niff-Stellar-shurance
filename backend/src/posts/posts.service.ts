@@ -13,30 +13,37 @@ import {
   clampLimit,
   PageParams,
 } from '../helpers/pagination';
+import { sanitizePostBody } from './sanitize-post-body';
 
 @Injectable()
 export class PostsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listPosts(params: PageParams & { status?: PostStatus; authorAddress?: string }): Promise<PostsListResponseDto> {
+  async listPosts(
+    params: PageParams & { status?: PostStatus; authorAddress?: string; includeScheduled?: boolean },
+  ): Promise<PostsListResponseDto> {
     const limit = clampLimit(params.limit);
     const keysetWhere = buildKeysetWhere(params.after);
+    const scheduledWhere = params.includeScheduled
+      ? {}
+      : { OR: [{ publishAt: null }, { publishAt: { lte: new Date() } }] };
 
     const where = {
       ...(keysetWhere ?? {}),
       deletedAt: null,
       ...(params.status ? { status: params.status.toUpperCase() } : {}),
       ...(params.authorAddress ? { authorAddress: params.authorAddress } : {}),
+      ...scheduledWhere,
     };
 
     const [total, rows] = await Promise.all([
-      this.prisma.post.count({ where: params.status || params.authorAddress
-        ? {
-            deletedAt: null,
-            ...(params.status ? { status: params.status.toUpperCase() } : {}),
-            ...(params.authorAddress ? { authorAddress: params.authorAddress } : {}),
-          }
-        : { deletedAt: null },
+      this.prisma.post.count({
+        where: {
+          deletedAt: null,
+          ...(params.status ? { status: params.status.toUpperCase() } : {}),
+          ...(params.authorAddress ? { authorAddress: params.authorAddress } : {}),
+          ...scheduledWhere,
+        },
       }),
       this.prisma.post.findMany({
         where,
@@ -53,9 +60,11 @@ export class PostsService {
     };
   }
 
-  async getPost(id: number): Promise<PostResponseDto> {
+  async getPost(id: number, includeScheduled = false): Promise<PostResponseDto> {
     const post = await this.prisma.post.findFirst({ where: { id, deletedAt: null } });
-    if (!post) throw new NotFoundException(`Post ${id} not found`);
+    if (!post || (!includeScheduled && this.isScheduledForFuture(post))) {
+      throw new NotFoundException(`Post ${id} not found`);
+    }
     return this.toDto(post);
   }
 
@@ -63,9 +72,10 @@ export class PostsService {
     const post = await this.prisma.post.create({
       data: {
         title: dto.title,
-        body: dto.body,
+        body: sanitizePostBody(dto.body),
         status: dto.status?.toUpperCase() ?? 'DRAFT',
         authorAddress: dto.authorAddress,
+        publishAt: dto.publishAt ?? null,
       },
     });
     return this.toDto(post);
@@ -79,11 +89,16 @@ export class PostsService {
       where: { id },
       data: {
         ...(dto.title !== undefined ? { title: dto.title } : {}),
-        ...(dto.body !== undefined ? { body: dto.body } : {}),
+        ...(dto.body !== undefined ? { body: sanitizePostBody(dto.body) } : {}),
         ...(dto.status !== undefined ? { status: dto.status.toUpperCase() } : {}),
+        ...(dto.publishAt !== undefined ? { publishAt: dto.publishAt } : {}),
       },
     });
     return this.toDto(post);
+  }
+
+  private isScheduledForFuture(post: { publishAt: Date | null }): boolean {
+    return post.publishAt !== null && post.publishAt.getTime() > Date.now();
   }
 
   async deletePost(id: number): Promise<void> {
@@ -98,6 +113,7 @@ export class PostsService {
     body: string;
     status: string;
     authorAddress: string;
+    publishAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
   }): PostResponseDto {
@@ -107,6 +123,7 @@ export class PostsService {
       body: post.body,
       status: post.status.toLowerCase() as PostStatus,
       authorAddress: post.authorAddress,
+      publishAt: post.publishAt,
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
     };

@@ -1,11 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Stepper, type Step } from '@/components/ui/stepper'
 import { useDraftPersistence } from '@/hooks/use-draft-persistence'
 import { CoverageDetailsStep } from './CoverageDetailsStep'
+import { parseDeepLinkCoverage } from './deep-link'
 import { QuoteReviewStep } from './QuoteReviewStep'
 import { WalletSignStep } from './WalletSignStep'
 import type { WizardDraft, WizardStep } from './types'
@@ -23,22 +25,41 @@ function buildSteps(current: WizardStep): Step[] {
   })) as Step[]
 }
 
+/** Returns true when the wizard has unsaved data worth guarding. */
+function hasUnsavedData(step: WizardStep, coverageData: Partial<QuoteFormData>): boolean {
+  if (step > 0) return true
+  return Object.values(coverageData).some((v) => v !== undefined && v !== '' && v !== null)
+}
+
 export function PurchaseWizard() {
   const { hasDraft, saveDraft, loadDraft, clearDraft } = useDraftPersistence<WizardDraft>(
     WIZARD_DRAFT_KEY,
     WIZARD_SCHEMA_VERSION,
   )
+  const searchParams = useSearchParams()
 
   // Restore draft on mount
   const [step, setStep] = useState<WizardStep>(0)
   const [coverageData, setCoverageData] = useState<Partial<QuoteFormData>>({})
   const [quote, setQuote] = useState<QuoteResponse | null>(null)
   const [quoteExpiresAt, setQuoteExpiresAt] = useState<number | null>(null)
+  const [coverageFormKey, setCoverageFormKey] = useState(0)
   const restoredRef = useRef(false)
+  const completedRef = useRef(false)
 
   useEffect(() => {
-    if (restoredRef.current) return
+    if (!hasDraft || restoredRef.current) return
     restoredRef.current = true
+
+    // A shared quote link takes priority over any saved draft. Only the
+    // coverage inputs are trusted from the URL — the quote itself is always
+    // regenerated through the normal flow, never bypassed.
+    const deepLinkCoverage = parseDeepLinkCoverage(searchParams)
+    if (deepLinkCoverage) {
+      setCoverageData(deepLinkCoverage)
+      return
+    }
+
     if (hasDraft) {
       const draft = loadDraft()
       if (draft) {
@@ -48,7 +69,19 @@ export function PurchaseWizard() {
         setQuoteExpiresAt(draft.quoteExpiresAt)
       }
     }
-  }, [hasDraft, loadDraft])
+  }, [hasDraft, loadDraft, searchParams])
+
+  // Navigation guard — warn before discarding entered coverage details
+  useEffect(() => {
+    if (completedRef.current || !hasUnsavedData(step, coverageData)) return
+
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+    }
+
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [step, coverageData])
 
   const persistDraft = useCallback(
     (patch: Partial<WizardDraft>) => {
@@ -106,6 +139,7 @@ export function PurchaseWizard() {
 
   // Success
   const handleSuccess = useCallback(() => {
+    completedRef.current = true
     clearDraft()
   }, [clearDraft])
 
@@ -126,6 +160,7 @@ export function PurchaseWizard() {
         <CardContent>
           {step === 0 && (
             <CoverageDetailsStep
+              key={coverageFormKey}
               defaultValues={coverageData}
               onNext={handleCoverageNext}
               onChange={handleCoverageChange}

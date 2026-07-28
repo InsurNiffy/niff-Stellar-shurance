@@ -2,12 +2,14 @@
 
 import { SupportTypingIndicator } from './support-typing-indicator'
 import { useTicketTyping } from '@/hooks/useTicketTyping'
+import { TicketAttachmentPreview, type TicketAttachment } from './ticket-attachment-preview'
 
 export interface TicketThreadMessage {
   id: string
   author: 'customer' | 'support'
   body: string
   createdAt: string
+  attachments?: TicketAttachment[]
 }
 
 export interface TicketThreadProps {
@@ -61,6 +63,15 @@ export function TicketThread({
               {m.author === 'support' ? 'Support' : 'You'}
             </p>
             <p className="whitespace-pre-wrap">{m.body}</p>
+            {m.attachments && m.attachments.length > 0 && (
+              <ul className="mt-2 space-y-2" aria-label="Attachments">
+                {m.attachments.map((attachment) => (
+                  <li key={attachment.id}>
+                    <TicketAttachmentPreview attachment={attachment} />
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ul>

@@ -11,7 +11,6 @@ import { useWallet } from '@/features/wallet'
 import { WalletConnectButton } from '@/features/wallet'
 import { useTransactionStatus } from '@/hooks/useTransactionStatus'
 import { getConfig } from '@/config/env'
-import { ChainReadError } from '@/lib/api/chain'
 import {
   initiatePolicy,
   submitSignedPolicy,
@@ -63,6 +62,25 @@ function PhaseStatus({ phase }: { phase: SubmitPhase }) {
       <span>{PHASE_LABELS[phase]}</span>
     </div>
   )
+}
+
+/**
+ * Wallet sign requests can fail because the user rejected them or because
+ * they timed out waiting for a response — both leave the user stuck without
+ * a clear next action unless we surface a specific, actionable message.
+ */
+function describeSignError(err: unknown, action: 'transaction' | 'approval'): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  const lower = msg.toLowerCase()
+  const retryLabel = action === 'transaction' ? '"Sign & Submit"' : '"Approve Spending"'
+
+  if (lower.includes('reject') || lower.includes('cancel')) {
+    return `You rejected the ${action} in your wallet. Click ${retryLabel} to try again.`
+  }
+  if (lower.includes('timeout') || lower.includes('timed out')) {
+    return `The signature request timed out. Click ${retryLabel} to try again.`
+  }
+  return `Signing failed: ${msg}`
 }
 
 function formatStroopsToXLM(stroops: string): string {
@@ -194,15 +212,11 @@ export function WalletSignStep({ coverageData, quote, quoteExpiresAt, onBack, on
       try {
         signedXdr = await signTransaction(transactionXdr)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        const isRejection = msg.toLowerCase().includes('reject') || msg.toLowerCase().includes('cancel')
         setState({
           phase: 'error',
           txHash: null,
           policyId: null,
-          error: isRejection
-            ? 'You rejected the transaction in your wallet. Click "Sign & Submit" to try again.'
-            : `Signing failed: ${msg}`,
+          error: describeSignError(err, 'transaction'),
         })
         submittedRef.current = false
         return
@@ -251,7 +265,7 @@ export function WalletSignStep({ coverageData, quote, quoteExpiresAt, onBack, on
       console.warn('Allowance check failed, proceeding without pre-flight:', err)
       await performPolicyInitiation()
     }
-  }, [address, coverageData, isQuoteExpired, premiumStroops, contractId, performPolicyInitiation])
+  }, [address, isQuoteExpired, premiumStroops, contractId, performPolicyInitiation])
 
   const handleApproveSpending = useCallback(async () => {
     if (!address || !allowanceInfo) return
@@ -270,15 +284,11 @@ export function WalletSignStep({ coverageData, quote, quoteExpiresAt, onBack, on
       try {
         signedXdr = await signTransaction(transactionXdr)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        const isRejection = msg.toLowerCase().includes('reject') || msg.toLowerCase().includes('cancel')
         setState({
           phase: 'error',
           txHash: null,
           policyId: null,
-          error: isRejection
-            ? 'You rejected the approval in your wallet. Click "Approve Spending" to try again.'
-            : `Approval signing failed: ${msg}`,
+          error: describeSignError(err, 'approval'),
         })
         submittedRef.current = false
         return

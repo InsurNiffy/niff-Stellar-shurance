@@ -84,7 +84,7 @@ function QuorumSettings({ jwt }: { jwt: string }) {
 
   useEffect(() => {
     adminApi.getQuorum(jwt)
-      .then((r) => {
+      .then((r: { quorum_bps: number }) => {
         setCurrentBps(r.quorum_bps)
         setInputBps(String(r.quorum_bps))
       })
@@ -229,7 +229,7 @@ interface PendingAdminAction {
 }
 
 function CooldownStatus({ jwt }: { jwt: string }) {
-  const [pending, setPending] = useState<PendingAdminAction | null>(null)
+  const [pending, _setPending] = useState<PendingAdminAction | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
