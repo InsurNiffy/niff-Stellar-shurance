@@ -30,11 +30,11 @@ export function RenewModal({ policy, onClose, onSubmitted }: Props) {
     setStep('signing');
     try {
       // Initiate renewal transaction (backend builds the XDR)
-      const tx = await PolicyAPI.initiatePolicy({
-        quoteId: `renew:${policy.holder}:${policy.policy_id}`,
-        coverageTier: 'Standard',
+      const tx = await PolicyAPI.initiateRenewal({
+        holder: policy.holder,
+        policyId: policy.policy_id,
         walletAddress: address,
-        acceptTerms: true,
+        coverageTier: policy.policy_type,
       });
       const signed = await signTransaction(tx.transactionXdr);
       const result = await PolicyAPI.submitTransaction(signed, '');

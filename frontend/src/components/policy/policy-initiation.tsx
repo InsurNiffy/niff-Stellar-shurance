@@ -73,6 +73,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
   })
 
   const coverageTier = watch('coverageTier')
+  const _beneficiaryAddress = watch('beneficiaryAddress')
 
   const steps: Step[] = [
     {
