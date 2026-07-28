@@ -32,6 +32,8 @@ export const CreatePostDtoSchema = z.object({
   authorAddress: z
     .string()
     .regex(/^G[A-Z2-7]{55}$/, 'authorAddress must be a valid Stellar public key (G...)'),
+  /** Optional future timestamp to schedule the post instead of publishing immediately. */
+  publishAt: z.coerce.date().optional(),
 });
 
 export type CreatePostDto = z.infer<typeof CreatePostDtoSchema>;
@@ -40,6 +42,7 @@ export const UpdatePostDtoSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   body: z.string().min(1).max(10_000).optional(),
   status: PostStatusSchema.optional(),
+  publishAt: z.coerce.date().nullable().optional(),
 });
 
 export type UpdatePostDto = z.infer<typeof UpdatePostDtoSchema>;
@@ -78,6 +81,12 @@ export class PostResponseDto {
   @Expose()
   @IsString()
   authorAddress!: string;
+
+  @ApiPropertyOptional({ description: 'Scheduled publish timestamp; null if not scheduled', nullable: true })
+  @Expose()
+  @IsOptional()
+  @IsDate()
+  publishAt?: Date | null;
 
   @ApiProperty({ description: 'Creation timestamp' })
   @Expose()

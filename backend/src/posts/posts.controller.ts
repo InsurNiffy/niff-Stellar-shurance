@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Query,
+  Req,
   Body,
   HttpCode,
   HttpStatus,
@@ -22,6 +23,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
 import { PostsService } from './posts.service';
 import {
   PostResponseDto,
@@ -31,6 +33,7 @@ import {
   PostsQueryDtoSchema,
 } from './dto/post.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
 import { MAX_LIMIT, DEFAULT_LIMIT } from '../helpers/pagination';
 
@@ -43,9 +46,11 @@ export class PostsController {
    * GET /api/posts
    *
    * Public endpoint. Returns a cursor-paginated list of posts.
-   * Supports filtering by status and authorAddress.
+   * Supports filtering by status and authorAddress. Posts scheduled for a
+   * future publishAt are hidden unless the caller is authenticated.
    */
   @Get()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'List posts with cursor-based pagination' })
   @ApiQuery({ name: 'after', required: false, type: String, description: 'Opaque cursor from a previous response next_cursor.' })
   @ApiQuery({ name: 'limit', required: false, type: Number, description: `Items per page. Clamped to [1, ${MAX_LIMIT}]. Default ${DEFAULT_LIMIT}.` })
@@ -54,6 +59,7 @@ export class PostsController {
   @ApiResponse({ status: 200, description: 'Paginated list of posts', type: PostsListResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid query parameter or cursor' })
   async listPosts(
+    @Req() req: Request,
     @Query('after') after?: string,
     @Query('limit', new DefaultValuePipe(DEFAULT_LIMIT), ParseIntPipe) limit?: number,
     @Query('status') status?: string,
@@ -63,20 +69,23 @@ export class PostsController {
     if (!query.success) {
       throw new BadRequestException(query.error.issues[0]?.message ?? 'Invalid query params');
     }
-    return this.postsService.listPosts(query.data);
+    return this.postsService.listPosts({ ...query.data, includeScheduled: Boolean(req.user) });
   }
 
   /**
    * GET /api/posts/:id
    *
-   * Public endpoint. Returns a single post by numeric ID.
+   * Public endpoint. Returns a single post by numeric ID. A post scheduled
+   * for a future publishAt is treated as not found unless the caller is
+   * authenticated (preview access).
    */
   @Get(':id')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get a single post by ID' })
   @ApiResponse({ status: 200, description: 'Post detail', type: PostResponseDto })
   @ApiResponse({ status: 404, description: 'Post not found' })
-  async getPost(@Param('id', ParseIntPipe) id: number): Promise<PostResponseDto> {
-    return this.postsService.getPost(id);
+  async getPost(@Param('id', ParseIntPipe) id: number, @Req() req: Request): Promise<PostResponseDto> {
+    return this.postsService.getPost(id, Boolean(req.user));
   }
 
   /**
