@@ -13,6 +13,7 @@ import {
   clampLimit,
   PageParams,
 } from '../helpers/pagination';
+import { sanitizePostBody } from './sanitize-post-body';
 
 @Injectable()
 export class PostsService {
@@ -71,7 +72,7 @@ export class PostsService {
     const post = await this.prisma.post.create({
       data: {
         title: dto.title,
-        body: dto.body,
+        body: sanitizePostBody(dto.body),
         status: dto.status?.toUpperCase() ?? 'DRAFT',
         authorAddress: dto.authorAddress,
         publishAt: dto.publishAt ?? null,
@@ -88,7 +89,7 @@ export class PostsService {
       where: { id },
       data: {
         ...(dto.title !== undefined ? { title: dto.title } : {}),
-        ...(dto.body !== undefined ? { body: dto.body } : {}),
+        ...(dto.body !== undefined ? { body: sanitizePostBody(dto.body) } : {}),
         ...(dto.status !== undefined ? { status: dto.status.toUpperCase() } : {}),
         ...(dto.publishAt !== undefined ? { publishAt: dto.publishAt } : {}),
       },

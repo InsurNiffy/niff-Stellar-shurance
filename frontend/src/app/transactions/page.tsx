@@ -3,9 +3,11 @@
 import { useWallet } from '@/hooks/use-wallet'
 import { HorizonTransactionList } from '@/components/transactions/horizon-transaction-list'
 import { WalletConnectButton } from '@/features/wallet'
+import { useTransactionFilters } from '@/lib/hooks/useTransactionFilters'
 
 export default function TransactionsPage() {
   const { address } = useWallet()
+  const [filters, setFilters] = useTransactionFilters()
 
   return (
     <main className="container mx-auto px-4 py-8 max-w-3xl">
@@ -20,7 +22,7 @@ export default function TransactionsPage() {
           <WalletConnectButton />
         </div>
       ) : (
-        <HorizonTransactionList account={address} />
+        <HorizonTransactionList account={address} filters={filters} onFiltersChange={setFilters} />
       )}
     </main>
   )

@@ -11,6 +11,7 @@ import { useWallet } from '@/hooks/use-wallet'
 import {
   getNotificationPreferences,
   patchNotificationPreferences,
+  type ChannelPreferences,
   type NotificationPreferences,
 } from '@/lib/api/notifications'
 
@@ -61,6 +62,87 @@ function ToggleRow({ id, label, description, checked, onChange }: ToggleRowProps
   )
 }
 
+const CHANNEL_LABELS: { key: keyof ChannelPreferences; label: string }[] = [
+  { key: 'email', label: 'Email' },
+  { key: 'push', label: 'Push' },
+  { key: 'inApp', label: 'In-app' },
+]
+
+interface ChannelTogglesProps {
+  id: string
+  channels: ChannelPreferences
+  disabled: boolean
+  onChange: (channel: keyof ChannelPreferences, value: boolean) => void
+}
+
+function ChannelToggles({ id, channels, disabled, onChange }: ChannelTogglesProps) {
+  return (
+    <div className={`flex gap-4 pl-1 pt-1 ${disabled ? 'opacity-40 pointer-events-none' : ''}`}>
+      {CHANNEL_LABELS.map(({ key, label }) => (
+        <label
+          key={key}
+          htmlFor={`${id}-${key}`}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+        >
+          <button
+            id={`${id}-${key}`}
+            type="button"
+            role="switch"
+            aria-checked={channels[key]}
+            aria-label={`${label} channel`}
+            disabled={disabled}
+            onClick={() => onChange(key, !channels[key])}
+            className={[
+              'relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-transparent',
+              'transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
+              channels[key] ? 'bg-primary' : 'bg-input',
+              disabled ? 'cursor-not-allowed' : '',
+            ].join(' ')}
+          >
+            <span
+              aria-hidden="true"
+              className={[
+                'pointer-events-none inline-block h-3 w-3 rounded-full bg-background shadow ring-0 transition-transform',
+                channels[key] ? 'translate-x-3' : 'translate-x-0',
+              ].join(' ')}
+            />
+          </button>
+          {label}
+        </label>
+      ))}
+    </div>
+  )
+}
+
+const DEFAULT_CHANNELS: ChannelPreferences = { email: true, push: true, inApp: true }
+
+type ChannelKey = 'renewalReminders' | 'claimUpdates' | 'voteReminders'
+type EnabledKey = 'renewalRemindersEnabled' | 'claimUpdatesEnabled' | 'voteRemindersEnabled'
+
+const NOTIFICATION_TYPES: { channelKey: ChannelKey; enabledKey: EnabledKey; id: string; label: string; description: string }[] = [
+  {
+    channelKey: 'renewalReminders',
+    enabledKey: 'renewalRemindersEnabled',
+    id: 'renewal-reminders',
+    label: 'Policy renewal reminders',
+    description: 'Get notified before your policy expires.',
+  },
+  {
+    channelKey: 'claimUpdates',
+    enabledKey: 'claimUpdatesEnabled',
+    id: 'claim-updates',
+    label: 'Claim status updates',
+    description: 'Get notified when a claim you filed changes status.',
+  },
+  {
+    channelKey: 'voteReminders',
+    enabledKey: 'voteRemindersEnabled',
+    id: 'vote-reminders',
+    label: 'Vote reminders',
+    description: 'Get notified about active governance votes you haven\'t cast yet.',
+  },
+]
+
 export default function NotificationsPage() {
   const { jwt } = useAuth()
   const { address } = useWallet()
@@ -81,8 +163,17 @@ export default function NotificationsPage() {
     setFetchError(null)
     getNotificationPreferences(address, jwt)
       .then((p) => {
-        setPrefs(p)
-        setDraft(p)
+        // Backfill channels if the API doesn't return them yet
+        const withChannels: NotificationPreferences = {
+          ...p,
+          channels: p.channels ?? {
+            renewalReminders: { ...DEFAULT_CHANNELS },
+            claimUpdates: { ...DEFAULT_CHANNELS },
+            voteReminders: { ...DEFAULT_CHANNELS },
+          },
+        }
+        setPrefs(withChannels)
+        setDraft(withChannels)
       })
       .catch((err: unknown) => {
         setFetchError(err instanceof Error ? err.message : 'Failed to load preferences')
@@ -90,9 +181,34 @@ export default function NotificationsPage() {
       .finally(() => setLoading(false))
   }, [address, jwt])
 
-  function handleToggle(key: keyof NotificationPreferences, value: boolean) {
+  function handleToggle(key: EnabledKey, value: boolean) {
     setDraft((prev) => prev ? { ...prev, [key]: value } : prev)
-    // Reset save status when user makes changes
+    if (saveStatus === 'saved') setSaveStatus('idle')
+  }
+
+  function handleChannelToggle(
+    channelKey: ChannelKey,
+    enabledKey: EnabledKey,
+    channel: keyof ChannelPreferences,
+    value: boolean,
+  ) {
+    setDraft((prev) => {
+      if (!prev) return prev
+      const updatedChannels = {
+        ...prev.channels[channelKey],
+        [channel]: value,
+      }
+      // If all channels are off, turn off the parent type toggle
+      const allOff = !updatedChannels.email && !updatedChannels.push && !updatedChannels.inApp
+      return {
+        ...prev,
+        [enabledKey]: allOff ? false : prev[enabledKey],
+        channels: {
+          ...prev.channels,
+          [channelKey]: updatedChannels,
+        },
+      }
+    })
     if (saveStatus === 'saved') setSaveStatus('idle')
   }
 
@@ -151,27 +267,25 @@ export default function NotificationsPage() {
 
           {!loading && !fetchError && draft && (
             <>
-              <ToggleRow
-                id="renewal-reminders"
-                label="Policy renewal reminders"
-                description="Get notified before your policy expires."
-                checked={draft.renewalRemindersEnabled}
-                onChange={(v) => handleToggle('renewalRemindersEnabled', v)}
-              />
-              <ToggleRow
-                id="claim-updates"
-                label="Claim status updates"
-                description="Get notified when a claim you filed changes status."
-                checked={draft.claimUpdatesEnabled}
-                onChange={(v) => handleToggle('claimUpdatesEnabled', v)}
-              />
-              <ToggleRow
-                id="vote-reminders"
-                label="Vote reminders"
-                description="Get notified about active governance votes you haven't cast yet."
-                checked={draft.voteRemindersEnabled}
-                onChange={(v) => handleToggle('voteRemindersEnabled', v)}
-              />
+              {NOTIFICATION_TYPES.map(({ channelKey, enabledKey, id, label, description }) => (
+                <div key={id} className="space-y-1">
+                  <ToggleRow
+                    id={id}
+                    label={label}
+                    description={description}
+                    checked={draft[enabledKey]}
+                    onChange={(v) => handleToggle(enabledKey, v)}
+                  />
+                  <ChannelToggles
+                    id={id}
+                    channels={draft.channels[channelKey]}
+                    disabled={!draft[enabledKey]}
+                    onChange={(channel, value) =>
+                      handleChannelToggle(channelKey, enabledKey, channel, value)
+                    }
+                  />
+                </div>
+              ))}
 
               <div className="flex items-center gap-3 pt-2">
                 <Button
