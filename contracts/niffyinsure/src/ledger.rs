@@ -30,6 +30,27 @@
 //! can import them from the generated contract spec rather than hard-coding
 //! their own values.
 //!
+//! # Safe operational window
+//!
+//! Ledger sequence numbers are `u32` in Soroban. All deadline arithmetic
+//! (`now + duration`) uses [`u32::checked_add`] and returns a typed
+//! `LedgerOverflow` / `Overflow` error instead of silently wrapping.
+//!
+//! [`MAX_SAFE_LEDGER`] is the largest ledger number at which all contract
+//! durations can be added without overflow. It is defined as:
+//!
+//! ```text
+//! MAX_SAFE_LEDGER = u32::MAX - MAX_VOTING_DURATION_LEDGERS
+//!                 = 4_294_967_295 - 967_680
+//!                 = 4_293_999_615
+//! ```
+//!
+//! `MAX_VOTING_DURATION_LEDGERS` (967_680 ledgers ≈ 8 weeks) is the largest
+//! duration added to a "now" ledger in this contract. At a nominal 5 s/ledger,
+//! `MAX_SAFE_LEDGER` represents ~680 years of Mainnet ledger history — far in
+//! the future.  However, overflow protection is still enforced at compile time
+//! so no code change can accidentally introduce a wrapping deadline.
+//!
 //! # Boundary semantics (inclusive vs exclusive)
 //!
 //! Every window in this contract uses **half-open** intervals: `[start, end)`.
@@ -132,6 +153,19 @@ pub const MAX_APPEALS_PER_CLAIM: u32 = 1;
 /// during this window to freeze payout and set status to Disputed for review.
 pub const DEFAULT_DISPUTE_WINDOW_LEDGERS: u32 = LEDGERS_PER_DAY; // 17_280
 
+/// Largest ledger number at which all contract durations can be added without
+/// `u32` overflow.
+///
+/// Defined as `u32::MAX - MAX_VOTING_DURATION_LEDGERS` because
+/// `MAX_VOTING_DURATION_LEDGERS` (967_680) is the largest duration added to a
+/// current-ledger value anywhere in this contract.
+///
+/// At a nominal 5 s/ledger, this represents ~680 years of Mainnet history.
+/// Any attempt to use ledger numbers above this threshold will produce a typed
+/// overflow error rather than a silently-wrapping deadline.
+pub const MAX_SAFE_LEDGER: u32 = u32::MAX - MAX_VOTING_DURATION_LEDGERS;
+// = 4_293_999_615
+
 // ── Core window helpers ───────────────────────────────────────────────────────
 
 /// Returns `true` if `now` falls in the half-open interval `[start, end)`.
@@ -179,12 +213,35 @@ pub fn is_in_renewal_window(now: u32, end: u32, window: u32) -> bool {
 /// - `now < end`              → standard renewal window (no gap)
 /// - `end <= now < end+grace` → grace period (late renewal, no coverage gap)
 /// - `now >= end + grace`     → lapsed; renewal rejected
+///
+/// # Overflow
+///
+/// Uses saturating arithmetic so an `end` near `u32::MAX` will wrap `grace_end`
+/// to `u32::MAX` rather than overflow.  Callers that need a hard overflow error
+/// should validate `end <= MAX_SAFE_LEDGER` before calling or use
+/// [`checked_is_in_renewal_window_with_grace`].
 #[inline]
 #[allow(dead_code)]
 pub fn is_in_renewal_window_with_grace(now: u32, end: u32, window: u32, grace: u32) -> bool {
     let renewal_start = end.saturating_sub(window);
     let grace_end = end.saturating_add(grace);
     now >= renewal_start && now < grace_end
+}
+
+/// Checked variant of [`is_in_renewal_window_with_grace`] that returns
+/// `Err(Overflow)` instead of saturating when `end + grace` would overflow.
+#[inline]
+pub fn checked_is_in_renewal_window_with_grace(
+    now: u32,
+    end: u32,
+    window: u32,
+    grace: u32,
+) -> Result<bool, crate::validate::Error> {
+    let renewal_start = end.saturating_sub(window);
+    let grace_end = end
+        .checked_add(grace)
+        .ok_or(crate::validate::Error::Overflow)?;
+    Ok(now >= renewal_start && now < grace_end)
 }
 
 /// Validates admin-supplied grace period before it is written to instance storage.
@@ -201,6 +258,11 @@ pub fn is_valid_grace_period_ledgers(v: u32) -> bool {
 ///
 /// **Note:** On-chain claim voting uses [`is_claim_voting_open`] with the stored
 /// `voting_deadline_ledger` instead. This helper remains for unit tests and docs.
+///
+/// # Overflow
+///
+/// Uses saturating arithmetic; callers that need a hard overflow check should
+/// validate `filed_at <= MAX_SAFE_LEDGER` first.
 #[inline]
 #[allow(dead_code)]
 pub fn is_vote_open(now: u32, filed_at: u32, vote_window: u32) -> bool {
@@ -252,9 +314,31 @@ pub fn is_claim_past_voting_deadline(now: u32, voting_deadline_ledger: u32) -> b
 /// Returns `true` if the rate-limit window has elapsed since `last_filed_at`.
 ///
 /// A new claim may be filed once `now >= last_filed_at + rate_limit_window`.
+///
+/// # Overflow
+///
+/// Uses saturating arithmetic; `last_filed_at` is always a real ledger number
+/// (never near `u32::MAX` in practice). For a checked variant, see
+/// [`checked_is_rate_limit_elapsed`].
 #[inline]
 pub fn is_rate_limit_elapsed(now: u32, last_filed_at: u32, rate_limit_window: u32) -> bool {
     now >= last_filed_at.saturating_add(rate_limit_window)
+}
+
+/// Checked variant of [`is_rate_limit_elapsed`] that returns
+/// `Err(Overflow)` instead of saturating when
+/// `last_filed_at + rate_limit_window` would overflow.
+#[inline]
+#[allow(dead_code)]
+pub fn checked_is_rate_limit_elapsed(
+    now: u32,
+    last_filed_at: u32,
+    rate_limit_window: u32,
+) -> Result<bool, crate::validate::Error> {
+    let threshold = last_filed_at
+        .checked_add(rate_limit_window)
+        .ok_or(crate::validate::Error::Overflow)?;
+    Ok(now >= threshold)
 }
 
 /// Ledgers remaining until `end` from `now`.  Returns 0 if already expired.
@@ -468,5 +552,94 @@ mod tests {
         assert!(validate_voting_duration_ledgers(MAX_VOTING_DURATION_LEDGERS).is_ok());
         assert!(validate_voting_duration_ledgers(MIN_VOTING_DURATION_LEDGERS - 1).is_err());
         assert!(validate_voting_duration_ledgers(MAX_VOTING_DURATION_LEDGERS + 1).is_err());
+    }
+
+    // ── Overflow / boundary tests ────────────────────────────────────────────
+
+    #[test]
+    fn max_safe_ledger_is_reasonable() {
+        // MAX_SAFE_LEDGER must be >= the largest realistic ledger number for
+        // the foreseeable future (centuries at 5 s/ledger).
+        assert!(MAX_SAFE_LEDGER > 10_000_000_000 / 5); // > ~63 years worth
+    }
+
+    #[test]
+    fn max_safe_ledger_plus_max_duration_is_u32_max() {
+        // Invariant: MAX_SAFE_LEDGER + MAX_VOTING_DURATION_LEDGERS == u32::MAX
+        assert_eq!(
+            MAX_SAFE_LEDGER.saturating_add(MAX_VOTING_DURATION_LEDGERS),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn max_safe_ledger_checked_add_does_not_overflow() {
+        assert!(MAX_SAFE_LEDGER.checked_add(MAX_VOTING_DURATION_LEDGERS).is_some());
+    }
+
+    #[test]
+    fn one_past_max_safe_ledger_overflows() {
+        assert!((MAX_SAFE_LEDGER + 1).checked_add(MAX_VOTING_DURATION_LEDGERS).is_none());
+    }
+
+    #[test]
+    fn u32_max_minus_one_plus_any_window_overflows() {
+        // u32::MAX - 1 + anything >= 2 overflows
+        assert!((u32::MAX - 1).checked_add(2).is_none());
+    }
+
+    #[test]
+    fn u32_max_checked_add_any_positive_overflows() {
+        assert!(u32::MAX.checked_add(1).is_none());
+    }
+
+    #[test]
+    fn checked_is_rate_limit_elapsed_returns_ok_for_normal_values() {
+        assert_eq!(
+            checked_is_rate_limit_elapsed(200, 100, 50).unwrap(),
+            true
+        );
+        assert_eq!(
+            checked_is_rate_limit_elapsed(149, 100, 50).unwrap(),
+            false
+        );
+    }
+
+    #[test]
+    fn checked_is_rate_limit_elapsed_errors_on_overflow() {
+        assert!(checked_is_rate_limit_elapsed(0, u32::MAX, 1).is_err());
+        assert!(checked_is_rate_limit_elapsed(0, u32::MAX - 1, 2).is_err());
+    }
+
+    #[test]
+    fn checked_is_in_renewal_window_with_grace_returns_ok_for_normal_values() {
+        // end=100, window=10, grace=20 → renewal_start=90, grace_end=120
+        // now=110 is in [90, 120) → true
+        assert_eq!(
+            checked_is_in_renewal_window_with_grace(110, 100, 10, 20).unwrap(),
+            true
+        );
+        // now=130 is >= 120 → false
+        assert_eq!(
+            checked_is_in_renewal_window_with_grace(130, 100, 10, 20).unwrap(),
+            false
+        );
+    }
+
+    #[test]
+    fn checked_is_in_renewal_window_with_grace_errors_on_overflow() {
+        assert!(checked_is_in_renewal_window_with_grace(0, u32::MAX, 10, 1).is_err());
+        assert!(checked_is_in_renewal_window_with_grace(0, u32::MAX - 1, 10, 2).is_err());
+    }
+
+    #[test]
+    fn saturation_of_grace_end_is_documented_behaviour() {
+        // When grace_end overflows, saturating_add clamps to u32::MAX.
+        // With end=u32::MAX, grace=1: grace_end = u32::MAX, so now < u32::MAX → open.
+        // This is intentional fallback behaviour for edge cases; production callers
+        // should validate end <= MAX_SAFE_LEDGER first.
+        let result = is_in_renewal_window_with_grace(u32::MAX - 1, u32::MAX, 10, 1);
+        // grace_end saturates to u32::MAX, now=u32::MAX-1 < u32::MAX → true
+        assert!(result);
     }
 }

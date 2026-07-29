@@ -824,7 +824,8 @@ pub fn renew_policy(
     let now = env.ledger().sequence();
     let grace = storage::get_grace_period_ledgers(env);
 
-    if ledger::is_expired(now, policy.end_ledger.saturating_add(grace)) {
+    let lapse_ledger = policy.end_ledger.checked_add(grace).ok_or(PolicyError::LedgerOverflow)?;
+    if ledger::is_expired(now, lapse_ledger) {
         publish_policy_expired_if_due(env, &policy, now);
         return Ok(crate::types::RenewPolicyOutcome::Lapsed);
     }

@@ -527,13 +527,13 @@ pub fn vote_on_claim(
         claim.status = res;
         if rejected {
             claim.appeal_open_deadline_ledger =
-                now.saturating_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS);
+                now.checked_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS).ok_or(Error::Overflow)?;
         }
     }
 
     if claim.status != status_before {
         if claim.status == ClaimStatus::Approved && claim.payout_deadline_ledger == 0 {
-            claim.payout_deadline_ledger = now.saturating_add(ledger::PAYOUT_TIMEOUT_LEDGERS);
+            claim.payout_deadline_ledger = now.checked_add(ledger::PAYOUT_TIMEOUT_LEDGERS).ok_or(Error::Overflow)?;
         }
         push_status_transition(&mut claim.status_history, claim.status.clone(), now);
         events::emit_claim_status_changed(
@@ -614,20 +614,20 @@ fn finalize_claim_inner(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> 
         } else {
             claim.status = ClaimStatus::Rejected;
             claim.appeal_open_deadline_ledger =
-                now.saturating_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS);
+                now.checked_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS).ok_or(Error::Overflow)?;
         }
     } else {
         // Below minimum participation — no quorum (insurer-favored default).
         claim.status = ClaimStatus::Rejected;
-        claim.appeal_open_deadline_ledger = now.saturating_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS);
+        claim.appeal_open_deadline_ledger = now.checked_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS).ok_or(Error::Overflow)?;
     }
 
     if claim.status != status_before {
         if claim.status == ClaimStatus::Approved && claim.payout_deadline_ledger == 0 {
-            claim.payout_deadline_ledger = now.saturating_add(ledger::PAYOUT_TIMEOUT_LEDGERS);
+            claim.payout_deadline_ledger = now.checked_add(ledger::PAYOUT_TIMEOUT_LEDGERS).ok_or(Error::Overflow)?;
             // Set dispute deadline after approval
             claim.dispute_deadline_ledger =
-                now.saturating_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS);
+                now.checked_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS).ok_or(Error::Overflow)?;
         }
         push_status_transition(&mut claim.status_history, claim.status.clone(), now);
         events::emit_claim_status_changed(
@@ -1726,7 +1726,7 @@ pub fn vote_on_appeal(
         } else {
             ClaimStatus::AppealRejected
         };
-        finalize_appeal_outcome(env, &mut claim, outcome, now);
+        finalize_appeal_outcome(env, &mut claim, outcome, now)?;
     }
 
     let status = claim.status.clone();
@@ -1786,14 +1786,14 @@ fn finalize_appeal_outcome(
     claim: &mut crate::types::Claim,
     outcome: ClaimStatus,
     now: u32,
-) {
+) -> Result<(), Error> {
     let old_status = claim.status.clone();
     claim.status = outcome.clone();
     push_status_transition(&mut claim.status_history, outcome.clone(), now);
 
     if outcome == ClaimStatus::AppealApproved && claim.payout_deadline_ledger == 0 {
-        claim.payout_deadline_ledger = now.saturating_add(ledger::PAYOUT_TIMEOUT_LEDGERS);
-        claim.dispute_deadline_ledger = now.saturating_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS);
+        claim.payout_deadline_ledger = now.checked_add(ledger::PAYOUT_TIMEOUT_LEDGERS).ok_or(Error::Overflow)?;
+        claim.dispute_deadline_ledger = now.checked_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS).ok_or(Error::Overflow)?;
     }
 
     // Close the open-claim slot on terminal appeal outcomes.
@@ -1811,6 +1811,8 @@ fn finalize_appeal_outcome(
         at_ledger: now,
     }
     .publish(env);
+
+    Ok(())
 }
 
 // ── Issue #841: Claim escalation entrypoint ───────────────────────────────────
