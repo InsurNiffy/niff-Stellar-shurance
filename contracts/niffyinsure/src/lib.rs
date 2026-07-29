@@ -361,6 +361,7 @@ impl NiffyInsure {
             57 => validate::Error::CooldownActive,
             80 => validate::Error::DuplicateEvidence,
             81 => validate::Error::PageSizeTooLarge,
+            86 => validate::Error::EvidenceUrlTooLong,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)

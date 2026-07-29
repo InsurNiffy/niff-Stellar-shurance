@@ -257,6 +257,7 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::DetailsTooLong => "claim details exceed maximum length",
         Error::TooManyImageUrls => "too many image URLs supplied",
         Error::ImageUrlTooLong => "image URL exceeds maximum length",
+        Error::EvidenceUrlTooLong => "evidence URL exceeds maximum byte limit",
         Error::ReasonTooLong => "termination reason exceeds maximum length",
         Error::ClaimAlreadyTerminal => {
             "claim already terminal, or withdrawal blocked (voting started or not Processing)"
@@ -343,9 +344,9 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::EscalationDeadlineNotEarlier => {
             "escalation deadline must be earlier than the current voting deadline"
         }
-        Error::DuplicateEvidence => "claim evidence contains a duplicate entry",
-        Error::PageSizeTooLarge => "requested page_size exceeds the hard cap",
+        Error::ClaimIdOverflow => "claim ID counter overflowed u64::MAX",
     };
+
     QuoteFailure {
         code: err as u32,
         message: String::from_str(env, message),

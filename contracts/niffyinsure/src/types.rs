@@ -3,6 +3,13 @@ use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Env, Map,
 // ── Field size limits ─────────────────────────────────────────────────────────
 pub const DETAILS_MAX_LEN: u32 = 256;
 pub const IMAGE_URL_MAX_LEN: u32 = 128;
+/// Per-URL byte limit for evidence URLs submitted with a claim.
+///
+/// Prevents oversized ledger entries by capping each evidence URL at 2048 bytes.
+/// This is separate from [`IMAGE_URL_MAX_LEN`] which acts as a tighter bound for
+/// image-specific URLs; evidence URLs may point to larger off-chain resources
+/// (e.g., detailed IPFS documents) while still being bounded against abuse.
+pub const MAX_EVIDENCE_URL_BYTES: u32 = 2048;
 /// Default evidence attachment limit when admin config is unset.
 pub const IMAGE_URLS_MAX: u32 = 5;
 pub const REASON_MAX_LEN: u32 = 128;
