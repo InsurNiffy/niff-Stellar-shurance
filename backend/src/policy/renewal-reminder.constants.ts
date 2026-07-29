@@ -34,6 +34,7 @@
  */
 
 import { RENEWAL_OPEN_LEDGERS_BEFORE_EXPIRY } from "./renewal.constants";
+import { getQueueRetryConfig } from "../queues/queue-config";
 
 export const REMINDER_QUEUE_NAME = "policy-renewal-reminders";
 
@@ -65,9 +66,12 @@ export const REMINDER_WINDOWS: { type: ReminderType; ledgersBeforeExpiry: number
 export const SCAN_PAGE_SIZE = 500;
 
 /** BullMQ job options for reminder delivery jobs. */
-export const REMINDER_JOB_OPTIONS = {
-  attempts: 5,
-  backoff: { type: "exponential" as const, delay: 2_000 },
-  removeOnComplete: { count: 200 },
-  removeOnFail: { count: 500 },
-};
+export const REMINDER_JOB_OPTIONS = (() => {
+  const cfg = getQueueRetryConfig("policy-renewal-reminders");
+  return {
+    attempts: cfg.maxAttempts,
+    backoff: cfg.backoff,
+    removeOnComplete: { count: 200 },
+    removeOnFail: { count: 500 },
+  };
+})();

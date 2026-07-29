@@ -7,6 +7,7 @@
 
 import { Queue, Worker, Job } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
+import { getQueueRetryConfig } from '../queues/queue-config';
 
 export interface OutboundWebhookJob {
   targetUrl: string;
@@ -17,21 +18,33 @@ export interface OutboundWebhookJob {
 
 const QUEUE_NAME = 'outbound-webhooks';
 
-export const MAX_OUTBOUND_ATTEMPTS = parseInt(
-  process.env.MAX_OUTBOUND_WEBHOOK_ATTEMPTS ?? '5',
-  10,
-);
+/**
+ * Maximum delivery attempts for outbound webhook jobs.
+ * Configurable via QUEUE_RETRY_MAP env var; defaults to 5.
+ * @deprecated Use getQueueRetryConfig('outbound-webhooks').maxAttempts instead.
+ */
+export const MAX_OUTBOUND_ATTEMPTS = (() => {
+  // Preserve backward compatibility with the legacy MAX_OUTBOUND_WEBHOOK_ATTEMPTS env var
+  const legacy = process.env.MAX_OUTBOUND_WEBHOOK_ATTEMPTS;
+  if (legacy) {
+    const parsed = parseInt(legacy, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return getQueueRetryConfig('outbound-webhooks').maxAttempts;
+})();
 
 export const MAX_OUTBOUND_WEBHOOK_SIZE_BYTES = parseInt(
   process.env.MAX_OUTBOUND_WEBHOOK_SIZE_BYTES ?? '1048576',
   10,
 );
 
+const outboundRetry = getQueueRetryConfig('outbound-webhooks');
+
 export const outboundWebhookQueue = new Queue<OutboundWebhookJob>(QUEUE_NAME, {
   connection: getBullMQConnection(),
   defaultJobOptions: {
     attempts: MAX_OUTBOUND_ATTEMPTS,
-    backoff: { type: 'exponential', delay: 1_000 },
+    backoff: outboundRetry.backoff,
     removeOnComplete: { count: 200 },
     removeOnFail: false,
   },

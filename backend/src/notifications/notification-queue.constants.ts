@@ -16,6 +16,7 @@
  */
 
 import { NotificationType } from './notification-preference.types';
+import { getQueueRetryConfig } from '../queues/queue-config';
 
 export const NOTIFICATION_QUEUE_NAME = 'notifications';
 
@@ -52,9 +53,12 @@ export function getPriorityForNotificationType(
 /**
  * BullMQ job options for notification delivery jobs.
  */
-export const NOTIFICATION_JOB_OPTIONS = {
-  attempts: 3,
-  backoff: { type: 'exponential' as const, delay: 1_000 },
-  removeOnComplete: { count: 500 },
-  removeOnFail: { count: 500 },
-};
+export const NOTIFICATION_JOB_OPTIONS = (() => {
+  const cfg = getQueueRetryConfig('notifications');
+  return {
+    attempts: cfg.maxAttempts,
+    backoff: cfg.backoff,
+    removeOnComplete: { count: 500 },
+    removeOnFail: { count: 500 },
+  };
+})();
