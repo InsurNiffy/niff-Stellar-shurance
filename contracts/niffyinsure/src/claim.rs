@@ -150,6 +150,22 @@ struct ClaimFiled {
     pub evidence_hashes: Vec<BytesN<32>>,
 }
 
+/// Emitted when a claim filing fee is collected from the claimant.
+///
+/// Topic layout: ["niffyinsure", "claim_fee_collected", claim_id]
+/// Data: { fee_amount, payer, at_ledger }
+#[contractevent(topics = ["niffyinsure", "claim_fee_collected"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimFeeCollected {
+    #[topic]
+    pub claim_id: u64,
+    /// Fee amount collected (stroops).
+    pub fee_amount: i128,
+    /// Address that paid the fee (the claimant).
+    pub payer: Address,
+    pub at_ledger: u32,
+}
+
 /// Emitted when the claimant withdraws before any vote is cast.
 ///
 /// Topic layout: ["niffyinsure", "claim_withdrawn", claim_id]
@@ -326,6 +342,33 @@ pub fn file_claim(
     let voting_deadline_ledger = now.checked_add(duration).ok_or(Error::Overflow)?;
 
     let claim_id = storage::next_claim_id(env)?;
+
+    // ── Claim filing fee ─────────────────────────────────────────────────────
+    //
+    // If a non-zero filing fee is configured, collect it from the claimant
+    // before creating (persisting) the claim. The fee is transferred to the
+    // treasury. If allowance is insufficient, the claim is rejected and
+    // claim_id is NOT consumed (next_claim_id already bumped; this is
+    // acceptable for auditability — gap claim_ids are harmless).
+    let filing_fee = storage::get_claim_filing_fee(env);
+    if filing_fee > 0 {
+        let token_client = soroban_sdk::token::TokenClient::new(env, &policy.asset);
+        let allowance = token_client.allowance(holder, &env.current_contract_address());
+        if allowance < filing_fee {
+            return Err(Error::InsufficientAllowanceForFee);
+        }
+
+        crate::token::collect_premium(env, holder, &policy.asset, filing_fee);
+
+        ClaimFeeCollected {
+            claim_id,
+            fee_amount: filing_fee,
+            payer: holder.clone(),
+            at_ledger: now,
+        }
+        .publish(env);
+    }
+
     let mut status_history: Vec<ClaimStatusHistoryEntry> = Vec::new(env);
     push_status_transition(&mut status_history, ClaimStatus::Processing, now);
     storage::snapshot_claim_voters(env, claim_id);

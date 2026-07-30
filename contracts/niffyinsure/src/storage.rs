@@ -205,6 +205,9 @@ pub enum DataKey {
     WhitelistEnabled,
     /// Per-address whitelist entry for KYC compliance gating.
     Whitelisted(Address),
+    /// Optional flat fee (stroops) charged to the claimant at file_claim.
+    /// 0 = disabled. Transferred directly to the treasury before claim creation.
+    ClaimFilingFee,
     // ── Appeal mechanism (Issue #1) ───────────────────────────────────────────
     /// Voter snapshot for an appeal round (separate from the base-claim snapshot).
     AppealVoters(u64),
@@ -1169,6 +1172,24 @@ pub fn get_max_weight_cap(env: &Env) -> i128 {
         .instance()
         .get(&DataKey::MaxWeightCap)
         .unwrap_or(i128::MAX)
+}
+
+// ── Claim filing fee (instance) ────────────────────────────────────────────
+
+/// Set the flat fee (stroops) charged to the claimant at file_claim.
+/// 0 = disabled. Fee is transferred to the treasury before claim creation.
+pub fn set_claim_filing_fee(env: &Env, fee: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ClaimFilingFee, &fee);
+}
+
+/// Get the current claim filing fee. Defaults to 0 (disabled) when unset.
+pub fn get_claim_filing_fee(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ClaimFilingFee)
+        .unwrap_or(0)
 }
 
 // ── Per-policy cooldown (persistent) ─────────────────────────────────────────

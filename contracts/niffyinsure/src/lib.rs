@@ -209,6 +209,7 @@ impl NiffyInsure {
         storage::set_protocol_fee_bps(&env, 0);
         storage::set_fee_recipient(&env, &env.current_contract_address());
         storage::set_min_solvency_ratio_bps(&env, 0);
+        storage::set_claim_filing_fee(&env, 0);
         storage::set_voting_duration_ledgers(&env, ledger::VOTE_WINDOW_LEDGERS);
         storage::set_quorum_bps(&env, types::DEFAULT_QUORUM_BPS);
         admin::emit_admin_action(&env, &admin, "initialize");
@@ -861,6 +862,19 @@ impl NiffyInsure {
             id = id.saturating_add(1);
         }
         results
+    }
+
+    /// Admin-only: set the flat fee (stroops) charged to the claimant at file_claim.
+    /// 0 = disabled. Fee is transferred to the treasury before claim creation.
+    pub fn admin_set_claim_filing_fee(env: Env, fee: i128) {
+        let _admin = admin::require_admin(&env);
+        storage::bump_instance(&env);
+        storage::set_claim_filing_fee(&env, fee);
+    }
+
+    /// Read-only: the current claim filing fee. 0 = disabled.
+    pub fn get_claim_filing_fee(env: Env) -> i128 {
+        storage::get_claim_filing_fee(&env)
     }
 
     pub fn get_policy_counter(env: Env, holder: Address) -> u32 {
