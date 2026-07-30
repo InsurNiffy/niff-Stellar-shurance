@@ -257,6 +257,7 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::DetailsTooLong => "claim details exceed maximum length",
         Error::TooManyImageUrls => "too many image URLs supplied",
         Error::ImageUrlTooLong => "image URL exceeds maximum length",
+        Error::EvidenceUrlTooLong => "evidence URL exceeds maximum byte limit",
         Error::ReasonTooLong => "termination reason exceeds maximum length",
         Error::ClaimAlreadyTerminal => {
             "claim already terminal, or withdrawal blocked (voting started or not Processing)"
@@ -343,9 +344,9 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::EscalationDeadlineNotEarlier => {
             "escalation deadline must be earlier than the current voting deadline"
         }
-        Error::DuplicateEvidence => "claim evidence contains a duplicate entry",
-        Error::PageSizeTooLarge => "requested page_size exceeds the hard cap",
+        Error::ClaimIdOverflow => "claim ID counter overflowed u64::MAX",
     };
+
     QuoteFailure {
         code: err as u32,
         message: String::from_str(env, message),
@@ -485,6 +486,11 @@ pub fn initiate_policy(
     if base_amount <= 0 {
         return Err(PolicyError::InvalidCoverage);
     }
+    // Coverage floor check (issue #787)
+    let min_coverage = storage::get_min_coverage_amount(env);
+    if base_amount < min_coverage {
+        return Err(PolicyError::InvalidCoverage);
+    }
     // Terms hash must be non-zero: all-zero digest is rejected as uninitialized.
     if terms_hash == BytesN::from_array(env, &[0u8; 32]) {
         return Err(PolicyError::InvalidTermsHash);
@@ -566,6 +572,13 @@ pub fn initiate_policy(
         .checked_add(ledger::POLICY_DURATION_LEDGERS)
         .ok_or(PolicyError::LedgerOverflow)?;
 
+    // Issue #782: query token decimals at bind time and cache for payout math.
+    let token_decimals = storage::get_asset_decimals(env, &asset).unwrap_or_else(|| {
+        let args = soroban_sdk::vec![env];
+        env.invoke_contract::<u32>(&asset, &soroban_sdk::Symbol::new(env, "decimals"), args)
+    });
+    storage::set_asset_decimals(env, &asset, token_decimals);
+
     let policy = Policy {
         holder: holder.clone(),
         policy_id,
@@ -585,6 +598,7 @@ pub fn initiate_policy(
         strike_count: 0,
         metadata_uri,
         terms_hash: terms_hash.clone(),
+        token_decimals,
     };
 
     validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
@@ -824,7 +838,8 @@ pub fn renew_policy(
     let now = env.ledger().sequence();
     let grace = storage::get_grace_period_ledgers(env);
 
-    if ledger::is_expired(now, policy.end_ledger.saturating_add(grace)) {
+    let lapse_ledger = policy.end_ledger.checked_add(grace).ok_or(PolicyError::LedgerOverflow)?;
+    if ledger::is_expired(now, lapse_ledger) {
         publish_policy_expired_if_due(env, &policy, now);
         return Ok(crate::types::RenewPolicyOutcome::Lapsed);
     }

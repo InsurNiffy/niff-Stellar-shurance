@@ -3,6 +3,7 @@ import { Queue, Job } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import { getBullMQConnection } from '../redis/client';
 import { TX_SUBMIT_QUEUE } from '../queues/names';
+import { getQueueRetryConfig } from '../queues/queue-config';
 import { QueueBackpressureException } from './queue-backpressure.exception';
 import { MetricsService } from '../metrics/metrics.service';
 
@@ -33,11 +34,12 @@ export class TxSubmitQueue {
     private readonly config: ConfigService,
     private readonly metrics: MetricsService,
   ) {
+    const retryConfig = getQueueRetryConfig(TX_SUBMIT_QUEUE);
     this.queue = new Queue<TxSubmitJobData>(TX_SUBMIT_QUEUE, {
       connection: getBullMQConnection(),
       defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2_000 },
+        attempts: retryConfig.maxAttempts,
+        backoff: retryConfig.backoff,
         removeOnComplete: { count: 200 },
         removeOnFail: { count: 500 },
       },

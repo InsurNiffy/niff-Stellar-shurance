@@ -21,6 +21,7 @@
 
 import { Queue, Worker, Job } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
+import { getQueueRetryConfig } from '../queues/queue-config';
 import { WebhookJob } from '../types/webhook';
 
 export interface QueueStats {
@@ -44,17 +45,24 @@ const QUEUE_NAME = 'webhooks';
 
 /**
  * Maximum delivery attempts before a job is moved to the dead-letter set.
- * Configurable via MAX_WEBHOOK_ATTEMPTS env var; defaults to 5.
+ * Configurable via QUEUE_RETRY_MAP env var; defaults to 5.
+ * @deprecated Use getQueueRetryConfig('webhooks').maxAttempts instead.
  */
-export const MAX_WEBHOOK_ATTEMPTS = parseInt(
-  process.env.MAX_WEBHOOK_ATTEMPTS ?? '5',
-  10,
-);
+export const MAX_WEBHOOK_ATTEMPTS = (() => {
+  // Preserve backward compatibility with the legacy MAX_WEBHOOK_ATTEMPTS env var
+  const legacy = process.env.MAX_WEBHOOK_ATTEMPTS;
+  if (legacy) {
+    const parsed = parseInt(legacy, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return getQueueRetryConfig('webhooks').maxAttempts;
+})();
 
 /**
  * Maximum delay (ms) between retry attempts.
  * Exponential backoff is capped at this value.
- * Configurable via MAX_WEBHOOK_RETRY_DELAY env var; defaults to 32 000 ms.
+ * Configurable via QUEUE_RETRY_MAP env var; defaults to 32 000 ms.
+ * @deprecated Use getQueueRetryConfig('webhooks') instead.
  */
 export const MAX_WEBHOOK_RETRY_DELAY = parseInt(
   process.env.MAX_WEBHOOK_RETRY_DELAY ?? '32000',
@@ -63,14 +71,13 @@ export const MAX_WEBHOOK_RETRY_DELAY = parseInt(
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
 
+const webhookRetry = getQueueRetryConfig('webhooks');
+
 export const webhookQueue = new Queue<WebhookJob>(QUEUE_NAME, {
   connection: getBullMQConnection(),
   defaultJobOptions: {
     attempts: MAX_WEBHOOK_ATTEMPTS,
-    backoff: {
-      type: 'exponential',
-      delay: 1_000,
-    },
+    backoff: webhookRetry.backoff,
     removeOnComplete: { count: 500 },  // keep last 500 completed for history
     removeOnFail: false,               // retain ALL failed jobs for DLQ admin endpoint
   },

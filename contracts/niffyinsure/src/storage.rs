@@ -257,6 +257,13 @@ pub enum DataKey {
     TreasuryAdmin,
     /// Address authorized to call governance parameter changes. Falls back to Admin.
     ParamAdmin,
+    // ── Issue #787: Coverage amount floor ────────────────────────────────────
+    MinCoverageAmount,
+    // ── Issue #783: Voter count hard cap ─────────────────────────────────────
+    MaxVotersPerClaim,
+    // ── Issue #782: Token decimal normalization ───────────────────────────────
+    /// Stored decimals for an allowlisted asset (queried at bind time).
+    AssetDecimals(Address),
 }
 
 pub fn has_open_claim(env: &Env, holder: &Address, policy_id: u32) -> bool {
@@ -2239,4 +2246,54 @@ pub fn set_param_admin(env: &Env, addr: &Address) {
 
 pub fn get_param_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::ParamAdmin)
+}
+
+// ── Issue #787: Coverage amount floor (instance) ─────────────────────────────
+
+/// Default safe minimum: 1_000_000 stroops (0.1 XLM equivalent).
+pub const DEFAULT_MIN_COVERAGE_AMOUNT: i128 = 1_000_000;
+
+pub fn set_min_coverage_amount(env: &Env, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MinCoverageAmount, &amount);
+}
+
+pub fn get_min_coverage_amount(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MinCoverageAmount)
+        .unwrap_or(DEFAULT_MIN_COVERAGE_AMOUNT)
+}
+
+// ── Issue #783: Voter count hard cap (instance) ───────────────────────────────
+
+/// Default safe cap: 100 voters per claim.
+pub const DEFAULT_MAX_VOTERS_PER_CLAIM: u32 = 100;
+
+pub fn set_max_voters_per_claim(env: &Env, cap: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxVotersPerClaim, &cap);
+}
+
+pub fn get_max_voters_per_claim(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MaxVotersPerClaim)
+        .unwrap_or(DEFAULT_MAX_VOTERS_PER_CLAIM)
+}
+
+// ── Issue #782: Token decimal normalization (instance) ────────────────────────
+
+pub fn set_asset_decimals(env: &Env, asset: &Address, decimals: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AssetDecimals(asset.clone()), &decimals);
+}
+
+pub fn get_asset_decimals(env: &Env, asset: &Address) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::AssetDecimals(asset.clone()))
 }

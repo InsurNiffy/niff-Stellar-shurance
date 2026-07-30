@@ -362,6 +362,7 @@ impl NiffyInsure {
             57 => validate::Error::CooldownActive,
             80 => validate::Error::DuplicateEvidence,
             81 => validate::Error::PageSizeTooLarge,
+            86 => validate::Error::EvidenceUrlTooLong,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -1950,9 +1951,61 @@ impl NiffyInsure {
         Ok(())
     }
 
-    // ── Issue #587: Asset-specific claim amount bounds ────────────────────────
+    // ── Issue #787: Coverage amount floor ────────────────────────────────────
 
-    /// Admin: set min/max claim amount bounds for an asset.
+    /// Admin: set the minimum coverage amount floor. Policies below this are rejected.
+    pub fn admin_set_min_coverage_amount(env: Env, amount: i128) -> Result<(), validate::Error> {
+        let _admin = admin::require_admin(&env);
+        if amount < 0 {
+            return Err(validate::Error::ZeroCoverage);
+        }
+        storage::set_min_coverage_amount(&env, amount);
+        Ok(())
+    }
+
+    /// Read the current minimum coverage amount floor.
+    pub fn get_min_coverage_amount(env: Env) -> i128 {
+        storage::get_min_coverage_amount(&env)
+    }
+
+    // ── Issue #783: Voter count hard cap ──────────────────────────────────────
+
+    /// Admin: set the maximum number of unique voters per claim.
+    pub fn admin_set_max_voters_per_claim(env: Env, cap: u32) -> Result<(), validate::Error> {
+        let _admin = admin::require_admin(&env);
+        if cap == 0 {
+            return Err(validate::Error::VotingDurationOutOfBounds);
+        }
+        storage::set_max_voters_per_claim(&env, cap);
+        Ok(())
+    }
+
+    /// Read the current max voters per claim cap.
+    pub fn get_max_voters_per_claim(env: Env) -> u32 {
+        storage::get_max_voters_per_claim(&env)
+    }
+
+    // ── Issue #782: Token decimal normalization ───────────────────────────────
+
+    /// Admin: manually store decimals for an asset (issue #782).
+    pub fn admin_set_asset_decimals(env: Env, asset: Address, decimals: u32) {
+        let _admin = admin::require_admin(&env);
+        storage::set_asset_decimals(&env, &asset, decimals);
+    }
+
+    /// Read the stored decimals for an asset (None if not yet queried).
+    pub fn get_asset_decimals(env: Env, asset: Address) -> Option<u32> {
+        storage::get_asset_decimals(&env, &asset)
+    }
+
+    // ── Issue #786: Claim description length validation ───────────────────────
+
+    /// Read the maximum claim description byte length constant (issue #786).
+    pub fn get_max_claim_description_bytes(env: Env) -> u32 {
+        let _ = env;
+        types::DETAILS_MAX_LEN
+    }
+
     /// Dust claims below min and over-coverage claims above max will revert.
     pub fn admin_set_asset_claim_bounds(
         env: Env,
@@ -2281,6 +2334,7 @@ impl NiffyInsure {
             strike_count: 0,
             metadata_uri: String::from_str(&env, "ipfs://test-policy-metadata"),
             terms_hash: soroban_sdk::BytesN::from_array(&env, &hash_bytes),
+            token_decimals: 7,
         };
         let key = storage::DataKey::Policy(holder.clone(), policy_id);
         env.storage().persistent().set(&key, &policy);

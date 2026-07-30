@@ -154,6 +154,8 @@ export interface EnvironmentVariables {
   TX_SUBMIT_QUEUE_MAX_DEPTH: number;
   /** Per-queue BullMQ concurrency levels: format "queue-name=N,..." Defaults per queue if not specified. */
   QUEUE_CONCURRENCY_MAP: string;
+  /** Per-queue BullMQ retry configuration: format "queue-name=maxAttempts,backoffType,initialDelayMs;..." */
+  QUEUE_RETRY_MAP: string;
   /**
    * Optional incoming JWT signing key used during zero-downtime rotation.
    * When set, tokens signed with JWT_SECRET_NEXT are also accepted.
@@ -1469,6 +1471,19 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
       'Queues not specified use defaults: tx-submit=1 (nonce-safe), claim-events=5, claim-payouts=3. ' +
       'Example: "tx-submit=1,claim-events=10,claim-payouts=5"',
     example: 'tx-submit=1,claim-events=5,claim-payouts=3',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
+  QUEUE_RETRY_MAP: {
+    key: 'QUEUE_RETRY_MAP',
+    section: 'Queues',
+    description:
+      'Per-queue BullMQ retry configuration. Format: semicolon-separated ' +
+      '"queue-name=maxAttempts,backoffType,initialDelayMs" entries. ' +
+      'backoffType must be "exponential" or "fixed". ' +
+      'Queues not specified use documented defaults. ' +
+      'Example: "tx-submit=3,exponential,2000;webhooks=7,fixed,5000"',
+    example: '',
     required: 'optional',
     schema: Joi.string().allow('').default(''),
   },

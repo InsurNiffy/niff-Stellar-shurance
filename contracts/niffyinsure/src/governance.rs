@@ -86,7 +86,8 @@ pub fn create_proposal(env: &Env, creator: Address, param_key: String, new_value
         deadline: env
             .ledger()
             .sequence()
-            .saturating_add(storage::get_voting_duration_ledgers(env)),
+            .checked_add(storage::get_voting_duration_ledgers(env))
+            .unwrap_or_else(|| panic_with_error!(env, GovernanceError::InvalidParameterValue)),
         approve_votes: 0,
         reject_votes: 0,
         applied: false,
