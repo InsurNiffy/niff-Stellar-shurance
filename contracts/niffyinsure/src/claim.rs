@@ -482,6 +482,13 @@ pub fn vote_on_claim(
         return Err(Error::NotEligibleVoter);
     }
 
+    // Issue #783: enforce voter cap — reject if already at max unique voters.
+    let cast_count = claim.approve_votes + claim.reject_votes;
+    let max_voters = storage::get_max_voters_per_claim(env);
+    if cast_count >= max_voters && storage::get_vote(env, claim_id, voter).is_none() {
+        return Err(Error::VoterCapReached);
+    }
+
     let resolved_target = storage::resolve_vote_delegation_target(env, voter, now)?;
     if resolved_target != *voter {
         return Err(Error::VoteDelegated);

@@ -681,6 +681,10 @@ pub struct Policy {
     /// Off-chain verification: download the terms document at `metadata_uri` and compare its
     /// SHA-256 digest against this field to confirm the on-chain commitment matches.
     pub terms_hash: BytesN<32>,
+    /// Decimal precision of the bound asset, queried from the token contract at bind time.
+    /// Stored so payout math can be decimal-aware without a cross-contract call at payout.
+    /// 0 = unknown / not queried (legacy policies).
+    pub token_decimals: u32,
 }
 
 /// Return value of [`crate::policy::renew_policy`].
