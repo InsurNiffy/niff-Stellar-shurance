@@ -141,6 +141,8 @@ pub enum Error {
     EscalationDeadlineNotEarlier = 83,
     /// Claim ID counter would overflow u64::MAX.
     ClaimIdOverflow = 85,
+    /// Claimant's token allowance is insufficient to cover the claim filing fee.
+    InsufficientAllowanceForFee = 86,
 }
 
 pub fn check_claim_evidence_update(
