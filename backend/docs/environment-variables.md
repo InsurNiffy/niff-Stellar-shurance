@@ -28,6 +28,7 @@
 |---|---|---|---|
 | `STELLAR_NETWORK` | `required` | Active Stellar network for RPC, Horizon, and contract resolution. | `testnet` |
 | `SOROBAN_RPC_URL` | `required` | Soroban RPC endpoint for the active network. | `https://soroban-testnet.stellar.org` |
+| `SOROBAN_SIMULATE_TIMEOUT_MS` | `required` | Max ms to wait for simulate_transaction before returning 504 (issue #895). | `30000` |
 | `HORIZON_URL` | `required` | Horizon endpoint for the active network. | `https://horizon-testnet.stellar.org` |
 | `STELLAR_NETWORK_PASSPHRASE` | `required` | Canonical network passphrase matching STELLAR_NETWORK. | `Test SDF Network ; September 2015` |
 | `CONTRACT_ID` | `optional` | Default deployed niffyinsure contract ID for the active network. | — |
@@ -86,7 +87,14 @@
 | Variable | Required | Description | Default |
 |---|---|---|---|
 | `FRONTEND_ORIGINS` | `required` | Comma-separated public frontend origins allowed by CORS. | `http://localhost:3001` |
+| `CORS_ALLOWED_ORIGINS` | `optional` | Legacy alias for comma-separated public frontend CORS origins. | `http://localhost:3001` |
 | `ADMIN_CORS_ORIGINS` | `optional` | Comma-separated admin UI origins allowed by CORS. | `http://localhost:3002` |
+
+## Compliance
+
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `BLOCKED_COUNTRIES` | `optional` | Comma-separated ISO 3166-1 alpha-2 country codes blocked from policy initiation (geo-compliance). Empty = no blocking. | `KP,IR,CU` |
 
 ## Observability
 
@@ -101,6 +109,8 @@
 | `CACHE_TTL_SECONDS` | `required` | Default cache TTL in seconds for cache-backed reads. | `60` |
 | `QUOTE_SIMULATION_CACHE_ENABLED` | `required` | Enable Redis caching for successful quote simulations. | `true` |
 | `QUOTE_SIMULATION_CACHE_TTL_SECONDS` | `required` | TTL for cached quote simulation results in seconds. | `30` |
+| `ALLOWED_ASSETS_REFRESH_INTERVAL_MS` | `optional` | Base refresh interval for allowed assets cache in milliseconds. | `300000` |
+| `ALLOWED_ASSETS_REFRESH_JITTER_MS` | `optional` | Randomized jitter added to refresh interval to avoid thundering herd (in milliseconds). | `60000` |
 
 ## Support
 
@@ -123,6 +133,7 @@
 | Variable | Required | Description | Default |
 |---|---|---|---|
 | `DATA_RETENTION_DAYS` | `required` | Days to retain soft-deleted rows before purge jobs hard-delete them. | `730` |
+| `INDEXER_RETENTION_DAYS` | `required` | Days to keep RawEvent and inactive LedgerCursor rows before pruning (issue #897). | `90` |
 | `SSE_MAX_CONNECTIONS` | `required` | Maximum concurrent SSE connections. | `500` |
 | `SOLVENCY_MONITORING_ENABLED` | `required` | Enable scheduled solvency monitoring. | `true` |
 | `SOLVENCY_CRON_EXPRESSION` | `required` | Cron expression for solvency monitoring runs. | `0 */15 * * * *` |
@@ -131,6 +142,10 @@
 | `SOLVENCY_TENANT_ID` | `optional` | Optional tenant identifier to scope solvency monitoring. | — |
 | `SOLVENCY_ALERT_WEBHOOK_URL` | `optional` | Webhook URL that receives solvency alert notifications. *(secret)* | — |
 | `SOLVENCY_ALERT_WEBHOOK_SECRET` | `optional` | Shared secret sent with solvency alert webhooks. *(secret)* | — |
+| `IPFS_PIN_CHECK_ENABLED` | `optional` | Enable the scheduled IPFS pinning status check job (issue #896). | `true` |
+| `IPFS_PIN_CHECK_CRON` | `optional` | Cron expression for the IPFS pin check job (default: 02:00 daily). | `0 2 * * *` |
+| `IPFS_PIN_CHECK_ALERT_WEBHOOK_URL` | `optional` | Webhook URL for ops alerts when a CID is no longer pinned. *(secret)* | — |
+| `IPFS_PIN_CHECK_ALERT_WEBHOOK_SECRET` | `optional` | Shared secret sent with IPFS pin check alert webhooks. *(secret)* | — |
 | `WASM_DRIFT_WEBHOOK_URL` | `optional` | Webhook URL that receives wasm drift alerts. *(secret)* | — |
 | `WASM_DRIFT_WEBHOOK_SECRET` | `optional` | Shared secret sent with wasm drift alerts. *(secret)* | — |
 | `DEPLOYMENT_REGISTRY_PATH` | `required` | Path to the contract deployment registry JSON file. | `contracts/deployment-registry.json` |
@@ -147,6 +162,9 @@
 | `DB_POOL_IDLE_TIMEOUT_MS` | `required` | Idle connection reclaim timeout in milliseconds. | `30000` |
 | `DB_POOL_CONNECTION_TIMEOUT_MS` | `required` | Maximum time to wait for a free DB connection in milliseconds. | `5000` |
 | `DB_SLOW_QUERY_MS` | `required` | Warn when an individual DB query exceeds this latency threshold. | `250` |
+| `DB_CONNECT_MAX_ATTEMPTS` | `required` | Max $connect() attempts with exponential backoff before startup fails (issue #894). | `5` |
+| `DB_CONNECT_INITIAL_DELAY_MS` | `required` | Initial retry delay in ms for DB connection backoff (doubles each attempt). | `500` |
+| `DB_CONNECT_MAX_DELAY_MS` | `required` | Maximum retry delay cap in ms for DB connection backoff. | `30000` |
 
 ## GraphQL
 
@@ -163,6 +181,7 @@
 | `GRAPHQL_RATE_LIMIT_WINDOW_MS` | `required` | GraphQL rate-limit window in milliseconds. | `60000` |
 | `GRAPHQL_SLOW_OPERATION_MS` | `required` | Warn when a GraphQL operation exceeds this latency threshold. | `750` |
 | `GRAPHQL_PERSISTED_QUERIES_ENABLED` | `required` | Enable Apollo-style automatic persisted queries. | `false` |
+| `GRAPHQL_PERSISTED_QUERIES_ONLY` | `required` | Restrict production to pre-approved query hashes. When true, requests without an allowlisted sha256Hash are rejected. Set to false in development to allow arbitrary queries. | `false` |
 | `GRAPHQL_PERSISTED_QUERY_TTL_SECONDS` | `required` | Persisted GraphQL query cache TTL in seconds. | `86400` |
 | `GRAPHQL_POLICY_CLAIMS_DEFAULT_LIMIT` | `required` | Default nested policy.claims page size. | `10` |
 | `GRAPHQL_POLICY_CLAIMS_MAX_LIMIT` | `required` | Maximum nested policy.claims page size. | `25` |
@@ -206,6 +225,32 @@
 | `WEBHOOK_IP_ALLOWLIST_GITHUB` | `optional` | Optional comma-separated IP allowlist for GitHub webhooks. | — |
 | `WEBHOOK_IP_ALLOWLIST_STRIPE` | `optional` | Optional comma-separated IP allowlist for Stripe webhooks. | — |
 | `WEBHOOK_IP_ALLOWLIST_GENERIC` | `optional` | Optional comma-separated IP allowlist for generic webhooks. | — |
+| `CLAIM_FILED_WEBHOOK_URLS` | `optional` | Comma-separated URLs to receive outbound claim.filed webhook deliveries. | `https://example.com/hooks/claim-filed` |
+| `VOTE_CAST_WEBHOOK_URLS` | `optional` | Comma-separated URLs to receive outbound vote.cast webhook deliveries. | `https://example.com/hooks/vote-cast` |
+| `TREASURY_ALERT_WEBHOOK_URLS` | `optional` | Comma-separated URLs to receive treasury balance-low alert webhooks. | `https://example.com/hooks/treasury-alert` |
+| `MAX_OUTBOUND_WEBHOOK_SIZE_BYTES` | `optional` | Maximum payload size for outbound webhooks in bytes. Oversized payloads are rejected. | `1048576` |
+| `WEBHOOK_VERIFICATION_TIMEOUT_MS` | `optional` | Timeout in milliseconds for webhook verification challenges. After this, the challenge expires. | `300000` |
+| `WEBHOOK_MAX_VERIFICATION_ATTEMPTS` | `optional` | Maximum number of attempts to send verification challenge before marking webhook inactive. | `3` |
+
+## Admin
+
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `ADMIN_ALLOWED_CIDRS` | `optional` | Optional comma-separated CIDR allowlist for admin endpoints. Supports IPv4 (e.g. "10.0.0.0/8,192.168.1.0/24") and IPv6. Empty = all IPs allowed (backward compatible default). | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
+
+## URLs
+
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `API_BASE_URL` | `required` | Base URL of the API, used in webhook verification links and other features. | `https://api.example.com` |
+
+## Queues
+
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `TX_SUBMIT_QUEUE_MAX_DEPTH` | `optional` | Maximum number of pending jobs in the tx-submit queue before new submissions are rejected with 429 backpressure. Prevents unbounded queue growth and delays for all users. | `1000` |
+| `QUEUE_CONCURRENCY_MAP` | `optional` | Per-queue BullMQ worker concurrency levels: comma-separated "queue-name=N" pairs. Queues not specified use defaults: tx-submit=1 (nonce-safe), claim-events=5, claim-payouts=3. Example: "tx-submit=1,claim-events=10,claim-payouts=5" | `tx-submit=1,claim-events=5,claim-payouts=3` |
+| `QUEUE_RETRY_MAP` | `optional` | Per-queue BullMQ retry configuration. Format: semicolon-separated "queue-name=maxAttempts,backoffType,initialDelayMs" entries. backoffType must be "exponential" or "fixed". Queues not specified use documented defaults. Example: "tx-submit=3,exponential,2000;webhooks=7,fixed,5000" | — |
 
 ## Evidence uploads
 
@@ -214,3 +259,13 @@
 | `EVIDENCE_MAX_BYTES` | `optional` | Maximum allowed claim evidence file size in bytes. Defaults to 10 MB. | `10485760` |
 | `EVIDENCE_UPLOAD_RATE_LIMIT` | `optional` | Maximum evidence uploads per wallet per rate-limit window. | `5` |
 | `EVIDENCE_UPLOAD_RATE_LIMIT_WINDOW_SECONDS` | `optional` | Evidence upload rate-limit window in seconds. | `3600` |
+
+## Log aggregation
+
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `LOG_SHIPPING_URL` | `optional` | Loki-compatible push endpoint for centralised log shipping. When set, Winston ships structured JSON logs to this URL in addition to the console. Leave empty to disable. Example: http://loki:3100/loki/api/v1/push | — |
+| `LOG_SHIPPING_AUTH_TOKEN` | `optional` | Bearer token sent in the Authorization header when pushing logs to the aggregation endpoint. *(secret)* | — |
+| `LOG_SHIPPING_FLUSH_INTERVAL_MS` | `optional` | Milliseconds between log buffer flushes to the remote aggregation endpoint. | `5000` |
+| `LOG_SHIPPING_BATCH_SIZE` | `optional` | Maximum log entries buffered before a flush is forced regardless of the interval. | `100` |
+| `LOG_RETENTION_DAYS` | `optional` | Intended log retention period in days. Informational label sent to the aggregator — actual retention is enforced by the Loki deployment configuration. | `30` |

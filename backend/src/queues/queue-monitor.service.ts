@@ -24,6 +24,11 @@ export const QUEUE_CONFIGS = [
   { name: 'claim-events', label: 'claim-events' },
   { name: 'reindex', label: 'reindex' },
   { name: 'backfill', label: 'backfill' },
+  { name: 'tx-submit', label: 'tx-submit' },
+  { name: 'claim-payouts', label: 'claim-payouts' },
+  { name: 'policy-renewal-reminders', label: 'policy-renewal-reminders' },
+  { name: 'webhooks', label: 'webhooks' },
+  { name: 'outbound-webhooks', label: 'outbound-webhooks' },
 ] as const;
 
 @Injectable()

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { Queue } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
+import { getQueueRetryConfig } from '../queues/queue-config';
 import { ClaimSeverity, ClaimStatus, Prisma } from '@prisma/client';
 
 export interface BackfillJobInfo {
@@ -22,19 +23,25 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly featureFlagsService: FeatureFlagsService,
   ) {
-    const defaultJobOptions = {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2_000 },
-      removeOnComplete: { count: 50 },
-      removeOnFail: { count: 100 },
-    };
+    const reindexRetry = getQueueRetryConfig('reindex');
+    const backfillRetry = getQueueRetryConfig('backfill');
     this.reindexQueue = new Queue('reindex', {
       connection: getBullMQConnection(),
-      defaultJobOptions,
+      defaultJobOptions: {
+        attempts: reindexRetry.maxAttempts,
+        backoff: reindexRetry.backoff,
+        removeOnComplete: { count: 50 },
+        removeOnFail: { count: 100 },
+      },
     });
     this.backfillQueue = new Queue('backfill', {
       connection: getBullMQConnection(),
-      defaultJobOptions,
+      defaultJobOptions: {
+        attempts: backfillRetry.maxAttempts,
+        backoff: backfillRetry.backoff,
+        removeOnComplete: { count: 50 },
+        removeOnFail: { count: 100 },
+      },
     });
   }
 
