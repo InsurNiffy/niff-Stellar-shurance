@@ -53,7 +53,7 @@ jobs:
           rm docs/.erd.svg
 
       - name: Commit ERD
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "docs: regenerate ERD from schema changes"
           file_pattern: backend/docs/erd.png
