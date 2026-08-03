@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.1.0",
-    "@ducanh2912/next-pwa": "10.2.7",
+    "@ducanh2912/next-pwa": "10.2.9",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-alert-dialog": "^1.1.23",
     "@radix-ui/react-dialog": "^1.1.15",
