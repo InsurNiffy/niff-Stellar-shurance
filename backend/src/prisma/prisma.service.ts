@@ -4,6 +4,12 @@ import { PrismaClient } from '@prisma/client';
 import { AsyncLocalStorage } from 'async_hooks';
 import { MetricsService } from '../metrics/metrics.service';
 
+type SoftDeleteExtensionArgs = {
+  model: string;
+  args: { where?: Record<string, unknown> } & Record<string, unknown>;
+  query: (args: Record<string, unknown>) => Promise<unknown>;
+};
+
 /**
  * PrismaService — wraps PrismaClient with explicit connection pool settings.
  *
@@ -70,10 +76,10 @@ export class PrismaService
     // Apply soft-delete extension: auto-filter deleted rows from findMany/findFirst/findUnique
     const softDeleteModels = this.softDeleteModels;
     const softDeleteContext = this.softDeleteContext;
-    (this as any).$extends({
+    (this as PrismaClient).$extends({
       query: {
         $allModels: {
-          async findMany({ model, args, query }: any) {
+          async findMany({ model, args, query }: SoftDeleteExtensionArgs) {
             if (softDeleteModels.has(model)) {
               const store = softDeleteContext.getStore();
               if (!store?.bypassSoftDelete) {
@@ -82,7 +88,7 @@ export class PrismaService
             }
             return query(args);
           },
-          async findFirst({ model, args, query }: any) {
+          async findFirst({ model, args, query }: SoftDeleteExtensionArgs) {
             if (softDeleteModels.has(model)) {
               const store = softDeleteContext.getStore();
               if (!store?.bypassSoftDelete) {
@@ -91,7 +97,7 @@ export class PrismaService
             }
             return query(args);
           },
-          async findUnique({ model, args, query }: any) {
+          async findUnique({ model, args, query }: SoftDeleteExtensionArgs) {
             if (softDeleteModels.has(model)) {
               const store = softDeleteContext.getStore();
               if (!store?.bypassSoftDelete) {

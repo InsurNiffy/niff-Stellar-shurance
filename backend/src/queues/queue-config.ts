@@ -1,4 +1,4 @@
-import { QUEUE_NAMES, QueueName } from './names';
+import { QueueName } from './names';
 
 const QUEUE_CONCURRENCY_DEFAULTS: Record<QueueName, number> = {
   'tx-submit': 1,

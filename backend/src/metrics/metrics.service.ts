@@ -38,7 +38,6 @@ export class MetricsService implements OnModuleInit {
   readonly queueActiveWorkers: client.Gauge<string>;
   readonly queueDepth: client.Gauge<string>;
   readonly bullmqJobRetriesTotal: client.Counter<string>;
-  readonly queueDepth: client.Gauge<string>;
   readonly jobProcessingDuration: client.Histogram<string>;
 
   // ── Indexer / observability metrics ───────────────────────────────────────
@@ -163,7 +162,7 @@ export class MetricsService implements OnModuleInit {
 
     this.queueDepth = new client.Gauge({
       name: 'bullmq_queue_depth',
-      help: 'Total number of pending jobs in a queue (waiting + active + delayed)',
+      help: 'Number of jobs currently pending in a queue',
       labelNames: ['queue'],
       registers: [this.registry],
     });
@@ -172,13 +171,6 @@ export class MetricsService implements OnModuleInit {
       name: 'bullmq_job_retries_total',
       help: 'Total job retry attempts per queue (excludes first attempt and final exhaustion)',
       labelNames: ['queue', 'job_name'],
-      registers: [this.registry],
-    });
-
-    this.queueDepth = new client.Gauge({
-      name: 'bullmq_queue_depth',
-      help: 'Number of jobs currently waiting to be processed in each queue',
-      labelNames: ['queue'],
       registers: [this.registry],
     });
 
@@ -447,13 +439,7 @@ export class MetricsService implements OnModuleInit {
     this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
   }
 
-  recordVoteTallyMismatch(
-    claimId: number,
-    indexedApprove: number,
-    indexedReject: number,
-    onChainApprove: number,
-    onChainReject: number,
-  ) {
+  recordVoteTallyMismatch(claimId: number) {
     const normalizedClaimId = this.cardinalityGuard.normalizeClaimId(claimId);
     this.voteTallyMismatches.inc({ claim_id: normalizedClaimId });
   }
@@ -476,6 +462,19 @@ export class MetricsService implements OnModuleInit {
 
   recordQueueDepth(opts: { queue: string; depth: number }) {
     this.queueDepth.set({ queue: opts.queue }, opts.depth);
+  }
+
+  recordJobProcessingDuration(opts: {
+    queue: string;
+    jobName: string;
+    status: string;
+    durationMs: number;
+  }) {
+    const { queue, jobName, status, durationMs } = opts;
+    this.jobProcessingDuration.observe(
+      { queue, job_name: jobName, status },
+      durationMs / 1000,
+    );
   }
 
   async getMetrics(): Promise<string> {

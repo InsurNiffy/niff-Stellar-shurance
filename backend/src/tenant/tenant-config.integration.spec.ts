@@ -1,11 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import * as request from 'supertest';
 import { TenantContextService } from './tenant-context.service';
 import { TenantConfigService } from './tenant-config.service';
 import { TenantController } from './tenant.controller';
-import { TenantMiddleware } from './tenant.middleware';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 
 describe('TenantConfig - Integration Tests', () => {

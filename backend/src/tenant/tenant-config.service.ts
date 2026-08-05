@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getNetworkConfig } from '../config/network.config';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';

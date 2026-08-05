@@ -104,6 +104,7 @@ export class IndexerService {
     @Optional() private readonly votePubSub?: VotePubSubService,
     @Optional() private readonly outboundWebhook?: OutboundWebhookService,
     @Optional() private readonly adminAnalytics?: AdminAnalyticsService,
+    @Optional() private readonly allowedAssetsCache?: AllowedAssetsCacheService,
   ) {
     this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
@@ -622,7 +623,7 @@ export class IndexerService {
     await this.allowedAssetsCache?.invalidateAll();
   }
 
-  private async handleAssetRemoved(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
+  private async handleAssetRemoved(tx: IndexerTx, data: EventPayload, _event: SorobanEvent) {
     const contractId = getStringValue(data.contract_id);
 
     await tx.allowedAsset.update({

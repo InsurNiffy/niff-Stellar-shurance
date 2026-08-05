@@ -92,6 +92,10 @@ export interface KeeperActionResult {
   ledger: number;
 }
 
+export interface VotingDuration {
+  votingDurationLedgers: number;
+}
+
 interface PendingSubmission {
   transactionXdr: string;
   timestamp: number;
@@ -212,7 +216,7 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
       options.headers = { 'x-request-id': requestId };
     }
 
-    return new SorobanRpc.Server(this.rpcUrl, options as any);
+    return new SorobanRpc.Server(this.rpcUrl, options as SorobanRpc.Server.Options);
   }
 
   static enumVariantToScVal(variant: string): xdr.ScVal {
@@ -1271,6 +1275,50 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
       if (!raw) throw new BadRequestException({ code: 'SIMULATION_EMPTY', message: 'Empty simulation result' });
       const ledgers = Number(scValToNative(raw));
       return { votingDurationLedgers: ledgers };
+    });
+  }
+
+  // ── #929 Evidence limits ─────────────────────────────────────────────────
+
+  async simulateGetEvidenceLimits({ sourceAccount }: { sourceAccount: string }): Promise<EvidenceLimits> {
+    return this.trackRpc('simulateGetEvidenceLimits', async () => {
+      const minEvidenceCount = await this.simulateReadU32(sourceAccount, 'get_min_evidence_count');
+      const maxEvidenceCount = await this.simulateReadU32(sourceAccount, 'get_max_evidence_count');
+      return { minEvidenceCount, maxEvidenceCount };
+    });
+  }
+
+  private async simulateReadU32(sourceAccount: string, method: string): Promise<number> {
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, sourceAccount);
+    const contract = new Contract(this.contractId);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(contract.call(method))
+      .setTimeout(30)
+      .build();
+    const result = await server.simulateTransaction(tx);
+    if (Api.isSimulationError(result)) {
+      throw new BadRequestException({ code: 'SIMULATION_FAILED', message: result.error });
+    }
+    const raw = result.result?.retval;
+    if (!raw) throw new BadRequestException({ code: 'SIMULATION_EMPTY', message: 'Empty simulation result' });
+    return Number(scValToNative(raw));
+  }
+
+  async invokeAdminSetEvidenceLimits({ min, max }: { min: number; max: number }): Promise<KeeperActionResult> {
+    return this.trackRpc('invokeAdminSetEvidenceLimits', async () => {
+      const contract = new Contract(this.contractId);
+      await this.submitKeeperTx(
+        contract.call('admin_set_min_evidence_count', nativeToScVal(min, { type: 'u32' })),
+        'admin_set_min_evidence_count',
+      );
+      return this.submitKeeperTx(
+        contract.call('admin_set_max_evidence_count', nativeToScVal(max, { type: 'u32' })),
+        'admin_set_max_evidence_count',
+      );
     });
   }
 

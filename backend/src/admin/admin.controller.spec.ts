@@ -496,7 +496,7 @@ describe('Admin Role Guard Enforcement', () => {
   });
 
   describe('Admin Role Required', () => {
-    const makeGuardCtx = (minRole?: string) => ({
+    const makeGuardCtx = () => ({
       getHandler: () => ({}),
       getClass: () => ({}),
       getType: () => 'http',

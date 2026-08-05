@@ -18,7 +18,7 @@ export class TokenBlacklistService {
     }
 
     const key = TOKEN_BLACKLIST_PREFIX + jti;
-    await this.redis.client.setex(key, ttlSeconds, '1');
+    await this.redis.getClient().setex(key, ttlSeconds, '1');
   }
 
   /**
@@ -27,7 +27,7 @@ export class TokenBlacklistService {
    */
   async isBlacklisted(jti: string): Promise<boolean> {
     const key = TOKEN_BLACKLIST_PREFIX + jti;
-    const result = await this.redis.client.exists(key);
+    const result = await this.redis.getClient().exists(key);
     return result === 1;
   }
 
