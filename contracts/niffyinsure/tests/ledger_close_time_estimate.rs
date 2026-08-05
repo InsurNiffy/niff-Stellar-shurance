@@ -26,7 +26,7 @@ fn default_estimate_is_five() {
 #[test]
 fn admin_can_update_estimate() {
     let (_env, client, _admin) = setup();
-    client.admin_set_ledger_close_secs(&7u32).unwrap();
+    client.admin_set_ledger_close_secs(&7u32);
     assert_eq!(client.get_ledger_close_time_estimate(), 7u32);
 }
 
@@ -53,8 +53,8 @@ fn estimate_above_thirty_is_rejected() {
 #[test]
 fn estimate_at_boundary_is_accepted() {
     let (_env, client, _admin) = setup();
-    client.admin_set_ledger_close_secs(&1u32).unwrap();
+    client.admin_set_ledger_close_secs(&1u32);
     assert_eq!(client.get_ledger_close_time_estimate(), 1u32);
-    client.admin_set_ledger_close_secs(&30u32).unwrap();
+    client.admin_set_ledger_close_secs(&30u32);
     assert_eq!(client.get_ledger_close_time_estimate(), 30u32);
 }

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ProfileController } from './profile.controller';
 import { ProfileService } from './profile.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -214,14 +215,14 @@ describe('ProfileService', () => {
     });
 
     it('handles duplicate wallet address conflict with 409 error', async () => {
-      const { PrismaClientKnownRequestError } = await import('@prisma/client/runtime/library');
-      const prismaError = new Error('Unique constraint failed on the fields: (`wallet_address`)') as any;
-      prismaError.code = 'P2002';
+      const prismaError = new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed on the fields: (`wallet_address`)',
+        { code: 'P2002', clientVersion: '6.19.3' },
+      );
 
       mockPrisma.holderProfile.findUnique.mockResolvedValue(defaultProfile);
       mockPrisma.holderProfile.upsert.mockRejectedValue(prismaError);
 
-      const { ConflictException } = await import('@nestjs/common');
       await expect(service.update(WALLET, { displayName: 'Bob' })).rejects.toThrow(ConflictException);
     });
   });

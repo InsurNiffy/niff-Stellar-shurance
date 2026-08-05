@@ -373,14 +373,7 @@ fn rolling_cap_resets_across_policy_renewal() {
 
     let details2 = String::from_str(&env, "post-renewal");
     let c2 = client
-        .try_file_claim(
-            &holder,
-            &policy.policy_id,
-            &CAP,
-            &details2,
-            &urls,
-            &None,
-        )
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details2, &urls, &None)
         .unwrap()
         .unwrap();
     approve_and_pay(&env, &client, &v1, &v2, c2);
@@ -464,14 +457,7 @@ fn rolling_cap_window_boundary_ledgers() {
     );
     let details_at = String::from_str(&env, "at-boundary");
     let c_at = client
-        .try_file_claim(
-            &holder,
-            &policy.policy_id,
-            &CAP,
-            &details_at,
-            &urls,
-            &None,
-        )
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details_at, &urls, &None)
         .unwrap()
         .unwrap();
     approve_and_pay(&env, &client, &v1, &v2, c_at);

@@ -115,13 +115,7 @@ export class VoteReconciliationJob {
                 `onChain=(approve=${onChainApprove}, reject=${onChainReject})`
             );
 
-            this.metrics?.recordVoteTallyMismatch(
-              indexedClaim.id,
-              indexedClaim.approveVotes,
-              indexedClaim.rejectVotes,
-              onChainApprove,
-              onChainReject,
-            );
+            this.metrics?.recordVoteTallyMismatch(indexedClaim.id);
           }
 
           processedCount++;

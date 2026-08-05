@@ -149,6 +149,11 @@ pub enum Error {
     /// in the error code (Soroban `contracterror` limitations); callers should
     /// validate URL lengths client-side before submission.
     EvidenceUrlTooLong = 86,
+    /// Claimant's token allowance to the contract is insufficient to cover the
+    /// configured claim filing fee.
+    InsufficientAllowanceForFee = 87,
+    /// Claim has already reached the configured maximum number of unique voters.
+    VoterCapReached = 88,
 }
 
 pub fn check_claim_evidence_update(

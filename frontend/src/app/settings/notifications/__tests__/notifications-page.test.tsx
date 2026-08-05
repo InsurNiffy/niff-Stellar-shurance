@@ -172,8 +172,8 @@ describe('NotificationsPage — Per-channel toggles', () => {
       expect(screen.getByRole('switch', { name: /claim status updates/i })).toBeInTheDocument()
     })
 
-    // Find the push channel toggle for claim updates
-    const pushToggle = screen.getByRole('switch', { name: /push channel/i, hidden: false })
+    // Find the push channel toggle for claim updates (asserts it exists)
+    screen.getByRole('switch', { name: /push channel/i, hidden: false })
     // There are 3 push toggles; we need the one for claim-updates
     const claimPushToggle = document.getElementById('claim-updates-push') as HTMLButtonElement
     expect(claimPushToggle).not.toBeNull()

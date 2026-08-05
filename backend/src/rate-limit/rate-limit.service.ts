@@ -363,6 +363,34 @@ export class RateLimitService implements OnModuleInit {
     }
   }
 
+  /**
+   * Generic sliding-window rate limit check for an arbitrary key.
+   * Used for one-off admin endpoints that don't warrant a dedicated method.
+   */
+  async checkLimit(key: string, limit: number, windowSeconds: number): Promise<boolean> {
+    try {
+      const client = this.redis.getClient();
+      const nowMs = Date.now();
+      const windowMs = windowSeconds * 1000;
+      const windowStart = nowMs - windowMs;
+
+      await client.zremrangebyscore(key, 0, windowStart);
+      const currentCount = await client.zcard(key);
+
+      if (currentCount >= limit) {
+        return false;
+      }
+
+      await client.zadd(key, nowMs, `${nowMs}-${Math.random().toString(36).slice(2)}`);
+      await client.pexpire(key, windowMs * 2);
+
+      return true;
+    } catch (error) {
+      this.logger.error(`Rate limit check failed for ${key}: ${error}`);
+      return true;
+    }
+  }
+
   // ── Global circuit breaker ──────────────────────────────────────────────
 
   /**

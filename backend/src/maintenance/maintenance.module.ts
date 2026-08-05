@@ -20,7 +20,7 @@ import { RampHealthCheckService } from '../jobs/ramp-health-check.service';
 
 @Module({
   imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule, MetricsModule],
-  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService],
+  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService],
   exports: [PrivacyService, SolvencyMonitoringService],
 })
 export class MaintenanceModule {}

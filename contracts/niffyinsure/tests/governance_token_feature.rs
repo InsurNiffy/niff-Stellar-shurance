@@ -51,8 +51,7 @@ fn activation_event_emitted_on_flag_toggle() {
 
     let events = env.events().all();
     let _ = contract_id; // used to scope the contract
-    let events_debug =
-        soroban_sdk::testutils::arbitrary::std::format!("{:?}", events);
+    let events_debug = soroban_sdk::testutils::arbitrary::std::format!("{:?}", events);
     assert!(
         events_debug.contains("gov_token_activation"),
         "GovernanceTokenActivation event must be emitted on flag toggle"

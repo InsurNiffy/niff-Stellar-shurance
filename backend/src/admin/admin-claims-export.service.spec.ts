@@ -7,7 +7,6 @@ import { Readable } from 'stream';
 describe('AdminClaimsExportService', () => {
   let service: AdminClaimsExportService;
   let prismaService: PrismaService;
-  let tenantContextService: TenantContextService;
 
   const mockClaim = {
     id: 1,
@@ -49,7 +48,6 @@ describe('AdminClaimsExportService', () => {
 
     service = module.get<AdminClaimsExportService>(AdminClaimsExportService);
     prismaService = module.get<PrismaService>(PrismaService);
-    tenantContextService = module.get<TenantContextService>(TenantContextService);
   });
 
   describe('CSV header generation', () => {

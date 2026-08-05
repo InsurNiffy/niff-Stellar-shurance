@@ -277,7 +277,7 @@ export class HorizonService {
           }
 
           const data = (await fallbackRes.json()) as Record<string, unknown>;
-          this.logger.info(`Horizon request succeeded from fallback endpoint`);
+          this.logger.log(`Horizon request succeeded from fallback endpoint`);
           return data;
         } catch (fallbackErr) {
           this.logger.error(`Both primary and fallback Horizon endpoints failed: ${fallbackErr}`);

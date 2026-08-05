@@ -38,7 +38,7 @@ export class ProfileService {
       // Log audit trail for changed fields
       await this.logProfileAudit(walletAddress, existing, dto);
 
-      return this.prisma.holderProfile.upsert({
+      return await this.prisma.holderProfile.upsert({
         where: { walletAddress },
         create: {
           walletAddress,

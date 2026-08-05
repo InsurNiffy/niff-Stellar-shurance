@@ -119,7 +119,7 @@ export class WalletAuthService {
         stored.message,
         signatureBase64,
       );
-    } catch (err) {
+    } catch {
       throw new UnauthorizedException({
         code: 'INVALID_SIGNATURE',
         message: 'Signature verification failed.',

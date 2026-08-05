@@ -2,7 +2,6 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../cache/redis.service';
 import { MetricsService } from '../metrics/metrics.service';
-import type { AllowedAsset } from '@prisma/client';
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const KEY_PREFIX = 'assets:allowed';
@@ -27,15 +26,15 @@ export class AllowedAssetsCacheService {
     return `${KEY_PREFIX}:list`;
   }
 
-  async getOrCompute(compute: () => Promise<AllowedAsset[]>): Promise<AllowedAsset[]> {
+  async getOrCompute<T>(compute: () => Promise<T[]>): Promise<T[]> {
     const key = this.getCacheKey();
-    const cached = await this.redis.get<AllowedAsset[]>(key);
+    const cached = await this.redis.get<T[]>(key);
     if (cached) {
-      this.metrics?.recordCache('allowed_assets', 'hit');
+      this.metrics?.recordRedisCache('hit', 'allowed_assets');
       return cached;
     }
 
-    this.metrics?.recordCache('allowed_assets', 'miss');
+    this.metrics?.recordRedisCache('miss', 'allowed_assets');
     const result = await compute();
     await this.redis.set(key, result, this.ttlSeconds);
     return result;

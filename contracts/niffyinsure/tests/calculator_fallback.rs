@@ -10,10 +10,7 @@ use niffyinsure::{
     NiffyInsureClient,
 };
 use premium_calculator::PremiumCalculatorClient;
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn risk() -> RiskInput {
     RiskInput {
@@ -38,7 +35,7 @@ fn setup_policy() -> (Env, NiffyInsureClient<'static>, Address) {
 fn setup_calculator(env: &Env, admin: &Address) -> Address {
     let calc_id = env.register(premium_calculator::PremiumCalculator, ());
     let calc = PremiumCalculatorClient::new(env, &calc_id);
-    calc.initialize(admin).expect("calc init");
+    calc.initialize(admin);
     calc_id
 }
 
@@ -57,7 +54,7 @@ fn paused_calculator_returns_typed_paused_error_not_local_fallback() {
     let (env, client, admin) = setup_policy();
     let calc_id = setup_calculator(&env, &admin);
     let calc = PremiumCalculatorClient::new(&env, &calc_id);
-    calc.set_paused(&true).expect("pause");
+    calc.set_paused(&true);
 
     client.set_calculator(&calc_id);
 
@@ -66,14 +63,7 @@ fn paused_calculator_returns_typed_paused_error_not_local_fallback() {
     // Use env.as_contract to call calculator::compute_quote directly.
     let input = risk();
     let result = env.as_contract(&client.address, || {
-        niffyinsure::calculator::compute_quote(
-            &env,
-            &input,
-            10_000_000,
-            false,
-            100,
-            None,
-        )
+        niffyinsure::calculator::compute_quote(&env, &input, 10_000_000, false, 100, None)
     });
 
     assert_eq!(
@@ -92,14 +82,7 @@ fn unreachable_calculator_returns_calculator_call_failed() {
 
     let input = risk();
     let result = env.as_contract(&client.address, || {
-        niffyinsure::calculator::compute_quote(
-            &env,
-            &input,
-            10_000_000,
-            false,
-            100,
-            None,
-        )
+        niffyinsure::calculator::compute_quote(&env, &input, 10_000_000, false, 100, None)
     });
 
     assert_eq!(
@@ -118,14 +101,7 @@ fn successful_external_calculator_call_returns_quote() {
     let input = risk();
     let quote = env
         .as_contract(&client.address, || {
-            niffyinsure::calculator::compute_quote(
-                &env,
-                &input,
-                10_000_000,
-                false,
-                100,
-                None,
-            )
+            niffyinsure::calculator::compute_quote(&env, &input, 10_000_000, false, 100, None)
         })
         .expect("successful calculator call");
 

@@ -1,10 +1,11 @@
 import { MetricsService } from './metrics.service';
+import { MetricsCardinalityGuard } from './cardinality-guard.service';
 
 describe('MetricsService — http_request_duration_seconds histogram', () => {
   let service: MetricsService;
 
   beforeEach(() => {
-    service = new MetricsService();
+    service = new MetricsService(new MetricsCardinalityGuard());
   });
 
   it('histogram is registered with method, route, status_code labels', () => {
@@ -31,7 +32,7 @@ describe('MetricsService — http_request_duration_seconds histogram', () => {
 
   it('does not increment http5xxTotal on 4xx responses', async () => {
     // Create fresh service to start with zero counters
-    const fresh = new MetricsService();
+    const fresh = new MetricsService(new MetricsCardinalityGuard());
     fresh.recordHttpRequest({ method: 'GET', route: '/claims/:id', statusCode: 404, durationMs: 5 });
     const metrics = await fresh.getMetrics();
     // Counter should be zero (not present or value 0)
@@ -61,7 +62,7 @@ describe('MetricsService — bullmq_queue_active_workers gauge (#874)', () => {
   let service: MetricsService;
 
   beforeEach(() => {
-    service = new MetricsService();
+    service = new MetricsService(new MetricsCardinalityGuard());
   });
 
   it('gauge is registered with queue label', () => {
@@ -85,7 +86,7 @@ describe('MetricsService — bullmq_queue_active_workers gauge (#874)', () => {
     service.recordQueueActiveWorkers({ queue: 'tx-submit', count: 5 });
     const metrics = await service.getMetrics();
     // Should contain 5, not 0
-    const txSubmitMatch = metrics.match(/bullmq_queue_active_workers\{queue="tx-submit"\}\s+(\d+)/);
+    const txSubmitMatch = metrics.match(/bullmq_queue_active_workers\{queue="tx-submit"[^}]*\}\s+(\d+)/);
     expect(txSubmitMatch?.[1]).toBe('5');
   });
 });
@@ -94,17 +95,17 @@ describe('MetricsService — queue depth and processing duration (#1112)', () =>
   let service: MetricsService;
 
   beforeEach(() => {
-    service = new MetricsService();
+    service = new MetricsService(new MetricsCardinalityGuard());
   });
 
   it('queueDepth gauge is registered with queue label', () => {
     expect(service.queueDepth).toBeDefined();
-    expect(() => service.recordQueueDepth('claim-events', 10)).not.toThrow();
+    expect(() => service.recordQueueDepth({ queue: 'claim-events', depth: 10 })).not.toThrow();
   });
 
   it('recordQueueDepth sets gauge value per queue', async () => {
-    service.recordQueueDepth('claim-events', 5);
-    service.recordQueueDepth('tx-submit', 2);
+    service.recordQueueDepth({ queue: 'claim-events', depth: 5 });
+    service.recordQueueDepth({ queue: 'tx-submit', depth: 2 });
     const metrics = await service.getMetrics();
     expect(metrics).toContain('bullmq_queue_depth');
     expect(metrics).toContain('queue="claim-events"');

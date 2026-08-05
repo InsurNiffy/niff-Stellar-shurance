@@ -83,10 +83,11 @@ export class HealthController {
   }
 
   private async checkRampProviderHealth(): Promise<ComponentResult | undefined> {
-    if (!this.prisma) return undefined;
+    const prisma = this.prisma;
+    if (!prisma) return undefined;
 
-    try {
-      const lastHealth = await this.prisma.rampProviderHealth.findFirst({
+    return runProbe(async () => {
+      const lastHealth = await prisma.rampProviderHealth.findFirst({
         orderBy: { createdAt: 'desc' },
         take: 1,
       });
@@ -96,8 +97,6 @@ export class HealthController {
       }
 
       return { status: lastHealth.status as ComponentStatus };
-    } catch {
-      return { status: 'down' as const, reason: 'Failed to check ramp provider health' };
-    }
+    }, 3_000);
   }
 }

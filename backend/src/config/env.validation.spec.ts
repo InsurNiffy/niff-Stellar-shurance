@@ -17,6 +17,7 @@ function validEnv(overrides: Record<string, unknown> = {}): Record<string, unkno
     FRONTEND_ORIGINS: 'http://localhost:3001',
     CAPTCHA_SECRET_KEY: 'dev-skip',
     IP_HASH_SALT: '0123456789abcdef0123456789abcdef',
+    API_BASE_URL: 'http://localhost:3000',
     ...overrides,
   };
 }

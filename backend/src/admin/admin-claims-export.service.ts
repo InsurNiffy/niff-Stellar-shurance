@@ -50,9 +50,8 @@ export class AdminClaimsExportService {
    */
   createClaimsExportStream(params: ClaimsExportParams): Readable {
     const readable = new Readable();
-    let isFirstRow = true;
 
-    this.streamClaimsAsCSV(readable, params, isFirstRow)
+    this.streamClaimsAsCSV(readable, params)
       .catch((err) => {
         this.logger.error('Error streaming claims export', { err });
         readable.destroy(err);
@@ -64,7 +63,6 @@ export class AdminClaimsExportService {
   private async streamClaimsAsCSV(
     writable: Readable,
     params: ClaimsExportParams,
-    isFirstRow: boolean,
   ): Promise<void> {
     let cursor: number | undefined;
     let hasMore = true;
@@ -142,17 +140,18 @@ export class AdminClaimsExportService {
     const where = claimTenantWhere(tenantId, {});
 
     if (params.status) {
-      where.status = params.status.toUpperCase() as any;
+      where.status = params.status.toUpperCase() as Prisma.ClaimWhereInput['status'];
     }
 
     if (params.from || params.to) {
-      where.createdAt = {};
+      const createdAt: Prisma.DateTimeFilter = {};
       if (params.from) {
-        (where.createdAt as any).gte = new Date(params.from);
+        createdAt.gte = new Date(params.from);
       }
       if (params.to) {
-        (where.createdAt as any).lte = new Date(params.to);
+        createdAt.lte = new Date(params.to);
       }
+      where.createdAt = createdAt;
     }
 
     return where;

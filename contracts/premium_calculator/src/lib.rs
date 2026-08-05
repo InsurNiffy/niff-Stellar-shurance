@@ -203,7 +203,7 @@ mod tests {
         (env, contract_id, admin)
     }
 
-    fn sample_input(env: &Env) -> CalcInput {
+    fn sample_input(_env: &Env) -> CalcInput {
         CalcInput {
             region: RegionTier::Medium,
             age_band: AgeBand::Adult,

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { XdrDecodeController } from './xdr-decode.controller';
 import { RawBodyRequest } from '@nestjs/common';
+import { FeatureFlagsGuard } from '../feature-flags/feature-flags.guard';
 
 describe('XdrDecodeController', () => {
   let controller: XdrDecodeController;
@@ -9,7 +10,10 @@ describe('XdrDecodeController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [XdrDecodeController],
-    }).compile();
+    })
+      .overrideGuard(FeatureFlagsGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<XdrDecodeController>(XdrDecodeController);
   });
@@ -40,16 +44,6 @@ describe('XdrDecodeController', () => {
     });
 
     it('should decode valid XDR ScVal', () => {
-      // Create a simple uint32 ScVal: value 42
-      const scVal = {
-        discriminant: 'scValTypeUint32',
-        uint32: { low: 42, high: 0, unsigned: true },
-        toXDR: function (encoding: string) {
-          // Return a buffer representation
-          return Buffer.from('AAAAAAA=', 'base64');
-        },
-      };
-
       // Mock the xdr module behavior
       // In a real test, this would use actual stellar-sdk XDR encoding
       const mockReq = {

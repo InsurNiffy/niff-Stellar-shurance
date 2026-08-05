@@ -255,7 +255,7 @@ export class AdminController {
   @Get('governance/quorum/impact')
   @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Preview impact of quorum change on active claims' })
-  async getQuorumImpact(@Query('bps') bps?: string, @Req() req?: AdminRequest) {
+  async getQuorumImpact(@Query('bps') bps?: string) {
     const targetBps = bps ? parseInt(bps, 10) : null;
     if (targetBps !== null && (isNaN(targetBps) || targetBps < 1 || targetBps > 10000)) {
       throw new BadRequestException('bps must be between 1 and 10000');
@@ -505,11 +505,11 @@ export class AdminController {
   @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Streaming CSV export of claims with pagination (no memory load)' })
   async exportClaims(
+    @Req() req: AdminRequest,
+    @Res() res: Response,
     @Query('status') status?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
-    @Req() req: AdminRequest,
-    @Res() res: Response,
   ) {
     const admin = req.user?.walletAddress ?? 'unknown';
     const rateLimitKey = `admin_claims_export:${admin}`;
@@ -1021,7 +1021,7 @@ export class AdminController {
         message: 'SOLVENCY_SIMULATION_SOURCE_ACCOUNT is not set.',
       });
     }
-    return this.soroban.simulateGetEvidenceLimits({ sourceAccount: source });
+    return this.sorobanService.simulateGetEvidenceLimits({ sourceAccount: source });
   }
 
   /**
@@ -1048,7 +1048,7 @@ export class AdminController {
     if (min > max) {
       throw new BadRequestException('min must not exceed max');
     }
-    const result = await this.soroban.invokeAdminSetEvidenceLimits({ min, max });
+    const result = await this.sorobanService.invokeAdminSetEvidenceLimits({ min, max });
     const actor = req.user?.walletAddress ?? 'unknown';
     await this.auditService.write({
       actor,

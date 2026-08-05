@@ -79,6 +79,9 @@ fn version_mismatch_rejects_when_pin_differs() {
     let err = env.as_contract(&insure_id, || {
         calculator::compute_quote(&env, &sample_risk(), 1_000_000, false, 100, None)
     });
-    assert_eq!(err, Err(niffyinsure::validate::Error::CalculatorVersionMismatch));
+    assert_eq!(
+        err,
+        Err(niffyinsure::validate::Error::CalculatorVersionMismatch)
+    );
     assert!(insure.get_last_calc_abi_version().is_none());
 }

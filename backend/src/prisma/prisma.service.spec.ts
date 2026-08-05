@@ -106,21 +106,6 @@ describe('PrismaService — soft-delete middleware (issue #875)', () => {
   });
 
   it('automatically appends deletedAt: null to findMany for soft-delete models', async () => {
-    const mockQuery = jest.fn().mockResolvedValue([]);
-    const extension = {
-      query: {
-        $allModels: {
-          findMany: jest.fn(),
-        },
-      },
-    };
-
-    // Simulate the extension behavior
-    const findManyHandler = (service as any).constructor.prototype.constructor;
-    const testClaim = {
-      where: { status: 'PENDING' },
-    };
-
     // Verify extension is applied by checking internal state
     expect((service as any).softDeleteModels.has('Claim')).toBe(true);
     expect((service as any).softDeleteModels.has('Vote')).toBe(true);

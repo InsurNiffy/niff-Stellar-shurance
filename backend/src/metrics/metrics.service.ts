@@ -38,7 +38,6 @@ export class MetricsService implements OnModuleInit {
   readonly queueActiveWorkers: client.Gauge<string>;
   readonly queueDepth: client.Gauge<string>;
   readonly bullmqJobRetriesTotal: client.Counter<string>;
-  readonly queueDepth: client.Gauge<string>;
   readonly jobProcessingDuration: client.Histogram<string>;
 
   // ── Indexer / observability metrics ───────────────────────────────────────
@@ -93,6 +92,16 @@ export class MetricsService implements OnModuleInit {
   readonly voteReconciliationErrors: client.Counter<string>;
   /** Total mismatches found in a single reconciliation run. */
   readonly voteReconciliationMismatchCount: client.Counter<string>;
+
+  // ── Maintenance metrics ───────────────────────────────────────────────────
+  /** Total VACUUM operations run against high-churn tables. */
+  readonly vacuumOperationsTotal: client.Counter<string>;
+  /** Table bloat ratio (percentage of dead tuples) per high-churn table. */
+  readonly tableBloatRatio: client.Gauge<string>;
+
+  // ── Notification batching metrics ────────────────────────────────────────
+  /** Total claim notification batch accumulate/flush operations. */
+  readonly claimNotificationBatchTotal: client.Counter<string>;
 
   constructor(cardinalityGuard: MetricsCardinalityGuard) {
     this.cardinalityGuard = cardinalityGuard;
@@ -163,7 +172,7 @@ export class MetricsService implements OnModuleInit {
 
     this.queueDepth = new client.Gauge({
       name: 'bullmq_queue_depth',
-      help: 'Total number of pending jobs in a queue (waiting + active + delayed)',
+      help: 'Number of jobs currently pending in a queue',
       labelNames: ['queue'],
       registers: [this.registry],
     });
@@ -172,13 +181,6 @@ export class MetricsService implements OnModuleInit {
       name: 'bullmq_job_retries_total',
       help: 'Total job retry attempts per queue (excludes first attempt and final exhaustion)',
       labelNames: ['queue', 'job_name'],
-      registers: [this.registry],
-    });
-
-    this.queueDepth = new client.Gauge({
-      name: 'bullmq_queue_depth',
-      help: 'Number of jobs currently waiting to be processed in each queue',
-      labelNames: ['queue'],
       registers: [this.registry],
     });
 
@@ -324,6 +326,27 @@ export class MetricsService implements OnModuleInit {
       help: 'Total mismatches detected in a reconciliation run',
       registers: [this.registry],
     });
+
+    this.vacuumOperationsTotal = new client.Counter({
+      name: 'db_vacuum_operations_total',
+      help: 'Total VACUUM operations run against high-churn tables',
+      labelNames: ['table', 'result'],
+      registers: [this.registry],
+    });
+
+    this.tableBloatRatio = new client.Gauge({
+      name: 'db_table_bloat_ratio',
+      help: 'Table bloat ratio (percentage of dead tuples) per high-churn table',
+      labelNames: ['table'],
+      registers: [this.registry],
+    });
+
+    this.claimNotificationBatchTotal = new client.Counter({
+      name: 'claim_notification_batch_operations_total',
+      help: 'Total claim notification batch accumulate/flush operations',
+      labelNames: ['action'],
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -447,13 +470,7 @@ export class MetricsService implements OnModuleInit {
     this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
   }
 
-  recordVoteTallyMismatch(
-    claimId: number,
-    indexedApprove: number,
-    indexedReject: number,
-    onChainApprove: number,
-    onChainReject: number,
-  ) {
+  recordVoteTallyMismatch(claimId: number) {
     const normalizedClaimId = this.cardinalityGuard.normalizeClaimId(claimId);
     this.voteTallyMismatches.inc({ claim_id: normalizedClaimId });
   }
@@ -476,6 +493,34 @@ export class MetricsService implements OnModuleInit {
 
   recordQueueDepth(opts: { queue: string; depth: number }) {
     this.queueDepth.set({ queue: opts.queue }, opts.depth);
+  }
+
+  recordJobProcessingDuration(opts: {
+    queue: string;
+    jobName: string;
+    status: string;
+    durationMs: number;
+  }) {
+    const { queue, jobName, status, durationMs } = opts;
+    this.jobProcessingDuration.observe(
+      { queue, job_name: jobName, status },
+      durationMs / 1000,
+    );
+  }
+
+  recordVacuumOperation(table: string, result: 'success' | 'failure') {
+    this.vacuumOperationsTotal.inc({ table, result });
+  }
+
+  recordTableBloat(table: string, bloatRatioPercent: number) {
+    this.tableBloatRatio.set({ table }, bloatRatioPercent);
+  }
+
+  recordClaimNotificationBatch(
+    action: 'accumulated' | 'flushed',
+    _opts: { walletAddress: string; eventCount: number },
+  ) {
+    this.claimNotificationBatchTotal.inc({ action });
   }
 
   async getMetrics(): Promise<string> {

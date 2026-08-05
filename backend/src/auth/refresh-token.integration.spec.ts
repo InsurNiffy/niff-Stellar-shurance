@@ -17,6 +17,7 @@ import { AuthController } from './auth.controller';
 import { WalletAuthService } from './wallet-auth.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { NonceService } from './nonce.service';
+import { WalletSignatureService } from './wallet-signature.service';
 import { RedisService } from '../cache/redis.service';
 
 // ── In-memory Redis mock ──────────────────────────────────────────────────
@@ -83,6 +84,7 @@ async function buildApp() {
     providers: [
       WalletAuthService,
       RefreshTokenService,
+      WalletSignatureService,
       { provide: NonceService, useValue: nonceService },
       { provide: RedisService, useValue: redisStore },
     ],

@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { Worker, Job } from 'bullmq';
+import { Worker, Queue, Job } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import { getBullMQConnection } from '../redis/client';
 import { TX_SUBMIT_QUEUE } from '../queues/names';
@@ -12,7 +12,8 @@ import { MetricsService } from '../metrics/metrics.service';
 export class TxSubmitWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TxSubmitWorker.name);
   private worker!: Worker<TxSubmitJobData>;
-  private metricsInterval?: NodeJS.Timer;
+  private statsQueue!: Queue<TxSubmitJobData>;
+  private metricsInterval?: NodeJS.Timeout;
 
   constructor(
     private readonly config: ConfigService,
@@ -33,6 +34,10 @@ export class TxSubmitWorker implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`TX job ${job?.id} failed: ${err.message}`),
     );
 
+    this.statsQueue = new Queue<TxSubmitJobData>(TX_SUBMIT_QUEUE, {
+      connection: getBullMQConnection(),
+    });
+
     this.metricsInterval = setInterval(() => this.emitQueueMetrics(), 10_000);
     this.emitQueueMetrics();
   }
@@ -42,11 +47,12 @@ export class TxSubmitWorker implements OnModuleInit, OnModuleDestroy {
       clearInterval(this.metricsInterval);
     }
     await this.worker.close();
+    await this.statsQueue.close();
   }
 
   private async emitQueueMetrics(): Promise<void> {
     try {
-      const counts = await this.worker.getCountsPerState();
+      const counts = await this.statsQueue.getJobCounts();
       const active = counts.active ?? 0;
       this.metrics.recordQueueActiveWorkers({ queue: TX_SUBMIT_QUEUE, count: active });
     } catch (err: unknown) {

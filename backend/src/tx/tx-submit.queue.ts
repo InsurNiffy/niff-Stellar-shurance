@@ -48,7 +48,7 @@ export class TxSubmitQueue {
   }
 
   async enqueue(data: TxSubmitJobData): Promise<string> {
-    const counts = await this.queue.getCountsPerState();
+    const counts = await this.queue.getJobCounts();
     const depth = (counts.waiting ?? 0) + (counts.active ?? 0) + (counts.delayed ?? 0);
 
     this.metrics.recordQueueDepth({ queue: TX_SUBMIT_QUEUE, depth });

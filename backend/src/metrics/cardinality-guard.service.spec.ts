@@ -106,16 +106,15 @@ describe('MetricsCardinalityGuard', () => {
     });
 
     it('logs warning when cardinality exceeds threshold', () => {
-      const spy = jest.spyOn(guard as any, 'logger');
-      spy.warn = jest.fn();
+      const warnSpy = jest.spyOn((guard as any).logger, 'warn').mockImplementation(() => undefined);
 
       // Simulate exceeding MAX_CARDINALITY (1000)
       for (let i = 0; i < 1001; i++) {
         guard.checkCardinality('high_cardinality_label', `value_${i}`);
       }
 
-      expect(spy.warn).toHaveBeenCalled();
-      const call = (spy.warn as jest.Mock).mock.calls[0];
+      expect(warnSpy).toHaveBeenCalled();
+      const call = warnSpy.mock.calls[0];
       expect(call[0]).toContain('High cardinality detected');
     });
   });

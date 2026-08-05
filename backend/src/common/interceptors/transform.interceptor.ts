@@ -24,7 +24,11 @@ export class TransformInterceptor implements NestInterceptor {
 
         // Handle paginated responses with pagination field
         if (response && typeof response === 'object' && 'pagination' in response && 'data' in response) {
-          const { pagination, data, ...rest } = response as any;
+          const { pagination, data, ...rest } = response as {
+            pagination: { total: number; next_cursor?: unknown };
+            data: unknown;
+            [key: string]: unknown;
+          };
           return {
             data,
             meta: {

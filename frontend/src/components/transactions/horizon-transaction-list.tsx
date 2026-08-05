@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Download } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -114,7 +114,6 @@ export function HorizonTransactionList({
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [typeFilter, setTypeFilter] = useState<string>('')
   const loadMoreRef = useRef<HTMLDivElement | null>(null)
 
   const loadPage = useCallback(
@@ -207,6 +206,12 @@ export function HorizonTransactionList({
 
   return (
     <section aria-label="Transaction history" className="space-y-3">
+      <TransactionFilterBar
+        filters={filters}
+        onChange={(next) => onFiltersChange?.(next)}
+        assetOptions={assetOptions}
+      />
+
       {!isLoading && (
         <div className="flex justify-end">
           <Button

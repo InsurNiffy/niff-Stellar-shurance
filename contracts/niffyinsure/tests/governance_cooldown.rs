@@ -55,7 +55,7 @@ fn set_governance_cooldown_out_of_bounds_fails() {
 
 #[test]
 fn config_change_within_cooldown_reverts() {
-    let (env, client, _admin) = setup();
+    let (_env, client, _admin) = setup();
     // Set a 1_000-ledger cooldown, then immediately try to change quorum.
     client.admin_set_gov_cooldown_ledgers(&1_000u32);
 

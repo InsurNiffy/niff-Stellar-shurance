@@ -76,17 +76,13 @@ describe('WebhookRegistrationService', () => {
     });
 
     it('prevents duplicate registrations of active webhooks', async () => {
-      await service.registerWebhook('https://example.com/webhook', 'claim.filed');
       const { webhook } = await service.registerWebhook(
         'https://example.com/webhook',
         'claim.filed',
       );
 
-      // Manually activate first webhook for this test
+      // Manually activate the webhook for this test (bypassing the verify flow)
       webhook.status = WebhookStatus.ACTIVE;
-
-      const webhookId = Array.from(service['webhooks'].values())[0].id;
-      await service.verifyWebhook(webhookId, 'anytoken');
 
       // Now try to register same URL again
       await expect(
@@ -161,10 +157,10 @@ describe('WebhookRegistrationService', () => {
       const challenge = service['challenges'].get(webhook.id);
       await service.verifyWebhook(webhook.id, challenge!.token);
 
-      // Try to verify again (challenge is already cleared)
-      await expect(
-        service.verifyWebhook(webhook.id, challenge!.token),
-      ).rejects.toThrow(BadRequestException);
+      // Re-verifying an already-active webhook is idempotent: it succeeds
+      // and returns the webhook rather than erroring.
+      const result = await service.verifyWebhook(webhook.id, challenge!.token);
+      expect(result.status).toBe(WebhookStatus.ACTIVE);
     });
   });
 

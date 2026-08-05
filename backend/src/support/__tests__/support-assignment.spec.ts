@@ -1,6 +1,5 @@
 import { SupportService } from '../support.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
 import { BadRequestException } from '@nestjs/common';
 import { SupportTicket } from '@prisma/client';
 

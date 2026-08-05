@@ -101,8 +101,8 @@ fn compute_applies_multipliers_deterministically() {
     };
     let result = client.compute(&input);
     let safety = SCALE - (50i128 * 2_000 / 100);
-    let expected = (((1_000_000i128 * 10_000 / SCALE) * 10_000 / SCALE) * 10_000 / SCALE) * safety
-        / SCALE;
+    let expected =
+        (((1_000_000i128 * 10_000 / SCALE) * 10_000 / SCALE) * 10_000 / SCALE) * safety / SCALE;
     assert_eq!(result.premium, expected.max(1));
 }
 
@@ -138,7 +138,10 @@ fn compute_before_initialize_returns_not_initialized() {
     let env = Env::default();
     let contract_id = env.register(PremiumCalculator, ());
     let client = PremiumCalculatorClient::new(&env, &contract_id);
-    let err = client.try_compute(&sample_input(&env)).unwrap_err().unwrap();
+    let err = client
+        .try_compute(&sample_input(&env))
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, CalcError::NotInitialized);
 }
 
@@ -146,7 +149,10 @@ fn compute_before_initialize_returns_not_initialized() {
 fn compute_while_paused_returns_paused() {
     let (env, client, _admin) = setup();
     client.set_paused(&true);
-    let err = client.try_compute(&sample_input(&env)).unwrap_err().unwrap();
+    let err = client
+        .try_compute(&sample_input(&env))
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, CalcError::Paused);
 }
 

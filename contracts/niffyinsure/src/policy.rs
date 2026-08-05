@@ -345,6 +345,10 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
             "escalation deadline must be earlier than the current voting deadline"
         }
         Error::ClaimIdOverflow => "claim ID counter overflowed u64::MAX",
+        Error::InsufficientAllowanceForFee => {
+            "claimant's token allowance is insufficient to cover the claim filing fee"
+        }
+        Error::VoterCapReached => "claim has already reached the maximum number of unique voters",
     };
 
     QuoteFailure {
@@ -838,7 +842,10 @@ pub fn renew_policy(
     let now = env.ledger().sequence();
     let grace = storage::get_grace_period_ledgers(env);
 
-    let lapse_ledger = policy.end_ledger.checked_add(grace).ok_or(PolicyError::LedgerOverflow)?;
+    let lapse_ledger = policy
+        .end_ledger
+        .checked_add(grace)
+        .ok_or(PolicyError::LedgerOverflow)?;
     if ledger::is_expired(now, lapse_ledger) {
         publish_policy_expired_if_due(env, &policy, now);
         return Ok(crate::types::RenewPolicyOutcome::Lapsed);

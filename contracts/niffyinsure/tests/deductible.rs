@@ -159,7 +159,10 @@ fn max_i128_claim_with_large_deductible_still_pays_one_unit() {
     mint(&env, &token, &client.address, 1i128);
     let before = token::Client::new(&env, &token).balance(&holder);
     client.process_claim(&claim_id);
-    assert_eq!(token::Client::new(&env, &token).balance(&holder), before + 1);
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&holder),
+        before + 1
+    );
 }
 
 #[test]

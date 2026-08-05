@@ -141,6 +141,8 @@ export function PurchaseWizard() {
   const handleSuccess = useCallback(() => {
     completedRef.current = true
     clearDraft()
+    // Force CoverageDetailsStep to remount with a blank form if the wizard is reused.
+    setCoverageFormKey((k) => k + 1)
   }, [clearDraft])
 
   return (

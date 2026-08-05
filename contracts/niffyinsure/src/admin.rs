@@ -289,13 +289,12 @@ pub enum RoleError {
 /// Require either the dedicated pause-admin or the main admin.
 /// Returns the authorised address.
 pub fn require_pause_admin(env: &Env) -> Address {
-    let role = storage::get_pause_admin(env)
-        .unwrap_or_else(|| {
-            env.storage()
-                .instance()
-                .get::<_, Address>(&storage::DataKey::Admin)
-                .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
-        });
+    let role = storage::get_pause_admin(env).unwrap_or_else(|| {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&storage::DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
+    });
     role.require_auth();
     role
 }
@@ -303,13 +302,12 @@ pub fn require_pause_admin(env: &Env) -> Address {
 /// Require either the dedicated treasury-admin or the main admin.
 /// Returns the authorised address.
 pub fn require_treasury_admin(env: &Env) -> Address {
-    let role = storage::get_treasury_admin(env)
-        .unwrap_or_else(|| {
-            env.storage()
-                .instance()
-                .get::<_, Address>(&storage::DataKey::Admin)
-                .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
-        });
+    let role = storage::get_treasury_admin(env).unwrap_or_else(|| {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&storage::DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
+    });
     role.require_auth();
     role
 }
@@ -317,13 +315,12 @@ pub fn require_treasury_admin(env: &Env) -> Address {
 /// Require either the dedicated param-admin or the main admin.
 /// Returns the authorised address.
 pub fn require_param_admin(env: &Env) -> Address {
-    let role = storage::get_param_admin(env)
-        .unwrap_or_else(|| {
-            env.storage()
-                .instance()
-                .get::<_, Address>(&storage::DataKey::Admin)
-                .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
-        });
+    let role = storage::get_param_admin(env).unwrap_or_else(|| {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&storage::DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
+    });
     role.require_auth();
     role
 }

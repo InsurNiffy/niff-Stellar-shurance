@@ -219,11 +219,7 @@ pub fn reveal_vote(
 
 /// Hash helper for tests and off-chain commit construction:
 /// `SHA-256(vote_byte || salt)`.
-pub fn commitment_hash(
-    env: &Env,
-    vote: crate::types::VoteOption,
-    salt: &BytesN<32>,
-) -> BytesN<32> {
+pub fn commitment_hash(env: &Env, vote: crate::types::VoteOption, salt: &BytesN<32>) -> BytesN<32> {
     let vote_byte: u8 = match vote {
         crate::types::VoteOption::Approve => 0x00,
         crate::types::VoteOption::Reject => 0x01,
