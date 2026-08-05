@@ -1,6 +1,4 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { RampReconciliationService } from './ramp-reconciliation.service';
-import { ConfigService } from '@nestjs/config';
 
 describe('RampReconciliationService', () => {
   let service: RampReconciliationService;
@@ -50,6 +48,9 @@ describe('RampReconciliationService', () => {
         ...localTx,
         status: 'COMPLETE',
       });
+      jest
+        .spyOn(service as never as { queryRampProviderStatus: () => Promise<unknown> }, 'queryRampProviderStatus')
+        .mockResolvedValue({ status: 'COMPLETE' });
 
       const result = await service.runReconciliation();
 
@@ -79,6 +80,9 @@ describe('RampReconciliationService', () => {
         ...localTx,
         status: 'REFUNDED',
       });
+      jest
+        .spyOn(service as never as { queryRampProviderStatus: () => Promise<unknown> }, 'queryRampProviderStatus')
+        .mockResolvedValue({ status: 'REFUNDED' });
 
       const result = await service.runReconciliation();
 

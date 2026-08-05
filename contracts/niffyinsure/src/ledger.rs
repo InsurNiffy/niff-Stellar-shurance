@@ -163,6 +163,7 @@ pub const DEFAULT_DISPUTE_WINDOW_LEDGERS: u32 = LEDGERS_PER_DAY; // 17_280
 /// At a nominal 5 s/ledger, this represents ~680 years of Mainnet history.
 /// Any attempt to use ledger numbers above this threshold will produce a typed
 /// overflow error rather than a silently-wrapping deadline.
+#[allow(dead_code)] // public utility constant; not yet called from any contract entrypoint
 pub const MAX_SAFE_LEDGER: u32 = u32::MAX - MAX_VOTING_DURATION_LEDGERS;
 // = 4_293_999_615
 
@@ -231,6 +232,7 @@ pub fn is_in_renewal_window_with_grace(now: u32, end: u32, window: u32, grace: u
 /// Checked variant of [`is_in_renewal_window_with_grace`] that returns
 /// `Err(Overflow)` instead of saturating when `end + grace` would overflow.
 #[inline]
+#[allow(dead_code)]
 pub fn checked_is_in_renewal_window_with_grace(
     now: u32,
     end: u32,
@@ -560,7 +562,7 @@ mod tests {
     fn max_safe_ledger_is_reasonable() {
         // MAX_SAFE_LEDGER must be >= the largest realistic ledger number for
         // the foreseeable future (centuries at 5 s/ledger).
-        assert!(MAX_SAFE_LEDGER > 10_000_000_000 / 5); // > ~63 years worth
+        assert!(MAX_SAFE_LEDGER > 2_000_000_000); // > ~63 years worth (10_000_000_000s / 5s per ledger)
     }
 
     #[test]
@@ -574,12 +576,16 @@ mod tests {
 
     #[test]
     fn max_safe_ledger_checked_add_does_not_overflow() {
-        assert!(MAX_SAFE_LEDGER.checked_add(MAX_VOTING_DURATION_LEDGERS).is_some());
+        assert!(MAX_SAFE_LEDGER
+            .checked_add(MAX_VOTING_DURATION_LEDGERS)
+            .is_some());
     }
 
     #[test]
     fn one_past_max_safe_ledger_overflows() {
-        assert!((MAX_SAFE_LEDGER + 1).checked_add(MAX_VOTING_DURATION_LEDGERS).is_none());
+        assert!((MAX_SAFE_LEDGER + 1)
+            .checked_add(MAX_VOTING_DURATION_LEDGERS)
+            .is_none());
     }
 
     #[test]
@@ -595,14 +601,8 @@ mod tests {
 
     #[test]
     fn checked_is_rate_limit_elapsed_returns_ok_for_normal_values() {
-        assert_eq!(
-            checked_is_rate_limit_elapsed(200, 100, 50).unwrap(),
-            true
-        );
-        assert_eq!(
-            checked_is_rate_limit_elapsed(149, 100, 50).unwrap(),
-            false
-        );
+        assert_eq!(checked_is_rate_limit_elapsed(200, 100, 50).unwrap(), true);
+        assert_eq!(checked_is_rate_limit_elapsed(149, 100, 50).unwrap(), false);
     }
 
     #[test]

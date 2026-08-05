@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { OracleHooksController } from '../oracle-hooks.controller';
 import { OracleHooksPayloadDto } from '../../dto/oracle-hooks-payload.dto';
 

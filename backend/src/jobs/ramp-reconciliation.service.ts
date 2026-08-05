@@ -1,5 +1,5 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 
@@ -29,7 +29,7 @@ export class RampReconciliationService {
    * Runs every 15 minutes. Queries recent ramp transactions from provider
    * and reconciles them against local records.
    */
-  @Cron(CronExpression.EVERY_15_MINUTES)
+  @Cron('0 */15 * * * *')
   async runReconciliation(): Promise<RampReconciliationResult> {
     this.logger.log('Starting ramp transaction reconciliation...');
 
@@ -122,7 +122,7 @@ export class RampReconciliationService {
     return result;
   }
 
-  private async queryRampProviderStatus(purchaseId: string): Promise<{ status: string; finalTxHash?: string } | null> {
+  private async queryRampProviderStatus(_purchaseId: string): Promise<{ status: string; finalTxHash?: string } | null> {
     // Placeholder for actual Ramp provider API call
     // In production, this would call the Ramp API with the purchaseId
     // to fetch the current transaction status

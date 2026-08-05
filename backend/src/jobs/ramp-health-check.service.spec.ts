@@ -1,6 +1,4 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { RampHealthCheckService } from './ramp-health-check.service';
-import { ConfigService } from '@nestjs/config';
 
 describe('RampHealthCheckService', () => {
   let service: RampHealthCheckService;
@@ -105,6 +103,9 @@ describe('RampHealthCheckService', () => {
     it('handles provider API errors gracefully', async () => {
       mockConfigService.get.mockReturnValue('https://health.ramp.com/status');
       mockPrisma.rampProviderHealth.create.mockResolvedValue({});
+      jest
+        .spyOn(service as never as { pingRampProvider: () => Promise<unknown> }, 'pingRampProvider')
+        .mockRejectedValue(new Error('Network error'));
 
       const result = await service.checkProviderHealth();
 

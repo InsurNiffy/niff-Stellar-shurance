@@ -2,7 +2,6 @@ import {
   getQueueConcurrency,
   getQueueRetryConfig,
   resetRetryOverridesCache,
-  QueueRetryConfig,
 } from './queue-config';
 
 describe('getQueueConcurrency', () => {

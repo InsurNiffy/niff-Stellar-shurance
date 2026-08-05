@@ -5,7 +5,6 @@ import { TenantConfigService } from './tenant-config.service';
 import { TenantOnboardingService } from './tenant-onboarding.service';
 import { TenantController } from './tenant.controller';
 import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
-import { PrismaModule } from '../prisma/prisma.module';
 
 /**
  * TenantModule

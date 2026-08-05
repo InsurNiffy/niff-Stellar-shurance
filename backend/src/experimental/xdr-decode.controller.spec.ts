@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { XdrDecodeController } from './xdr-decode.controller';
 import { RawBodyRequest } from '@nestjs/common';
+import { FeatureFlagsGuard } from '../feature-flags/feature-flags.guard';
 
 describe('XdrDecodeController', () => {
   let controller: XdrDecodeController;
@@ -9,7 +10,10 @@ describe('XdrDecodeController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [XdrDecodeController],
-    }).compile();
+    })
+      .overrideGuard(FeatureFlagsGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<XdrDecodeController>(XdrDecodeController);
   });

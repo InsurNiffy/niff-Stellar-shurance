@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TenantContextService } from './tenant-context.service';
 import { TenantConfigService } from './tenant-config.service';
 import { TenantController } from './tenant.controller';
+import { TenantOnboardingService } from './tenant-onboarding.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 
 describe('TenantConfig - Integration Tests', () => {
@@ -30,6 +31,7 @@ describe('TenantConfig - Integration Tests', () => {
       providers: [
         TenantContextService,
         TenantConfigService,
+        TenantOnboardingService,
         { provide: FeatureFlagsService, useValue: mockFeatureFlagsService },
       ],
     }).compile();

@@ -7,18 +7,27 @@
  * - A critical job enqueued after a digest job is still processed first
  */
 
-import { Queue, Job } from 'bullmq';
+import { Queue } from 'bullmq';
 import { NotificationJobData, enqueueNotification } from './notification-jobs.queue';
-import { NOTIFICATION_QUEUE_NAME, PRIORITY_VALUES } from './notification-queue.constants';
+import { NOTIFICATION_JOB_OPTIONS, PRIORITY_VALUES } from './notification-queue.constants';
+
+// getNotificationQueue() constructs its own BullMQ Queue internally (no DI seam),
+// so the queue must be mocked at the bullmq module level to avoid a real Redis connection.
+const mockQueueInstance = {
+  add: jest.fn().mockResolvedValue({ id: 'test-job-id' }),
+};
+jest.mock('bullmq', () => ({
+  Queue: jest.fn().mockImplementation(() => mockQueueInstance),
+  Job: jest.fn(),
+}));
+jest.mock('../redis/client', () => ({ getBullMQConnection: jest.fn().mockReturnValue({}) }));
 
 describe('Notification Priority Lanes', () => {
   let queue: Queue<NotificationJobData>;
 
   beforeEach(() => {
-    // Mock Queue for testing without Redis
-    queue = {
-      add: jest.fn().mockResolvedValue({ id: 'test-job-id' }),
-    } as unknown as Queue<NotificationJobData>;
+    mockQueueInstance.add = jest.fn().mockResolvedValue({ id: 'test-job-id' });
+    queue = mockQueueInstance as unknown as Queue<NotificationJobData>;
   });
 
   it('should enqueue critical notifications with higher priority than digest', async () => {
@@ -101,7 +110,8 @@ describe('Notification Priority Lanes', () => {
       backoff: { type: 'exponential', delay: 1_000 },
     };
 
-    // All notifications should get the same retry policy
-    expect(true).toBe(true);
+    // All notifications share a single job-options config regardless of priority lane
+    expect(NOTIFICATION_JOB_OPTIONS.attempts).toBe(EXPECTED_OPTIONS.attempts);
+    expect(NOTIFICATION_JOB_OPTIONS.backoff).toEqual(EXPECTED_OPTIONS.backoff);
   });
 });

@@ -91,7 +91,7 @@ export class RampHealthCheckService {
     return result;
   }
 
-  private async pingRampProvider(healthUrl: string): Promise<{ status: string; errorMessage?: string }> {
+  private async pingRampProvider(_healthUrl: string): Promise<{ status: string; errorMessage?: string }> {
     // Placeholder for actual HTTP health check to Ramp provider
     // In production, this would make an HTTP request to the provider's health endpoint
     // and parse the response to determine status (up, degraded, down)

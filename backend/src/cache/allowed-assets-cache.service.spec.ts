@@ -73,20 +73,19 @@ describe('AllowedAssetsCacheService', () => {
       const jitterMs = 200;
 
       service.onModuleInit();
-
-      // The first refresh should happen within baseInterval + jitterMs
       expect(jest.getTimerCount()).toBe(1);
 
-      const timers = jest.getTimerIntervalById(
-        jest.getTimerIntervalById.toString().match(/\d+/)?.[0] as any,
-      );
-      expect(timers).toBeGreaterThanOrEqual(baseInterval);
-      expect(timers).toBeLessThanOrEqual(baseInterval + jitterMs);
+      const beforeTime = Date.now();
+      jest.runOnlyPendingTimers();
+      const elapsed = Date.now() - beforeTime;
+
+      expect(elapsed).toBeGreaterThanOrEqual(baseInterval);
+      expect(elapsed).toBeLessThanOrEqual(baseInterval + jitterMs);
 
       jest.useRealTimers();
     });
 
-    it('reschedules refresh after completion', (done) => {
+    it('reschedules refresh after completion', async () => {
       jest.useFakeTimers();
       const setSpy = jest.spyOn(mockRedis, 'set' as any);
 
@@ -94,16 +93,21 @@ describe('AllowedAssetsCacheService', () => {
       expect(jest.getTimerCount()).toBe(1);
 
       jest.runOnlyPendingTimers();
+      // refresh() is async (awaits fetchAssets() then redis.set()); flush
+      // the microtask queue so those awaited calls resolve before asserting.
+      await Promise.resolve();
+      await Promise.resolve();
+
       expect(setSpy).toHaveBeenCalled();
 
-      // After refresh completes, a new timer should be scheduled
-      setTimeout(() => {
-        expect(jest.getTimerCount()).toBeGreaterThan(0);
-        jest.useRealTimers();
-        done();
-      }, 0);
+      // After refresh completes, a new timer should be scheduled. scheduleRefresh()
+      // runs after the outer async callback's `await this.refresh()` resolves, one
+      // more microtask tick beyond the redis.set() call above — flush a few more.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(jest.getTimerCount()).toBeGreaterThan(0);
 
-      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
     });
   });
 

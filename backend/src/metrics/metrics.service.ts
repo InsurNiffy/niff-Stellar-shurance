@@ -93,6 +93,16 @@ export class MetricsService implements OnModuleInit {
   /** Total mismatches found in a single reconciliation run. */
   readonly voteReconciliationMismatchCount: client.Counter<string>;
 
+  // ── Maintenance metrics ───────────────────────────────────────────────────
+  /** Total VACUUM operations run against high-churn tables. */
+  readonly vacuumOperationsTotal: client.Counter<string>;
+  /** Table bloat ratio (percentage of dead tuples) per high-churn table. */
+  readonly tableBloatRatio: client.Gauge<string>;
+
+  // ── Notification batching metrics ────────────────────────────────────────
+  /** Total claim notification batch accumulate/flush operations. */
+  readonly claimNotificationBatchTotal: client.Counter<string>;
+
   constructor(cardinalityGuard: MetricsCardinalityGuard) {
     this.cardinalityGuard = cardinalityGuard;
     this.registry = new client.Registry();
@@ -316,6 +326,27 @@ export class MetricsService implements OnModuleInit {
       help: 'Total mismatches detected in a reconciliation run',
       registers: [this.registry],
     });
+
+    this.vacuumOperationsTotal = new client.Counter({
+      name: 'db_vacuum_operations_total',
+      help: 'Total VACUUM operations run against high-churn tables',
+      labelNames: ['table', 'result'],
+      registers: [this.registry],
+    });
+
+    this.tableBloatRatio = new client.Gauge({
+      name: 'db_table_bloat_ratio',
+      help: 'Table bloat ratio (percentage of dead tuples) per high-churn table',
+      labelNames: ['table'],
+      registers: [this.registry],
+    });
+
+    this.claimNotificationBatchTotal = new client.Counter({
+      name: 'claim_notification_batch_operations_total',
+      help: 'Total claim notification batch accumulate/flush operations',
+      labelNames: ['action'],
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -475,6 +506,21 @@ export class MetricsService implements OnModuleInit {
       { queue, job_name: jobName, status },
       durationMs / 1000,
     );
+  }
+
+  recordVacuumOperation(table: string, result: 'success' | 'failure') {
+    this.vacuumOperationsTotal.inc({ table, result });
+  }
+
+  recordTableBloat(table: string, bloatRatioPercent: number) {
+    this.tableBloatRatio.set({ table }, bloatRatioPercent);
+  }
+
+  recordClaimNotificationBatch(
+    action: 'accumulated' | 'flushed',
+    _opts: { walletAddress: string; eventCount: number },
+  ) {
+    this.claimNotificationBatchTotal.inc({ action });
   }
 
   async getMetrics(): Promise<string> {

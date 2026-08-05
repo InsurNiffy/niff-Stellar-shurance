@@ -48,13 +48,16 @@ fn remove_snapshot_env(env: &Env, contract_id: &Address, claim_id: u64) {
 fn vote_reverts_voter_snapshot_expired_not_not_eligible_voter() {
     let (env, client, contract_id) = setup();
     let holder = Address::generate(&env);
+    let voter = Address::generate(&env);
     seed(&client, &holder, 1_000_000, 10_000);
     let cid = file(&client, &holder, 100_000, &env);
 
     remove_snapshot_env(&env, &contract_id, cid);
 
+    // Use a voter distinct from the claimant so self-vote rejection doesn't
+    // mask the snapshot-expired check this test is exercising.
     let err = client
-        .try_vote_on_claim(&holder, &cid, &VoteOption::Approve)
+        .try_vote_on_claim(&voter, &cid, &VoteOption::Approve)
         .err()
         .unwrap()
         .unwrap();
@@ -64,14 +67,18 @@ fn vote_reverts_voter_snapshot_expired_not_not_eligible_voter() {
 #[test]
 fn refresh_snapshot_is_permissionless_and_preserves_tallies() {
     let (env, client, _contract_id) = setup();
+    let holder = Address::generate(&env);
     let v1 = Address::generate(&env);
     let v2 = Address::generate(&env);
     let v3 = Address::generate(&env);
+    seed(&client, &holder, 1_000_000, 10_000);
     seed(&client, &v1, 1_000_000, 10_000);
     seed(&client, &v2, 1_000_000, 10_000);
     seed(&client, &v3, 1_000_000, 10_000);
 
-    let cid = file(&client, &v1, 100_000, &env);
+    // Claimant is distinct from all voters so none of the votes below trip
+    // the self-vote check this test isn't exercising.
+    let cid = file(&client, &holder, 100_000, &env);
     client.vote_on_claim(&v1, &cid, &VoteOption::Approve);
 
     let before = client.get_claim(&cid);

@@ -90,7 +90,10 @@ fn self_vote_rejected_and_third_party_vote_succeeds() {
     let cid = file(&client, &holder, 100_000, &env);
 
     let self_vote = client.try_vote_on_claim(&holder, &cid, &VoteOption::Approve);
-    assert!(matches!(self_vote, Err(Ok(ValidateError::SelfVoteNotAllowed))));
+    assert!(matches!(
+        self_vote,
+        Err(Ok(ValidateError::SelfVoteNotAllowed))
+    ));
 
     client.vote_on_claim(&voter, &cid, &VoteOption::Approve);
     let claim = client.get_claim(&cid);

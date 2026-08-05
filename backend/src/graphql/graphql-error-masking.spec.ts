@@ -12,11 +12,6 @@ import { GraphQLError, GraphQLFormattedError } from 'graphql';
 import { formatGraphqlError } from './graphql-apollo.plugins';
 
 describe('GraphQL Error Masking', () => {
-  const mockLogger = {
-    structured: jest.fn(),
-  };
-
-  // Mock the logger injection (would be done in createGraphqlSecurityPlugin)
   beforeEach(() => {
     jest.clearAllMocks();
   });

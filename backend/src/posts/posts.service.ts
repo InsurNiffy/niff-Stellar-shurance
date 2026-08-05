@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PostStatus as PrismaPostStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   PostResponseDto,
@@ -31,7 +32,7 @@ export class PostsService {
     const where = {
       ...(keysetWhere ?? {}),
       deletedAt: null,
-      ...(params.status ? { status: params.status.toUpperCase() } : {}),
+      ...(params.status ? { status: this.toPrismaStatus(params.status) } : {}),
       ...(params.authorAddress ? { authorAddress: params.authorAddress } : {}),
       ...scheduledWhere,
     };
@@ -40,7 +41,7 @@ export class PostsService {
       this.prisma.post.count({
         where: {
           deletedAt: null,
-          ...(params.status ? { status: params.status.toUpperCase() } : {}),
+          ...(params.status ? { status: this.toPrismaStatus(params.status) } : {}),
           ...(params.authorAddress ? { authorAddress: params.authorAddress } : {}),
           ...scheduledWhere,
         },
@@ -73,7 +74,7 @@ export class PostsService {
       data: {
         title: dto.title,
         body: sanitizePostBody(dto.body),
-        status: dto.status?.toUpperCase() ?? 'DRAFT',
+        status: dto.status ? this.toPrismaStatus(dto.status) : 'DRAFT',
         authorAddress: dto.authorAddress,
         publishAt: dto.publishAt ?? null,
       },
@@ -90,11 +91,15 @@ export class PostsService {
       data: {
         ...(dto.title !== undefined ? { title: dto.title } : {}),
         ...(dto.body !== undefined ? { body: sanitizePostBody(dto.body) } : {}),
-        ...(dto.status !== undefined ? { status: dto.status.toUpperCase() } : {}),
+        ...(dto.status !== undefined ? { status: this.toPrismaStatus(dto.status) } : {}),
         ...(dto.publishAt !== undefined ? { publishAt: dto.publishAt } : {}),
       },
     });
     return this.toDto(post);
+  }
+
+  private toPrismaStatus(status: PostStatus): PrismaPostStatus {
+    return status.toUpperCase() as PrismaPostStatus;
   }
 
   private isScheduledForFuture(post: { publishAt: Date | null }): boolean {

@@ -1,5 +1,4 @@
 import {
-  NotificationDispatch,
   NotificationDispatcher,
 } from "../notifications/notification-dispatcher";
 import { NotificationsService } from "../notifications/notifications.service";

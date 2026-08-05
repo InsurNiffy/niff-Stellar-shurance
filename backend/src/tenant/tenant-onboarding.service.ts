@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { TenantConfigService, TenantConfig } from './tenant-config.service';
+import { TenantConfigService } from './tenant-config.service';
 
 export interface OnboardingStep {
   id: string;

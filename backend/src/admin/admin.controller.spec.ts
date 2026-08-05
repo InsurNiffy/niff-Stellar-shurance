@@ -5,6 +5,7 @@ import { Request, Response } from 'express';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminPoliciesService } from './admin-policies.service';
+import { AdminClaimsExportService } from './admin-claims-export.service';
 import { AuditService } from './audit.service';
 import { PrivacyService } from '../maintenance/privacy.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
@@ -16,6 +17,10 @@ import { AdminTenantsService } from './admin-tenants.service';
 import { AdminStatsService } from './admin-stats.service';
 import { SorobanService } from '../rpc/soroban.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
+import { TokenBlacklistService } from '../auth/token-blacklist.service';
+import { SupportService } from '../support/support.service';
+import { CommentRepository } from '../claims/comments/comment.repository';
+import { TenantConfigAuditService } from '../tenant/tenant-config-audit.service';
 
 const mockSorobanService = {
   simulateGetEvidenceLimits: jest.fn(),
@@ -70,6 +75,23 @@ const mockPrismaService = {
   registeredVoter: { findMany: jest.fn() },
   claim: { findMany: jest.fn() },
 };
+const mockAdminClaimsExportService = {
+  streamCsv: jest.fn(),
+};
+const mockTokenBlacklistService = {
+  isBlacklisted: jest.fn(),
+  blacklist: jest.fn(),
+};
+const mockSupportService = {
+  listTickets: jest.fn(),
+  getTicket: jest.fn(),
+};
+const mockCommentRepository = {
+  findByClaimId: jest.fn(),
+};
+const mockTenantConfigAuditService = {
+  getHistory: jest.fn(),
+};
 
 const adminReq = (role = 'admin', scopes: string[] = ['admin:claims:override']) =>
   ({
@@ -114,6 +136,11 @@ describe('AdminController', () => {
         { provide: AdminTenantsService, useValue: mockAdminTenantsService },
         { provide: require('../prisma/prisma.service').PrismaService, useValue: mockPrismaService },
         { provide: SorobanService, useValue: mockSorobanService },
+        { provide: AdminClaimsExportService, useValue: mockAdminClaimsExportService },
+        { provide: TokenBlacklistService, useValue: mockTokenBlacklistService },
+        { provide: SupportService, useValue: mockSupportService },
+        { provide: CommentRepository, useValue: mockCommentRepository },
+        { provide: TenantConfigAuditService, useValue: mockTenantConfigAuditService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -459,6 +486,11 @@ describe('Admin Role Guard Enforcement', () => {
         { provide: AdminTenantsService, useValue: mockAdminTenantsService },
         { provide: require('../prisma/prisma.service').PrismaService, useValue: mockPrismaService },
         { provide: SorobanService, useValue: mockSorobanService },
+        { provide: AdminClaimsExportService, useValue: mockAdminClaimsExportService },
+        { provide: TokenBlacklistService, useValue: mockTokenBlacklistService },
+        { provide: SupportService, useValue: mockSupportService },
+        { provide: CommentRepository, useValue: mockCommentRepository },
+        { provide: TenantConfigAuditService, useValue: mockTenantConfigAuditService },
       ],
     })
       .overrideGuard(JwtAuthGuard)

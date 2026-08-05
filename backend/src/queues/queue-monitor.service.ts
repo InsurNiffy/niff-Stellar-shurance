@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { Queue, Worker, Job } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
 import { MetricsService } from '../metrics/metrics.service';
-import { getQueueRetryConfig } from './queue-config';
+import { BackoffType, getQueueRetryConfig } from './queue-config';
 import { QueueName } from './names';
 
 // Fallback max-attempts for queues not in the canonical QueueName list.
@@ -14,7 +14,7 @@ function resolveMaxAttempts(name: string): number {
   return getQueueRetryConfig(name as QueueName)?.maxAttempts ?? FALLBACK_MAX_ATTEMPTS;
 }
 
-function resolveBackoff(name: string): { type: 'exponential'; delay: number } {
+function resolveBackoff(name: string): { type: BackoffType; delay: number } {
   return getQueueRetryConfig(name as QueueName)?.backoff ?? { type: 'exponential', delay: 2_000 };
 }
 
@@ -117,7 +117,7 @@ export class QueueMonitorService implements OnModuleInit, OnModuleDestroy {
       try {
         const counts = await q.getJobCounts();
         this.metrics.dlqDepth.set({ queue: q.name }, counts.failed ?? 0);
-        this.metrics.recordQueueDepth(q.name, counts.waiting ?? 0);
+        this.metrics.recordQueueDepth({ queue: q.name, depth: counts.waiting ?? 0 });
       } catch {
         // Redis may be unavailable — skip silently, alert will fire on stale gauge
       }

@@ -12,7 +12,7 @@ describe('TokenBlacklistService', () => {
       exists: jest.fn().mockResolvedValue(0),
     };
     redisService = {
-      client: mockRedisClient as any,
+      getClient: jest.fn().mockReturnValue(mockRedisClient),
     };
     service = new TokenBlacklistService(redisService as RedisService);
   });

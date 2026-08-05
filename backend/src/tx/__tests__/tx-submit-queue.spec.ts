@@ -2,13 +2,15 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { TxSubmitQueue } from '../tx-submit.queue';
 import { TxSubmitWorker } from '../tx-submit.worker';
 import { ConfigService } from '@nestjs/config';
+import { MetricsService } from '../../metrics/metrics.service';
 
 // Mock BullMQ Queue
 const mockJob = { id: 'job-1', returnvalue: null, failedReason: undefined, getState: jest.fn() };
 const mockQueue = {
   add: jest.fn().mockResolvedValue(mockJob),
   getJob: jest.fn(),
-  getCountsPerState: jest.fn().mockResolvedValue({ waiting: 0, active: 0, delayed: 0 }),
+  getJobCounts: jest.fn().mockResolvedValue({ waiting: 0, active: 0, delayed: 0 }),
+  close: jest.fn(),
 };
 jest.mock('bullmq', () => ({
   Queue: jest.fn().mockImplementation(() => mockQueue),
@@ -19,7 +21,6 @@ jest.mock('../../redis/client', () => ({ getBullMQConnection: jest.fn().mockRetu
 
 describe('TxSubmitQueue', () => {
   let queue: TxSubmitQueue;
-  let configService: ConfigService;
   let metricsService: any;
 
   beforeEach(async () => {
@@ -28,11 +29,10 @@ describe('TxSubmitQueue', () => {
       providers: [
         TxSubmitQueue,
         { provide: ConfigService, useValue: { get: jest.fn((key) => key === 'TX_SUBMIT_QUEUE_MAX_DEPTH' ? 100 : 'tx-submit') } },
-        { provide: 'MetricsService', useValue: metricsService },
+        { provide: MetricsService, useValue: metricsService },
       ],
     }).compile();
     queue = module.get(TxSubmitQueue);
-    configService = module.get(ConfigService);
     // Inject metrics service
     (queue as any).metrics = metricsService;
   });
@@ -80,25 +80,25 @@ describe('TxSubmitQueue', () => {
   });
 
   it('enqueue records queue depth metric', async () => {
-    mockQueue.getCountsPerState = jest.fn().mockResolvedValue({ waiting: 5, active: 2, delayed: 1 });
+    mockQueue.getJobCounts = jest.fn().mockResolvedValue({ waiting: 5, active: 2, delayed: 1 });
     await queue.enqueue({ signed_xdr: 'AAAA==' });
     expect(metricsService.recordQueueDepth).toHaveBeenCalledWith({ queue: 'tx-submit', depth: 8 });
   });
 
   it('enqueue rejects when queue depth exceeds max', async () => {
-    mockQueue.getCountsPerState = jest.fn().mockResolvedValue({ waiting: 98, active: 3, delayed: 0 });
+    mockQueue.getJobCounts = jest.fn().mockResolvedValue({ waiting: 98, active: 3, delayed: 0 });
     await expect(queue.enqueue({ signed_xdr: 'AAAA==' })).rejects.toThrow();
   });
 
   it('enqueue succeeds when queue depth is under limit', async () => {
-    mockQueue.getCountsPerState = jest.fn().mockResolvedValue({ waiting: 50, active: 0, delayed: 0 });
+    mockQueue.getJobCounts = jest.fn().mockResolvedValue({ waiting: 50, active: 0, delayed: 0 });
     const jobId = await queue.enqueue({ signed_xdr: 'AAAA==' });
     expect(jobId).toBe('job-1');
     expect(mockQueue.add).toHaveBeenCalled();
   });
 
   it('enqueue returns existing job ID if idempotency key already exists', async () => {
-    mockQueue.getCountsPerState = jest.fn().mockResolvedValue({ waiting: 10, active: 0, delayed: 0 });
+    mockQueue.getJobCounts = jest.fn().mockResolvedValue({ waiting: 10, active: 0, delayed: 0 });
     const existingJob = { id: 'idem:uuid-123', returnvalue: { hash: 'abc' }, getState: jest.fn() };
     mockQueue.getJob = jest.fn().mockResolvedValue(existingJob);
 
@@ -108,7 +108,7 @@ describe('TxSubmitQueue', () => {
   });
 
   it('enqueue creates new job if idempotency key does not exist', async () => {
-    mockQueue.getCountsPerState = jest.fn().mockResolvedValue({ waiting: 10, active: 0, delayed: 0 });
+    mockQueue.getJobCounts = jest.fn().mockResolvedValue({ waiting: 10, active: 0, delayed: 0 });
     mockQueue.getJob = jest.fn().mockResolvedValue(undefined);
 
     const jobId = await queue.enqueue({ signed_xdr: 'AAAA==', idempotency_key: 'uuid-456' });
@@ -121,7 +121,11 @@ describe('TxSubmitWorker', () => {
   it('initializes worker on module init', async () => {
     const { Worker } = await import('bullmq');
     const module: TestingModule = await Test.createTestingModule({
-      providers: [TxSubmitWorker, { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('https://rpc') } }],
+      providers: [
+        TxSubmitWorker,
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('https://rpc') } },
+        { provide: MetricsService, useValue: { recordQueueActiveWorkers: jest.fn() } },
+      ],
     }).compile();
     const worker = module.get(TxSubmitWorker);
     worker.onModuleInit();

@@ -178,13 +178,10 @@ pub fn compute_quote(
     asset: Option<&Address>,
 ) -> Result<PremiumQuote, Error> {
     match storage::get_calc_address(env) {
-        Some(calc_addr) => match call_external(env, &calc_addr, input, base_amount, quote_ttl) {
-            Ok(quote) => Ok(quote),
-            // Fail closed on pause and ABI pin mismatch — never silently fall back.
-            Err(Error::CalculatorPaused) => Err(Error::CalculatorPaused),
-            Err(Error::CalculatorVersionMismatch) => Err(Error::CalculatorVersionMismatch),
-            Err(_) => call_local(env, input, base_amount, include_breakdown, quote_ttl, asset),
-        },
+        // Fail closed: once a calculator is configured, any failure (pause, ABI pin
+        // mismatch, unreachable address, or call failure) is propagated — never a
+        // silent fallback to the local engine.
+        Some(calc_addr) => call_external(env, &calc_addr, input, base_amount, quote_ttl),
         None => call_local(env, input, base_amount, include_breakdown, quote_ttl, asset),
     }
 }
@@ -200,7 +197,13 @@ fn call_external(
 
     // ABI pin: if an expected version is configured, assert it matches
     // the calculator's reported abi_version before calling compute.
-    let actual_abi = client.abi_version();
+    // Uses try_abi_version (not the panicking abi_version) so an unreachable
+    // or misbehaving calculator address surfaces as a typed CalculatorCallFailed
+    // instead of aborting the whole transaction.
+    let actual_abi = client
+        .try_abi_version()
+        .map_err(|_| Error::CalculatorCallFailed)?
+        .map_err(|_| Error::CalculatorCallFailed)?;
     if let Some(expected_ver) = get_expected_calc_version(env) {
         if actual_abi != expected_ver {
             return Err(Error::CalculatorVersionMismatch);

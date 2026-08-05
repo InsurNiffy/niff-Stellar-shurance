@@ -7,7 +7,7 @@
  * - Invalid introspection queries return clear error messages
  */
 
-import { GraphQLError, getIntrospectionQuery } from 'graphql';
+import { getIntrospectionQuery } from 'graphql';
 
 describe('GraphQL Introspection Lockdown', () => {
   // Introspection query that attempts to enumerate the schema
@@ -21,8 +21,7 @@ describe('GraphQL Introspection Lockdown', () => {
 
       // When introspection is disabled in Apollo config, attempting an introspection query
       // results in a validation error before the resolver is even invoked
-      const expectedError =
-        'GraphQL introspection is disabled, but the requested query contained __schema';
+      // (expected message: "GraphQL introspection is disabled, but the requested query contained __schema")
 
       expect(true).toBe(true); // Placeholder: actual test requires full Apollo server setup
     });

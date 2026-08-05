@@ -26,6 +26,7 @@ jobs:
         working-directory: frontend
     env:
       NEXT_PUBLIC_API_URL: https://api.example.com
+      NEXT_PUBLIC_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 

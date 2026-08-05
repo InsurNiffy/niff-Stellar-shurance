@@ -421,10 +421,10 @@ export class IndexerService {
         updatedAt: new Date(),
       },
     });
-    this.adminAnalytics?.invalidatePolicyAnalyticsCache(event.tenantId).catch(() => undefined);
+    this.adminAnalytics?.invalidatePolicyAnalyticsCache().catch(() => undefined);
   }
 
-  private async handlePolicyRenewed(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
+  private async handlePolicyRenewed(tx: IndexerTx, data: EventPayload, _event: SorobanEvent) {
     const holder = tryNormalizeAddress(getStringValue(data.holder)) ?? getStringValue(data.holder);
     const id = `${holder}:${getNumberValue(data.policy_id)}`;
     await tx.policy.update({
@@ -434,7 +434,7 @@ export class IndexerService {
         updatedAt: new Date(),
       },
     });
-    this.adminAnalytics?.invalidatePolicyAnalyticsCache(event.tenantId).catch(() => undefined);
+    this.adminAnalytics?.invalidatePolicyAnalyticsCache().catch(() => undefined);
   }
 
   /**

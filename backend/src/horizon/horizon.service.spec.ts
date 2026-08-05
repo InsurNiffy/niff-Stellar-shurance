@@ -12,12 +12,11 @@ jest.mock('../config/network.config', () => ({
   }),
 }));
 
-const VALID_ACCOUNT = 'GDZST3XVCDTUJ76ZAV2HA72KYEELTJE322P3HYHBNHY56PSFPSQYOPA';
+const VALID_ACCOUNT = 'GBCPNZ6S7RK5N4BX6HBXBCX7P5QNBOJZFGDWBZBXCLK5T6KHWOPTLR3I';
 
 describe('HorizonService - Account and Ledger Caching', () => {
   let service: HorizonService;
   let redisService: RedisService;
-  let configService: ConfigService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -53,7 +52,6 @@ describe('HorizonService - Account and Ledger Caching', () => {
 
     service = module.get<HorizonService>(HorizonService);
     redisService = module.get<RedisService>(RedisService);
-    configService = module.get<ConfigService>(ConfigService);
   });
 
   describe('getAccount', () => {

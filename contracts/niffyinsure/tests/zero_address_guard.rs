@@ -10,9 +10,12 @@ mod common;
 
 use niffyinsure::{
     types::{AgeBand, CoverageTier, InitiatePolicyOptions, PolicyType, RegionTier},
-    AdminError, NiffyInsureClient, PolicyError,
+    NiffyInsureClient,
 };
-use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env, String};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Address, Env, String,
+};
 
 const ZERO_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 const INITIAL_LEDGER: u32 = 200;
@@ -23,7 +26,8 @@ const STARTING_BALANCE: i128 = 100_000_000_000;
 fn setup() -> (Env, NiffyInsureClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().with_mut(|l| l.sequence_number = INITIAL_LEDGER);
+    env.ledger()
+        .with_mut(|l| l.sequence_number = INITIAL_LEDGER);
     let contract_id = env.register(niffyinsure::NiffyInsure, ());
     let client = NiffyInsureClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
@@ -140,11 +144,7 @@ fn propose_admin_rejects_zero_address() {
     let (env, client, _, _) = setup();
     let zero = zero_address(&env);
 
-    let err = client
-        .try_propose_admin(&zero)
-        .err()
-        .unwrap()
-        .unwrap();
+    let err = client.try_propose_admin(&zero).err().unwrap().unwrap();
 
     assert_eq!(err, niffyinsure::AdminError::InvalidAddress.into());
 }

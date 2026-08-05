@@ -27,30 +27,23 @@ export class XdrDecodeController {
       throw new BadRequestException('Request body must contain raw XDR binary data');
     }
 
+    const base64 = buffer.toString('base64');
+
     try {
       // Try to decode as a TransactionEnvelope first (most common)
       try {
-        const txEnvelope = xdr.TransactionEnvelope.fromXDR(buffer, 'base64');
+        const txEnvelope = xdr.TransactionEnvelope.fromXDR(base64, 'base64');
         return {
           type: 'TransactionEnvelope',
           value: this.xdrToJson(txEnvelope),
         };
       } catch {
-        // Fall back to generic envelope decoding
-        try {
-          const envelope = xdr.Envelope.fromXDR(buffer, 'base64');
-          return {
-            type: 'Envelope',
-            value: this.xdrToJson(envelope),
-          };
-        } catch {
-          // Fall back to ScVal (Soroban contract values)
-          const scVal = xdr.ScVal.fromXDR(buffer, 'base64');
-          return {
-            type: 'ScVal',
-            value: this.xdrToJson(scVal),
-          };
-        }
+        // Fall back to ScVal (Soroban contract values)
+        const scVal = xdr.ScVal.fromXDR(base64, 'base64');
+        return {
+          type: 'ScVal',
+          value: this.xdrToJson(scVal),
+        };
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

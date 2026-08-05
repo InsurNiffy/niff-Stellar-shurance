@@ -322,7 +322,9 @@ pub fn get_pending_admin_expiry(env: &Env) -> Option<u32> {
 
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
-    env.storage().instance().remove(&DataKey::PendingAdminExpiry);
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingAdminExpiry);
 }
 
 // ── New: Pending Admin Action ─────────────────────────────────────────────────
@@ -1179,9 +1181,7 @@ pub fn get_max_weight_cap(env: &Env) -> i128 {
 /// Set the flat fee (stroops) charged to the claimant at file_claim.
 /// 0 = disabled. Fee is transferred to the treasury before claim creation.
 pub fn set_claim_filing_fee(env: &Env, fee: i128) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ClaimFilingFee, &fee);
+    env.storage().instance().set(&DataKey::ClaimFilingFee, &fee);
 }
 
 /// Get the current claim filing fee. Defaults to 0 (disabled) when unset.
@@ -2231,9 +2231,7 @@ pub fn get_pause_admin(env: &Env) -> Option<Address> {
 }
 
 pub fn set_treasury_admin(env: &Env, addr: &Address) {
-    env.storage()
-        .instance()
-        .set(&DataKey::TreasuryAdmin, addr);
+    env.storage().instance().set(&DataKey::TreasuryAdmin, addr);
 }
 
 pub fn get_treasury_admin(env: &Env) -> Option<Address> {

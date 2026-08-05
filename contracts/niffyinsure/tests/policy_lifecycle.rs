@@ -188,7 +188,10 @@ fn invalid_process_expired_absent_policy() {
     let (env, client, _admin) = setup();
     let holder = Address::generate(&env);
 
-    let err = client.try_process_expired(&holder, &1u32).unwrap_err().unwrap();
+    let err = client
+        .try_process_expired(&holder, &1u32)
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, RenewPolicyError::NotFound);
 }
 
@@ -294,7 +297,10 @@ fn invalid_process_expired_before_lapse() {
     let end = 5_000u32;
     seed_active(&client, &holder, end);
     // now (1000) << end — must not deactivate.
-    let err = client.try_process_expired(&holder, &1u32).unwrap_err().unwrap();
+    let err = client
+        .try_process_expired(&holder, &1u32)
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, RenewPolicyError::NotYetExpired);
 
     let policy = client.get_policy(&holder, &1u32).unwrap();

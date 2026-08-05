@@ -1570,10 +1570,7 @@ impl NiffyInsure {
     ///
     /// Valid range: 1–30 seconds. The default is 5 (Stellar Mainnet Protocol 20+).
     /// Name shortened to satisfy Soroban's 32-char entrypoint limit.
-    pub fn admin_set_ledger_close_secs(
-        env: Env,
-        secs: u32,
-    ) -> Result<(), validate::Error> {
+    pub fn admin_set_ledger_close_secs(env: Env, secs: u32) -> Result<(), validate::Error> {
         let admin = storage::get_admin(&env);
         admin.require_auth();
         if secs == 0 || secs > 30 {

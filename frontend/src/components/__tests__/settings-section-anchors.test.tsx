@@ -8,7 +8,7 @@
  */
 
 import React from 'react'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, act, waitFor } from '@testing-library/react'
 
 // ── Mock wallet / auth ──────────────────────────────────────────────────────
 const mockWallet = {

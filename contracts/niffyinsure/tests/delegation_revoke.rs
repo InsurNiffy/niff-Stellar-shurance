@@ -5,10 +5,7 @@
 //! Explicit revoke must emit `DelegationRevoked` with delegator, delegate, and
 //! permissions. Natural expiry must not emit that event.
 
-use niffyinsure::{
-    types::DelegationPermissions,
-    NiffyInsureClient,
-};
+use niffyinsure::{types::DelegationPermissions, NiffyInsureClient};
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     Address, Env,
@@ -40,9 +37,7 @@ fn explicit_revoke_emits_delegation_revoked_with_scope() {
     let permissions = perms(true, false, true);
     let expiry = env.ledger().sequence() + 100;
 
-    client
-        .grant_delegation(&operator, &expiry, &permissions)
-        .expect("grant");
+    client.grant_delegation(&operator, &expiry, &permissions);
 
     env.events().all(); // drain grant event
 
@@ -74,9 +69,7 @@ fn natural_expiry_does_not_emit_delegation_revoked() {
     let now = env.ledger().sequence();
     let expiry = now + 10;
 
-    client
-        .grant_delegation(&operator, &expiry, &permissions)
-        .expect("grant");
+    client.grant_delegation(&operator, &expiry, &permissions);
 
     // Advance past expiry without calling revoke.
     env.ledger().with_mut(|l| l.sequence_number = expiry + 1);
