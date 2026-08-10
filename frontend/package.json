@@ -79,7 +79,7 @@
     "jest-environment-jsdom": "^30.3.0",
     "jest-image-snapshot": "^6.5.2",
     "openapi-typescript": "7.13.0",
-    "postcss": "^8.5.8",
+    "postcss": "^8.5.26",
     "storybook": "^10.3.5",
     "tailwindcss": "^4.2.2",
     "ts-jest": "^29.4.6",
