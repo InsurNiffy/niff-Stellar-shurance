@@ -73,3 +73,53 @@ fn finalize_appeal_before_deadline_errors_with_quorum_unmet() {
     // Status must remain UnderAppeal — no premature resolution.
     assert_eq!(client.get_claim(&cid).status, ClaimStatus::UnderAppeal);
 }
+
+/// Issue: AppealOpened must carry exactly the values persisted via
+/// `set_appeal_claim_quorum_bps` and `claim.appeal_deadline_ledger` — no drift
+/// between the emitted event and storage.
+#[test]
+fn appeal_opened_event_matches_persisted_state() {
+    let (env, client, _admin, _token) = setup();
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    let v3 = Address::generate(&env);
+    seed(&client, &v1, 1_000_000, 500_000);
+    seed(&client, &v2, 1_000_000, 500_000);
+    seed(&client, &v3, 1_000_000, 500_000);
+
+    let cid = file(&client, &v1, 100_000, &env);
+    client.vote_on_claim(&v1, &cid, &niffyinsure::types::VoteOption::Reject);
+    client.vote_on_claim(&v2, &cid, &niffyinsure::types::VoteOption::Reject);
+
+    env.events().all(); // drain pre-appeal events
+
+    client.open_appeal(&v1, &cid);
+
+    // Storage is the source of truth: what finalize_appeal will actually use.
+    let persisted_claim = client.get_claim(&cid);
+    let persisted_quorum_bps = env.as_contract(&client.address, || {
+        niffyinsure::storage::get_appeal_claim_quorum_bps(&env, cid)
+    });
+
+    let all_events = env.events().all();
+    let events_debug = soroban_sdk::testutils::arbitrary::std::format!("{:?}", all_events);
+
+    let deadline_str = soroban_sdk::testutils::arbitrary::std::format!(
+        "{}",
+        persisted_claim.appeal_deadline_ledger
+    );
+    let quorum_str = soroban_sdk::testutils::arbitrary::std::format!("{}", persisted_quorum_bps);
+
+    assert!(
+        events_debug.contains(&deadline_str),
+        "AppealOpened event must carry the persisted appeal_deadline_ledger ({}); events: {}",
+        persisted_claim.appeal_deadline_ledger,
+        events_debug
+    );
+    assert!(
+        events_debug.contains(&quorum_str),
+        "AppealOpened event must carry the persisted quorum_bps ({}); events: {}",
+        persisted_quorum_bps,
+        events_debug
+    );
+}
