@@ -1797,6 +1797,15 @@ pub fn vote_on_appeal(
 ///
 /// Window check: `now > claim.appeal_deadline_ledger`.
 /// Uses participation quorum; if quorum not met, appeal is rejected (insurer-favored default).
+///
+/// **Pre-deadline behavior:** if called while `now <= claim.appeal_deadline_ledger`
+/// (voting still open), this call is **not** a no-op — it returns
+/// `Err(Error::VotingWindowStillOpen)` unconditionally, regardless of whether
+/// quorum has already been reached. The claim's status and vote tallies are left
+/// untouched. Quorum reached mid-vote resolves the appeal immediately from within
+/// `vote_on_appeal` instead (see that function); `finalize_appeal` is only ever the
+/// path taken once the deadline has passed. See `finalize_appeal_before_deadline_errors_with_quorum_unmet`
+/// in `tests/appeal.rs` for coverage.
 pub fn finalize_appeal(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
     storage::assert_claims_not_paused(env);
 
@@ -1840,6 +1849,21 @@ pub fn finalize_appeal(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
 ///
 /// Sets `status`, pushes history entry, closes the open-claim slot when terminal,
 /// sets `payout_deadline_ledger` on AppealApproved, and emits `AppealResolved`.
+///
+/// ## Event field list for indexers (AppealApproved / AppealRejected transitions)
+///
+/// Both terminal appeal outcomes emit exactly two events, in this order:
+///
+/// 1. `ClaimStatusChangedData` (topics: `["niffyins", "claim_status_changed", claim_id]`)
+///    - `claim_id: u64`, `version: u32`, `old_status: ClaimStatus` (always `UnderAppeal`),
+///      `new_status: ClaimStatus` (`AppealApproved` or `AppealRejected`), `at_ledger: u32`
+/// 2. `AppealResolved` (topics: `["niffyinsure", "appeal_resolved", claim_id]`)
+///    - `claim_id: u64`, `policy_id: u32`, `claimant: Address`, `outcome: ClaimStatus`,
+///      `approve_votes: u32`, `reject_votes: u32`, `at_ledger: u32`
+///
+/// Together these carry claim id, old/new status, ledger, policy id, claimant, and the
+/// final vote tally — everything an indexer needs to record the transition without an
+/// extra `get_claim` read.
 fn finalize_appeal_outcome(
     env: &Env,
     claim: &mut crate::types::Claim,
