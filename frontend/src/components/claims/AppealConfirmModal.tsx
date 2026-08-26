@@ -1,6 +1,7 @@
 'use client';
 
-import { AlertTriangle, Info } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, Bell, Info } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -10,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import type { Claim } from '@/lib/schemas/vote';
 
 export interface AppealConfirmModalProps {
@@ -19,8 +21,11 @@ export interface AppealConfirmModalProps {
   claim: Claim | null;
   /** Whether the appeal is currently being submitted */
   submitting: boolean;
-  /** Callback when user confirms the appeal */
-  onConfirm: () => void;
+  /**
+   * Callback when user confirms the appeal.
+   * @param notifyOnOutcome - true if the claimant opted into appeal-outcome notifications
+   */
+  onConfirm: (notifyOnOutcome: boolean) => void;
   /** Callback when user cancels */
   onCancel: () => void;
 }
@@ -33,6 +38,9 @@ export interface AppealConfirmModalProps {
  * - Elevated quorum requirement (higher threshold for approval)
  * - New voting window opens after appeal submission
  * - All eligible voters can participate in the appeal vote
+ *
+ * Also offers an opt-in toggle for push/email notification when the appeal
+ * round resolves, so claimants don't have to poll (#1345).
  */
 export function AppealConfirmModal({
   open,
@@ -41,6 +49,8 @@ export function AppealConfirmModal({
   onConfirm,
   onCancel,
 }: AppealConfirmModalProps) {
+  const [notifyOnOutcome, setNotifyOnOutcome] = useState(true);
+
   if (!claim) return null;
 
   return (
@@ -103,6 +113,57 @@ export function AppealConfirmModal({
             </div>
           </div>
 
+          {/* Appeal outcome notification opt-in (#1345) */}
+          <div className="rounded-lg border border-muted bg-muted/30 px-4 py-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-2.5">
+                <Bell className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden="true" />
+                <div className="space-y-0.5">
+                  <Label
+                    htmlFor="appeal-notify-toggle"
+                    className="text-sm font-medium cursor-pointer"
+                  >
+                    Notify me when this appeal resolves
+                  </Label>
+                  <p
+                    id="appeal-notify-desc"
+                    className="text-xs text-muted-foreground"
+                  >
+                    Receive a push/email notification when the appeal vote concludes, so you
+                    don&apos;t have to check back manually.
+                  </p>
+                </div>
+              </div>
+              {/* Toggle switch */}
+              <button
+                id="appeal-notify-toggle"
+                type="button"
+                role="switch"
+                aria-checked={notifyOnOutcome}
+                aria-describedby="appeal-notify-desc"
+                disabled={submitting}
+                onClick={() => setNotifyOnOutcome((v) => !v)}
+                className={[
+                  'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent',
+                  'transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+                  notifyOnOutcome ? 'bg-primary' : 'bg-input',
+                  submitting ? 'opacity-40 cursor-not-allowed' : '',
+                ].join(' ')}
+              >
+                <span className="sr-only">
+                  {notifyOnOutcome ? 'Disable' : 'Enable'} appeal outcome notification
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={[
+                    'pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform',
+                    notifyOnOutcome ? 'translate-x-5' : 'translate-x-0',
+                  ].join(' ')}
+                />
+              </button>
+            </div>
+          </div>
+
           {/* Warning */}
           <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3">
             <p className="text-xs text-yellow-900">
@@ -124,7 +185,7 @@ export function AppealConfirmModal({
             Cancel
           </Button>
           <Button
-            onClick={onConfirm}
+            onClick={() => onConfirm(notifyOnOutcome)}
             disabled={submitting}
             className="w-full sm:w-auto"
             aria-label="Confirm and submit appeal"

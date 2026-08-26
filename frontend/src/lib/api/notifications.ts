@@ -11,10 +11,14 @@ export interface NotificationPreferences {
   renewalRemindersEnabled: boolean
   claimUpdatesEnabled: boolean
   voteRemindersEnabled: boolean
+  /** Notify the claimant when their appeal round resolves (#1345). */
+  appealOutcomeEnabled: boolean
   channels: {
     renewalReminders: ChannelPreferences
     claimUpdates: ChannelPreferences
     voteReminders: ChannelPreferences
+    /** Per-channel preferences for appeal outcome notifications (#1345). */
+    appealOutcome: ChannelPreferences
   }
 }
 

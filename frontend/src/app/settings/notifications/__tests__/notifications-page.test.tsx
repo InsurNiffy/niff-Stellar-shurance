@@ -31,12 +31,14 @@ const defaultChannels = {
   renewalReminders: { email: true, push: true, inApp: true },
   claimUpdates: { email: true, push: true, inApp: true },
   voteReminders: { email: true, push: true, inApp: true },
+  appealOutcome: { email: true, push: true, inApp: true },
 }
 
 const defaultPrefs = {
   renewalRemindersEnabled: true,
   claimUpdatesEnabled: true,
   voteRemindersEnabled: false,
+  appealOutcomeEnabled: false,
   channels: defaultChannels,
 }
 
@@ -160,9 +162,9 @@ describe('NotificationsPage — Per-channel toggles', () => {
       expect(screen.getByRole('switch', { name: /policy renewal reminders/i })).toBeInTheDocument()
     })
 
-    // Should have 9 channel toggles (3 types x 3 channels)
+    // Should have 12 channel toggles (4 types x 3 channels)
     const channelSwitches = screen.getAllByRole('switch', { name: /channel$/i })
-    expect(channelSwitches).toHaveLength(9)
+    expect(channelSwitches).toHaveLength(12)
   })
 
   it('can disable push for claim updates while keeping email enabled', async () => {

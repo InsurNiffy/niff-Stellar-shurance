@@ -42,6 +42,8 @@ import {
   isVoteOpen,
 } from '@/lib/schemas/vote'
 import { trackVoteCast } from '@/lib/analytics'
+import { useAuth } from '@/lib/hooks/useAuth'
+import { patchNotificationPreferences } from '@/lib/api/notifications'
 
 import { AppealButton } from './AppealButton'
 import { AppealConfirmModal } from './AppealConfirmModal'
@@ -62,6 +64,7 @@ const POLL_INTERVAL_MS = 8_000
 
 export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   const { address: walletAddress, signTransaction } = useWallet()
+  const { jwt } = useAuth()
   const latestLedger = useLatestLedger()
   const currentLedger = latestLedger ?? 0
   const { toast } = useToast()
@@ -211,7 +214,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
     setAppealState('confirming')
   }, [])
 
-  const handleAppealConfirm = useCallback(async () => {
+  const handleAppealConfirm = useCallback(async (notifyOnOutcome: boolean) => {
     if (!walletAddress) return
     setAppealState('signing')
 
@@ -242,6 +245,17 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
       // Reload claim to get updated status
       await loadClaim()
 
+      // Opt claimant into appeal-outcome notifications if they requested it (#1345)
+      if (notifyOnOutcome && jwt) {
+        patchNotificationPreferences(
+          walletAddress,
+          { appealOutcomeEnabled: true },
+          jwt,
+        ).catch(() => {
+          // Non-fatal — the appeal itself succeeded; surface the preference failure silently
+        })
+      }
+
       toast({
         title: 'Appeal submitted',
         description: 'Your appeal has been submitted successfully. A new voting window is now open.',
@@ -257,7 +271,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
       toast({ title: 'Appeal failed', description: msg, variant: 'destructive' })
       setAppealState('idle')
     }
-  }, [claimId, walletAddress, signTransaction, toast, loadClaim])
+  }, [claimId, walletAddress, signTransaction, toast, loadClaim, jwt])
 
   const handleAppealCancel = useCallback(() => {
     setAppealState('idle')
