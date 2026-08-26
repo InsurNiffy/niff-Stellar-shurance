@@ -123,3 +123,32 @@ fn appeal_opened_event_matches_persisted_state() {
         events_debug
     );
 }
+
+/// Issue: finalize_appeal (claim.rs) is a permissionless, deadline-based keeper
+/// call — it takes no caller/Address parameter at all, so any account can
+/// invoke it once the appeal deadline has passed. This test drives the call
+/// after the deadline (with no appeal votes cast, so quorum is unmet) and
+/// confirms it succeeds and resolves to the documented no-quorum outcome
+/// (AppealRejected), independent of who submits the transaction.
+#[test]
+fn finalize_appeal_succeeds_for_arbitrary_caller_after_deadline() {
+    let (env, client, _v1, _v2, _v3, cid) = rejected_and_appealed();
+
+    // A random, non-voter, non-admin address — included to make explicit that
+    // finalize_appeal has no caller/auth requirement to satisfy.
+    let arbitrary_caller = Address::generate(&env);
+    let _ = &arbitrary_caller;
+
+    // Advance past this claim's persisted appeal voting deadline.
+    let appeal_deadline_ledger = client.get_claim(&cid).appeal_deadline_ledger;
+    env.ledger()
+        .with_mut(|l| l.sequence_number = appeal_deadline_ledger + 1);
+
+    let status = client.finalize_appeal(&cid);
+    assert_eq!(
+        status,
+        ClaimStatus::AppealRejected,
+        "no appeal votes were cast, so quorum is unmet and the default outcome applies"
+    );
+    assert_eq!(client.get_claim(&cid).status, ClaimStatus::AppealRejected);
+}

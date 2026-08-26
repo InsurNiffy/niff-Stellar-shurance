@@ -1806,6 +1806,10 @@ pub fn vote_on_appeal(
 /// `vote_on_appeal` instead (see that function); `finalize_appeal` is only ever the
 /// path taken once the deadline has passed. See `finalize_appeal_before_deadline_errors_with_quorum_unmet`
 /// in `tests/appeal.rs` for coverage.
+///
+/// **Caller:** this function takes no caller/`Address` argument and performs no
+/// auth check — any account may invoke it once the deadline has passed. See
+/// `finalize_appeal_succeeds_for_arbitrary_caller_after_deadline` in `tests/appeal.rs`.
 pub fn finalize_appeal(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
     storage::assert_claims_not_paused(env);
 
