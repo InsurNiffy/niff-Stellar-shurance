@@ -32,6 +32,8 @@ import { ClaimsListResponseDto, ClaimDetailResponseDto, ClaimTimelineEntryDto } 
 import { ClaimVoterDto } from './dto/claim-voter.dto';
 import { BuildClaimTransactionDto } from './dto/build-claim-transaction.dto';
 import { SubmitTransactionDto } from './dto/submit-transaction.dto';
+import { BuildAppealTransactionDto } from './dto/build-appeal-transaction.dto';
+import { SubmitAppealTransactionDto } from './dto/submit-appeal-transaction.dto';
 import { EvidenceUploadService } from './services/evidence-upload.service';
 import { EvidenceProxyService } from './services/evidence-proxy.service';
 import { ClaimHistoryService } from './services/claim-history.service';
@@ -234,6 +236,63 @@ export class ClaimsController {
   @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
   async submitTransaction(@Body() dto: SubmitTransactionDto) {
     return this.claimsService.submitTransaction(dto.transactionXdr);
+  }
+
+  // ── Appeal endpoints ─────────────────────────────────────────────────────
+
+  /**
+   * POST /api/claims/:id/appeal/build-transaction
+   *
+   * Builds an unsigned file_appeal XDR for a rejected claim.
+   * The client signs the XDR with their wallet and submits it via POST ./:id/appeal.
+   */
+  @Post(':id/appeal/build-transaction')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Build unsigned file_appeal transaction for a rejected claim' })
+  @ApiResponse({ status: 200, description: 'Unsigned appeal transaction XDR + fee estimates' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  async buildAppealTransaction(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: BuildAppealTransactionDto,
+  ) {
+    return this.claimsService.buildAppealTransaction({
+      claimant: dto.claimant,
+      claimId: id,
+      reason: dto.reason,
+    });
+  }
+
+  /**
+   * POST /api/claims/:id/appeal
+   *
+   * Submits a signed appeal transaction for a rejected claim.
+   *
+   * Idempotency: if `txHash` was already recorded for this claim, the cached
+   * result is returned without re-submitting or double-counting the appeal.
+   */
+  @Post(':id/appeal')
+  @UseGuards(JwtAuthGuard, ClaimRateLimitGuard, RateLimitGuard)
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Submit signed appeal transaction (idempotent by txHash)' })
+  @ApiResponse({ status: 200, description: 'Appeal submitted or cached result returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
+  async submitAppeal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SubmitAppealTransactionDto,
+  ) {
+    return this.claimsService.submitAppealTransaction(
+      id,
+      dto.transactionXdr,
+      dto.txHash,
+    );
   }
 
   // ── Claim status polling (for watched claims) ────────────────────────────

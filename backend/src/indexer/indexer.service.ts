@@ -376,6 +376,21 @@ export class IndexerService {
         await this.handleAssetAdded(tx, dataNative, event);
       } else if (mainTopic === 'asset' && subTopic === 'removed') {
         await this.handleAssetRemoved(tx, dataNative, event);
+      } else if (
+        (mainTopic === 'appeal' && subTopic === 'filed') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_filed')
+      ) {
+        await this.handleAppealFiled(tx, dataNative, event);
+      } else if (
+        (mainTopic === 'appeal' && subTopic === 'approved') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_approved')
+      ) {
+        await this.handleAppealResolved(tx, dataNative, event, 'APPROVED');
+      } else if (
+        (mainTopic === 'appeal' && subTopic === 'rejected') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_rejected')
+      ) {
+        await this.handleAppealResolved(tx, dataNative, event, 'REJECTED');
       }
 
       await this.advanceCursorInTx(tx, network, event.ledger);
@@ -632,5 +647,68 @@ export class IndexerService {
     });
 
     await this.allowedAssetsCache?.invalidateAll();
+  }
+
+  /**
+   * On-chain `AppealFiled` (topics: ['appeal', 'filed']) — a claimant has
+   * opened an appeal on a finalized claim. Updates the DB status to UNDER_APPEAL.
+   */
+  private async handleAppealFiled(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
+    const claimId = getNumberValue(data.claim_id);
+
+    await tx.claim.updateMany({
+      where: { id: claimId, deletedAt: null },
+      data: {
+        status: 'UNDER_APPEAL',
+        updatedAtLedger: event.ledger,
+      },
+    });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'UNDER_APPEAL',
+      updatedAt: new Date(event.ledgerClosedAt).toISOString(),
+      ledger: event.ledger,
+    });
+    await this.claimSummaryCache?.invalidateClaim(claimId);
+  }
+
+  /**
+   * On-chain `AppealApproved` or `AppealRejected` — the appeal has been
+   * resolved. Updates the DB status and records appeal-outcome metrics.
+   *
+   * @param outcome - 'APPROVED' or 'REJECTED'
+   */
+  private async handleAppealResolved(
+    tx: IndexerTx,
+    data: EventPayload,
+    event: SorobanEvent,
+    outcome: 'APPROVED' | 'REJECTED',
+  ) {
+    const claimId = getNumberValue(data.claim_id);
+
+    await tx.claim.updateMany({
+      where: { id: claimId, deletedAt: null },
+      data: {
+        status: outcome,
+        isFinalized: true,
+        updatedAtLedger: event.ledger,
+      },
+    });
+
+    // Record appeal resolution metrics (task #1328)
+    if (outcome === 'APPROVED') {
+      this.metrics?.recordAppealApproved();
+    } else {
+      this.metrics?.recordAppealRejected();
+    }
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: outcome,
+      updatedAt: new Date(event.ledgerClosedAt).toISOString(),
+      ledger: event.ledger,
+    });
+    await this.claimSummaryCache?.invalidateClaim(claimId);
   }
 }

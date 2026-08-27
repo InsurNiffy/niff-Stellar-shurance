@@ -18,9 +18,10 @@ import { CacheModule } from '../cache/cache.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { IpfsModule } from '../ipfs/ipfs.module';
 import { AdminModule } from '../admin/admin.module';
+import { MetricsModule } from '../metrics/metrics.module';
 
 @Module({
-  imports: [PrismaModule, RpcModule, RateLimitModule, TenantModule, IndexerModule, CacheModule, IpfsModule, AdminModule],
+  imports: [PrismaModule, RpcModule, RateLimitModule, TenantModule, IndexerModule, CacheModule, IpfsModule, AdminModule, MetricsModule],
   controllers: [ClaimsController],
   providers: [
     ClaimsService,

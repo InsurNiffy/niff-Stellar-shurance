@@ -1157,4 +1157,80 @@ export class AdminController {
       count: entries.length,
     };
   }
+
+  // ── Appeal management ─────────────────────────────────────────────────────
+
+  /**
+   * POST /admin/claims/:id/finalize-appeal
+   *
+   * Admin-only safety valve: force-finalize a stalled appeal whose deadline has
+   * passed but no keeper has called finalize_appeal on-chain yet.
+   *
+   * Calls `SorobanService.finalizeAppeal(claimId)` which signs and submits the
+   * keeper transaction using CLAIM_KEEPER_SECRET_KEY, then waits for confirmation.
+   *
+   * Writes an immutable audit row with the actor, claimId, txHash, and outcome.
+   *
+   * Returns: { claimId, txHash, ledger, onChainStatus }
+   *
+   * Errors:
+   *  - 400 if the claim does not exist or is not in UNDER_APPEAL status.
+   *  - 503 if the keeper account is not configured.
+   */
+  @Post('claims/:id/finalize-appeal')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Force-finalize a stalled appeal whose deadline has passed (admin safety valve)',
+  })
+  async finalizeAppeal(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+
+    // Verify the claim exists and is actually under appeal
+    const claim = await this.prisma.claim.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, status: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim ${id} not found`);
+    }
+
+    if (claim.status !== 'UNDER_APPEAL') {
+      throw new BadRequestException({
+        code: 'CLAIM_NOT_UNDER_APPEAL',
+        message: `Claim ${id} is not in UNDER_APPEAL status (current: ${claim.status}). ` +
+          'finalize-appeal is only applicable to claims with an open appeal.',
+      });
+    }
+
+    // Invoke the on-chain finalize_appeal entrypoint via the keeper account
+    const result = await this.sorobanService.finalizeAppeal(id);
+
+    // Immutable audit trail (required by task spec)
+    await this.auditService.write({
+      actor,
+      action: 'admin_finalize_appeal',
+      payload: {
+        claimId: id,
+        txHash: result.txHash,
+        ledger: result.ledger,
+        onChainStatus: result.onChainStatus,
+      },
+      ipAddress: req.ip,
+    });
+
+    this.logger.log(
+      `Admin ${actor} force-finalized appeal for claim=${id} txHash=${result.txHash}`,
+    );
+
+    return {
+      claimId: id,
+      txHash: result.txHash,
+      ledger: result.ledger,
+      onChainStatus: result.onChainStatus,
+    };
+  }
 }

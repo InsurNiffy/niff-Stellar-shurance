@@ -10,6 +10,7 @@ import { claimTenantWhere, assertTenantOwnership } from '../tenant/tenant-filter
 import { ReconciliationService } from '../indexer/reconciliation.service';
 import { ClaimAggregationService } from './services/claim-aggregation.service';
 import { ClaimSummaryCacheService } from './services/claim-summary-cache.service';
+import { MetricsService } from '../metrics/metrics.service';
 import {
   ClaimDetailResponseDto,
   ClaimsListResponseDto,
@@ -45,6 +46,7 @@ export class ClaimsService {
     private readonly reconciliation: ReconciliationService,
     private readonly aggregation: ClaimAggregationService,
     private readonly claimSummaryCache: ClaimSummaryCacheService,
+    private readonly metrics: MetricsService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
@@ -408,6 +410,90 @@ export class ClaimsService {
     await this.invalidateCache();
     
     return result;
+  }
+
+  // ── Appeal submission ─────────────────────────────────────────────────────
+
+  /**
+   * Build an unsigned file_appeal transaction for a rejected claim.
+   */
+  async buildAppealTransaction(args: {
+    claimant: string;
+    claimId: number;
+    reason: string;
+  }) {
+    return this.soroban.buildAppealTransaction(args);
+  }
+
+  /**
+   * Submit a signed appeal transaction with idempotency protection.
+   *
+   * Idempotency guard (task #1329):
+   *   If `txHash` was already recorded as `appealTxHash` on this claim, the DB
+   *   row already reflects the appeal — return the stored result without
+   *   re-incrementing `appealsCount` or recording another metric.
+   *
+   * @param claimId  - Numeric claim ID being appealed.
+   * @param transactionXdr - Base64-encoded signed Soroban transaction envelope.
+   * @param txHash   - SHA-256 hex of the signed XDR (client-supplied, used as idempotency key).
+   */
+  async submitAppealTransaction(
+    claimId: number,
+    transactionXdr: string,
+    txHash: string,
+  ) {
+    const tenantId = this.tenantCtx.tenantId;
+
+    // Verify the claim exists and belongs to the correct tenant
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: claimId }),
+      select: { id: true, status: true, appealTxHash: true, appealsCount: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${claimId} not found`);
+    }
+
+    // ── Idempotency guard ────────────────────────────────────────────────────
+    // If the same signed transaction was already submitted, return without
+    // double-counting. This handles the client-retry-after-timeout scenario.
+    if (claim.appealTxHash === txHash) {
+      this.logger.log(
+        `Appeal idempotency hit for claim=${claimId} txHash=${txHash} — returning cached result`,
+      );
+      return {
+        cached: true,
+        txHash,
+        claimId,
+        status: claim.status,
+        appealsCount: claim.appealsCount,
+      };
+    }
+
+    // Submit the signed transaction to the network
+    const result = await this.soroban.submitTransaction(transactionXdr);
+
+    // Persist appeal tracking fields and set claim status to UNDER_APPEAL.
+    // The indexer will later decode the appeal_approved / appeal_rejected event
+    // and move the claim to APPROVED or REJECTED.
+    await this.prisma.claim.update({
+      where: { id: claimId },
+      data: {
+        status: 'UNDER_APPEAL',
+        appealsCount: { increment: 1 },
+        appealTxHash: txHash,
+      },
+    });
+
+    // Increment appeal metrics (task #1328)
+    this.metrics.recordAppealOpened();
+
+    // Invalidate relevant caches
+    await this.invalidateCache(claimId);
+
+    this.logger.log(`Appeal submitted for claim=${claimId} txHash=${txHash}`);
+
+    return { cached: false, txHash, claimId, ...result };
   }
 
   // ── Claim status polling & SSE ───────────────────────────────────────────
