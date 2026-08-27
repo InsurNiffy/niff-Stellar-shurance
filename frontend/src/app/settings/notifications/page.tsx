@@ -116,8 +116,8 @@ function ChannelToggles({ id, channels, disabled, onChange }: ChannelTogglesProp
 
 const DEFAULT_CHANNELS: ChannelPreferences = { email: true, push: true, inApp: true }
 
-type ChannelKey = 'renewalReminders' | 'claimUpdates' | 'voteReminders'
-type EnabledKey = 'renewalRemindersEnabled' | 'claimUpdatesEnabled' | 'voteRemindersEnabled'
+type ChannelKey = 'renewalReminders' | 'claimUpdates' | 'voteReminders' | 'appealOutcome'
+type EnabledKey = 'renewalRemindersEnabled' | 'claimUpdatesEnabled' | 'voteRemindersEnabled' | 'appealOutcomeEnabled'
 
 const NOTIFICATION_TYPES: { channelKey: ChannelKey; enabledKey: EnabledKey; id: string; label: string; description: string }[] = [
   {
@@ -141,6 +141,13 @@ const NOTIFICATION_TYPES: { channelKey: ChannelKey; enabledKey: EnabledKey; id: 
     label: 'Vote reminders',
     description: 'Get notified about active governance votes you haven\'t cast yet.',
   },
+  {
+    channelKey: 'appealOutcome',
+    enabledKey: 'appealOutcomeEnabled',
+    id: 'appeal-outcome',
+    label: 'Appeal outcome notifications',
+    description: 'Get notified when an appeal vote you submitted resolves.',
+  },
 ]
 
 // Sample notification previews for each type (#1123)
@@ -156,6 +163,10 @@ const NOTIFICATION_PREVIEWS: Record<EnabledKey, { title: string; body: string }>
   voteRemindersEnabled: {
     title: 'Vote reminder',
     body: 'You haven\'t voted on claim CLM-0091 yet. Voting closes in 12 hours.',
+  },
+  appealOutcomeEnabled: {
+    title: 'Appeal resolved',
+    body: 'The appeal for claim CLM-0042 has been resolved. Tap to view the outcome.',
   },
 }
 
@@ -200,10 +211,12 @@ export default function NotificationsPage() {
         // Backfill channels if the API doesn't return them yet
         const withChannels: NotificationPreferences = {
           ...p,
+          appealOutcomeEnabled: p.appealOutcomeEnabled ?? false,
           channels: p.channels ?? {
             renewalReminders: { ...DEFAULT_CHANNELS },
             claimUpdates: { ...DEFAULT_CHANNELS },
             voteReminders: { ...DEFAULT_CHANNELS },
+            appealOutcome: { ...DEFAULT_CHANNELS },
           },
         }
         setPrefs(withChannels)
