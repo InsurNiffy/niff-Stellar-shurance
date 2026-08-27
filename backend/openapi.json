@@ -26,6 +26,424 @@
     }
   ],
   "paths": {
+    "/claims/{id}/appeal/status": {
+      "get": {
+        "summary": "Check whether an appeal has been submitted for a claim",
+        "operationId": "getAppealStatus",
+        "tags": ["Claims"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Claim numeric identifier.",
+            "schema": { "type": "integer", "minimum": 1, "example": 42 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Appeal status for the claim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "appealSubmitted": { "type": "boolean", "example": false }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Claim not found",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "CLAIM_NOT_FOUND": {
+                    "summary": "Claim not found",
+                    "value": { "code": "CLAIM_NOT_FOUND", "message": "Claim not found." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/claims/{id}/appeal/simulate": {
+      "post": {
+        "summary": "Simulate the appeal transaction (pre-flight check)",
+        "operationId": "simulateAppeal",
+        "tags": ["Claims"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Claim numeric identifier.",
+            "schema": { "type": "integer", "minimum": 1, "example": 42 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress"],
+                "properties": {
+                  "walletAddress": {
+                    "type": "string",
+                    "example": "GABC1111111111111111111111111111111111111111111111111111"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Simulation passed — safe to open wallet popup"
+          },
+          "400": {
+            "description": "Simulation failed — appeal cannot proceed",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "NOT_CLAIMANT": {
+                    "summary": "Caller is not the claimant",
+                    "value": { "code": "NOT_CLAIMANT", "message": "Only the claimant can appeal this claim." }
+                  },
+                  "CLAIM_NOT_REJECTED": {
+                    "summary": "Claim is not in Rejected status",
+                    "value": { "code": "CLAIM_NOT_REJECTED", "message": "Only rejected claims can be appealed." }
+                  },
+                  "APPEAL_ALREADY_SUBMITTED": {
+                    "summary": "Appeal already submitted",
+                    "value": { "code": "APPEAL_ALREADY_SUBMITTED", "message": "An appeal has already been submitted for this claim." }
+                  },
+                  "APPEAL_WINDOW_CLOSED": {
+                    "summary": "Appeal filing deadline has passed",
+                    "value": { "code": "APPEAL_WINDOW_CLOSED", "message": "The appeal window for this claim has closed." }
+                  },
+                  "CLAIMS_PAUSED": {
+                    "summary": "Contract admin has paused claims operations",
+                    "value": { "code": "CLAIMS_PAUSED", "message": "Claim operations are currently paused by the contract admin." }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Claim not found",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "CLAIM_NOT_FOUND": {
+                    "summary": "Claim not found",
+                    "value": { "code": "CLAIM_NOT_FOUND", "message": "Claim not found." }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/claims/{id}/appeal": {
+      "post": {
+        "summary": "Submit a signed appeal transaction for a rejected claim",
+        "operationId": "submitAppeal",
+        "tags": ["Claims"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Claim numeric identifier.",
+            "schema": { "type": "integer", "minimum": 1, "example": 42 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "signedXdr"],
+                "properties": {
+                  "walletAddress": {
+                    "type": "string",
+                    "example": "GABC1111111111111111111111111111111111111111111111111111"
+                  },
+                  "signedXdr": {
+                    "type": "string",
+                    "description": "Base64-encoded signed transaction XDR from the wallet."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Appeal submitted — new voting window is open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "transactionHash": { "type": "string", "example": "abc123def456..." },
+                    "status": { "type": "string", "example": "UnderAppeal" },
+                    "message": { "type": "string", "example": "Appeal submitted successfully." }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Appeal cannot be submitted",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "NOT_CLAIMANT": {
+                    "summary": "Caller is not the claimant",
+                    "value": { "code": "NOT_CLAIMANT", "message": "Only the claimant can appeal this claim." }
+                  },
+                  "CLAIM_NOT_REJECTED": {
+                    "summary": "Claim is not in Rejected status",
+                    "value": { "code": "CLAIM_NOT_REJECTED", "message": "Only rejected claims can be appealed." }
+                  },
+                  "APPEAL_ALREADY_SUBMITTED": {
+                    "summary": "Appeal already submitted",
+                    "value": { "code": "APPEAL_ALREADY_SUBMITTED", "message": "An appeal has already been submitted for this claim." }
+                  },
+                  "APPEAL_WINDOW_CLOSED": {
+                    "summary": "Appeal filing deadline has passed",
+                    "value": { "code": "APPEAL_WINDOW_CLOSED", "message": "The appeal window for this claim has closed." }
+                  },
+                  "CLAIMS_PAUSED": {
+                    "summary": "Contract admin has paused claims operations",
+                    "value": { "code": "CLAIMS_PAUSED", "message": "Claim operations are currently paused by the contract admin." }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Claim not found",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "CLAIM_NOT_FOUND": {
+                    "summary": "Claim not found",
+                    "value": { "code": "CLAIM_NOT_FOUND", "message": "Claim not found." }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/claims/{id}/appeal/vote/simulate": {
+      "post": {
+        "summary": "Simulate an appeal-round vote (pre-flight check)",
+        "operationId": "simulateAppealVote",
+        "tags": ["Claims"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Claim numeric identifier.",
+            "schema": { "type": "integer", "minimum": 1, "example": 42 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "vote"],
+                "properties": {
+                  "walletAddress": {
+                    "type": "string",
+                    "example": "GABC1111111111111111111111111111111111111111111111111111"
+                  },
+                  "vote": {
+                    "type": "string",
+                    "enum": ["Approve", "Reject"],
+                    "example": "Approve"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Simulation passed — safe to open wallet popup"
+          },
+          "400": {
+            "description": "Appeal vote simulation failed",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "NOT_ELIGIBLE_VOTER": {
+                    "summary": "Wallet is not in the eligible voter snapshot",
+                    "value": { "code": "NOT_ELIGIBLE_VOTER", "message": "Your wallet is not in the eligible voter list for this appeal." }
+                  },
+                  "DUPLICATE_VOTE": {
+                    "summary": "Already voted in this appeal round",
+                    "value": { "code": "DUPLICATE_VOTE", "message": "You have already cast an appeal vote on this claim." }
+                  },
+                  "VOTING_WINDOW_CLOSED": {
+                    "summary": "Appeal voting window has closed",
+                    "value": { "code": "VOTING_WINDOW_CLOSED", "message": "The appeal voting window has closed." }
+                  },
+                  "CLAIM_NOT_UNDER_APPEAL": {
+                    "summary": "Claim is not in UnderAppeal status",
+                    "value": { "code": "CLAIM_NOT_UNDER_APPEAL", "message": "This claim is not currently in the appeal round." }
+                  },
+                  "CLAIMS_PAUSED": {
+                    "summary": "Contract admin has paused claims operations",
+                    "value": { "code": "CLAIMS_PAUSED", "message": "Claim operations are currently paused by the contract admin." }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Claim not found",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "CLAIM_NOT_FOUND": {
+                    "summary": "Claim not found",
+                    "value": { "code": "CLAIM_NOT_FOUND", "message": "Claim not found." }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/claims/{id}/appeal/vote": {
+      "post": {
+        "summary": "Submit a signed vote in the appeal round",
+        "operationId": "submitAppealVote",
+        "tags": ["Claims"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Claim numeric identifier.",
+            "schema": { "type": "integer", "minimum": 1, "example": 42 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "vote", "signedXdr"],
+                "properties": {
+                  "walletAddress": {
+                    "type": "string",
+                    "example": "GABC1111111111111111111111111111111111111111111111111111"
+                  },
+                  "vote": {
+                    "type": "string",
+                    "enum": ["Approve", "Reject"],
+                    "example": "Approve"
+                  },
+                  "signedXdr": {
+                    "type": "string",
+                    "description": "Base64-encoded signed transaction XDR from the wallet."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Appeal vote recorded on-chain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "transactionHash": { "type": "string", "example": "abc123def456..." },
+                    "status": { "type": "string", "example": "UnderAppeal" },
+                    "approve_votes": { "type": "integer", "example": 3 },
+                    "reject_votes": { "type": "integer", "example": 1 }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Appeal vote cannot be submitted",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "NOT_ELIGIBLE_VOTER": {
+                    "summary": "Wallet is not in the eligible voter snapshot",
+                    "value": { "code": "NOT_ELIGIBLE_VOTER", "message": "Your wallet is not in the eligible voter list for this appeal." }
+                  },
+                  "DUPLICATE_VOTE": {
+                    "summary": "Already voted in this appeal round",
+                    "value": { "code": "DUPLICATE_VOTE", "message": "You have already cast an appeal vote on this claim." }
+                  },
+                  "VOTING_WINDOW_CLOSED": {
+                    "summary": "Appeal voting window has closed",
+                    "value": { "code": "VOTING_WINDOW_CLOSED", "message": "The appeal voting window has closed." }
+                  },
+                  "CLAIM_NOT_UNDER_APPEAL": {
+                    "summary": "Claim is not in UnderAppeal status",
+                    "value": { "code": "CLAIM_NOT_UNDER_APPEAL", "message": "This claim is not currently in the appeal round." }
+                  },
+                  "CLAIMS_PAUSED": {
+                    "summary": "Contract admin has paused claims operations",
+                    "value": { "code": "CLAIMS_PAUSED", "message": "Claim operations are currently paused by the contract admin." }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Claim not found",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "CLAIM_NOT_FOUND": {
+                    "summary": "Claim not found",
+                    "value": { "code": "CLAIM_NOT_FOUND", "message": "Claim not found." }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
     "/claims/{id}/timeline": {
       "get": {
         "summary": "Get claim status-transition timeline",
@@ -512,6 +930,14 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT issued by the /auth/token endpoint after wallet-signature authentication."
+      }
+    },
     "parameters": {
       "after": {
         "name": "after",

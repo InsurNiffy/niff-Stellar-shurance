@@ -7,6 +7,9 @@ export const ClaimStatusSchema = z.enum([
   'Paid',
   'Rejected',
   'Withdrawn',
+  'UnderAppeal',
+  'AppealApproved',
+  'AppealRejected',
 ])
 export type ClaimStatus = z.infer<typeof ClaimStatusSchema>
 
@@ -35,6 +38,16 @@ export const ClaimSchema = z.object({
   total_voters: z.number(),
   /** Per-claim snapshot from contract `get_claim_quorum_bps`; omit ⇒ use DEFAULT_QUORUM_BPS for display. */
   quorum_bps: z.number().int().min(1).max(10_000).optional(),
+  /**
+   * Ledger deadline for filing an appeal on a rejected claim.
+   * Present when status is 'Rejected' and the appeal window is still open.
+   */
+  appeal_open_deadline_ledger: z.number().optional(),
+  /**
+   * Whether an appeal has already been submitted for this claim.
+   * Populated server-side for rejected/appeal-round claims.
+   */
+  appeal_submitted: z.boolean().optional(),
 })
 export type Claim = z.infer<typeof ClaimSchema>
 
@@ -104,6 +117,8 @@ export function isTerminal(status: ClaimStatus): boolean {
     status === 'Approved' ||
     status === 'Paid' ||
     status === 'Rejected' ||
-    status === 'Withdrawn'
+    status === 'Withdrawn' ||
+    status === 'AppealApproved' ||
+    status === 'AppealRejected'
   )
 }
