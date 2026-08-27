@@ -1605,7 +1605,10 @@ pub struct AppealVoteCast {
 ///
 /// Preconditions:
 ///   - `claim.status == Rejected`
-///   - `now <= claim.appeal_open_deadline_ledger` (within appeal window)
+///   - `now <= claim.appeal_open_deadline_ledger` (within appeal window).
+///     The deadline ledger itself is INCLUSIVE: calling at
+///     `now == appeal_open_deadline_ledger` succeeds; calling at
+///     `now == appeal_open_deadline_ledger + 1` fails with `AppealWindowClosed`.
 ///   - `claim.appeals_count < MAX_APPEALS_PER_CLAIM` (only one appeal allowed)
 ///
 /// Transitions: `Rejected → UnderAppeal`
