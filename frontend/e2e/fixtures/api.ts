@@ -283,3 +283,96 @@ export async function mockClaimsApi(page: Page): Promise<void> {
     })
   })
 }
+
+// ---------------------------------------------------------------------------
+// Appeal API mocks
+// ---------------------------------------------------------------------------
+
+/**
+ * Mock the appeal-related API routes for a given claimId.
+ *
+ * @param page         - Playwright page object
+ * @param claimId      - The claim ID to mock (default: 'claim-appeal-001')
+ * @param alreadyAppealed - When true, /appeal/status returns appealSubmitted=true
+ */
+export async function mockAppealApi(
+  page: Page,
+  claimId = 'claim-appeal-001',
+  alreadyAppealed = false,
+): Promise<void> {
+  // GET /api/claims/:id — rejected claim owned by the mock wallet
+  await page.route(`${API_BASE}/api/claims/${claimId}`, async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        claim_id: claimId,
+        policy_id: 'policy-appeal-001',
+        claimant: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+        amount: '750000000',
+        details: 'Smart contract exploit caused fund loss during appeal test.',
+        evidence: [],
+        status: 'Rejected',
+        voting_deadline_ledger: 1_000_000,
+        approve_votes: 1,
+        reject_votes: 4,
+        filed_at: Date.now() - 2 * 86_400_000,
+        total_voters: 10,
+        quorum_bps: 5000,
+      }),
+    })
+  })
+
+  // GET /api/claims/:id/appeal/status
+  await page.route(
+    `${API_BASE}/api/claims/${claimId}/appeal/status`,
+    async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ appealSubmitted: alreadyAppealed }),
+      })
+    },
+  )
+
+  // POST /api/claims/:id/appeal/simulate
+  await page.route(
+    `${API_BASE}/api/claims/${claimId}/appeal/simulate`,
+    async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: '{}',
+      })
+    },
+  )
+
+  // POST /api/claims/:id/appeal
+  await page.route(
+    `${API_BASE}/api/claims/${claimId}/appeal`,
+    async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          transactionHash: 'appeal-tx-hash-abc789',
+          status: 'Processing',
+          message: 'Appeal submitted successfully.',
+        }),
+      })
+    },
+  )
+
+  // GET /api/claims/:id/eligibility (voters are not relevant for the appeal flow)
+  await page.route(
+    `${API_BASE}/api/claims/${claimId}/eligibility*`,
+    async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ eligible: false, reason: 'Not a voter', priorVote: null }),
+      })
+    },
+  )
+}
+

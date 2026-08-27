@@ -625,6 +625,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         open={appealState === 'confirming'}
         claim={claim}
         submitting={appealState === 'signing' || appealState === 'submitting'}
+        walletAddress={walletAddress}
         onConfirm={handleAppealConfirm}
         onCancel={handleAppealCancel}
       />

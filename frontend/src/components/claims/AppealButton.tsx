@@ -1,6 +1,7 @@
 'use client';
 
 import { AlertCircle } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import type { Claim } from '@/lib/schemas/vote';
 
@@ -33,6 +34,8 @@ export function AppealButton({
   onClick,
   className,
 }: AppealButtonProps) {
+  const t = useTranslations('claims.appeal');
+
   // Only show for rejected claims
   if (claim.status !== 'Rejected') {
     return null;
@@ -49,11 +52,11 @@ export function AppealButton({
         variant="outline"
         onClick={onClick}
         disabled={submitting}
-        aria-label="Appeal this rejected claim"
+        aria-label={t('buttonAriaLabel')}
         className="w-full sm:w-auto"
       >
         <AlertCircle className="mr-2 h-4 w-4" aria-hidden="true" />
-        {submitting ? 'Submitting Appeal...' : 'Appeal Decision'}
+        {submitting ? t('buttonSubmitting') : t('buttonLabel')}
       </Button>
     </div>
   );
