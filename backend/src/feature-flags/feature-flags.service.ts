@@ -11,6 +11,7 @@ type FeatureMap = Record<string, boolean>;
 /** Predefined allowlist — only these keys may be created or toggled via the API. */
 export const ALLOWED_FLAG_KEYS = new Set([
   'claims_enabled',
+  'claims_appeal_enabled',
   'policy_creation_enabled',
   'voting_enabled',
   'ramp_enabled',

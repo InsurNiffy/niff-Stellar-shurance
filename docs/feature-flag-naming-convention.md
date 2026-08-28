@@ -58,6 +58,7 @@ Audited against `ALLOWED_FLAG_KEYS` in
 | Flag | Matches area prefix convention? | Suggested lifecycle stage |
 |---|---|---|
 | `claims_enabled` | Yes (`claims_`) | rolled-out |
+| `claims_appeal_enabled` | Yes (`claims_`) | experimental |
 | `policy_creation_enabled` | Yes (`policy_`) | rolled-out |
 | `voting_enabled` | Yes (`voting_`) | rolled-out |
 | `ramp_enabled` | Yes (`ramp_`) | rolled-out |
@@ -69,7 +70,12 @@ Audited against `ALLOWED_FLAG_KEYS` in
 | `experimental_beta_calculators` | No — uses `experimental_` as an area prefix instead of a lifecycle tag; should become e.g. `quote_beta_calculators_enabled` with `[experimental]` in its description | experimental |
 | `ENABLE_DEV_TOOLS` | No — wrong case (SCREAMING_SNAKE_CASE) and no area prefix; should become `dev_tools_enabled` | rolled-out (dev-only) |
 
-**Findings:** 9 of 11 existing flags already fit the convention. `experimental_beta_calculators`
+`claims_appeal_enabled` gates the claimant appeal flow end-to-end: the appeal
+endpoints (`POST /claims/:id/appeal/build-transaction` and `POST /claims/:id/appeal`,
+via `@Feature`) and the `AppealButton` in the claim vote panel (via `useFeatureFlag`).
+Owner: claims. Off by default — enable per environment to stage the rollout.
+
+**Findings:** 10 of 12 existing flags already fit the convention. `experimental_beta_calculators`
 and `ENABLE_DEV_TOOLS` are the two non-conforming names; rename them the next time either flag
 is touched (renaming now would require a coordinated backend+frontend+DB migration, which is out
 of scope for this documentation pass).

@@ -215,6 +215,12 @@
         }
       },
       "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "bullmq_dlq_depth{app=\"niffyinsure-api\"}",
+          "legendFormat": "{{queue}}"
+        }
+      ]
     },
     {
       "id": 12,
@@ -238,14 +244,41 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "indexer_ledger_gap{app="niffyinsure-api"}",
+          "expr": "indexer_ledger_gap{app=\"niffyinsure-api\"}",
           "legendFormat": "{{network}}"
         }
       ]
+    },
+    {
+      "id": 13,
+      "title": "Appeal RPC Cost — calls/s by method",
+      "description": "Soroban RPC/simulation calls made by the appeal endpoints, as their own cost line item. build_file_appeal is one simulate_transaction per POST /claims/:id/appeal/build-transaction; finalize_appeal is the keeper-driven finalize path.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 56, "w": 12, "h": 8 },
+      "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "bullmq_dlq_depth{app=\"niffyinsure-api\"}",
-          "legendFormat": "{{queue}}"
+          "expr": "job:appeal_rpc_calls:rate5m",
+          "legendFormat": "{{rpc_method}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Appeal share of total RPC cost (%)",
+      "description": "Fraction of all Soroban RPC calls attributable to the appeal feature. Use with the panel on the left to size the appeal feature's contribution to RPC spend.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 56, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "job:appeal_rpc_calls:ratio5m",
+          "legendFormat": "appeal share"
         }
       ]
     }

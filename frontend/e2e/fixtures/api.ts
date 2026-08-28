@@ -323,6 +323,18 @@ export async function mockAppealApi(
     })
   })
 
+  // GET /api/feature-flags/claims_appeal_enabled — the appeal UI is flag-gated (#1355)
+  await page.route(
+    `${API_BASE}/api/feature-flags/claims_appeal_enabled`,
+    async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ key: 'claims_appeal_enabled', enabled: true }),
+      })
+    },
+  )
+
   // GET /api/claims/:id/appeal/status
   await page.route(
     `${API_BASE}/api/claims/${claimId}/appeal/status`,

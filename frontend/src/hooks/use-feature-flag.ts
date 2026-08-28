@@ -11,7 +11,7 @@ interface FeatureFlagResponse {
 
 async function fetchFeatureFlag(flagKey: string): Promise<boolean> {
   const { apiUrl } = getConfig();
-  const data = await apiFetch<FeatureFlagResponse>(`${apiUrl}/feature-flags/${flagKey}`);
+  const data = await apiFetch<FeatureFlagResponse>(`${apiUrl}/api/feature-flags/${flagKey}`);
   return data.enabled;
 }
 

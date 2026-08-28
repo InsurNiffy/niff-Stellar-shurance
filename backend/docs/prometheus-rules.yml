@@ -80,6 +80,34 @@ groups:
             are completing within 1 s (SLA target: 99%).
           runbook_url: "https://docs.niffyinsure.com/runbooks/sla-breach"
 
+  - name: niffyinsure_rpc_cost
+    interval: 60s
+    rules:
+      # ── Recording rules — RPC / simulation cost attribution ────────────────
+      #
+      # Every Soroban RPC call is labelled with a distinct `rpc_method` by
+      # SorobanService.trackRpc. The appeal feature owns two of those labels:
+      #   - build_file_appeal: one simulate_transaction per
+      #     POST /claims/:id/appeal/build-transaction
+      #   - finalize_appeal:   keeper-driven finalize of a stalled appeal
+      # Keep this matcher in sync with the trackRpc labels in
+      # backend/src/rpc/soroban.service.ts when appeal RPC calls are added.
+
+      # Appeal-attributable RPC call rate, broken out per method.
+      - record: job:appeal_rpc_calls:rate5m
+        expr: |
+          sum(rate(rpc_calls_total{app="niffyinsure-api",
+                                   rpc_method=~"build_file_appeal|finalize_appeal"}[5m]))
+          by (rpc_method)
+
+      # Appeal share of total RPC cost (0–1).
+      - record: job:appeal_rpc_calls:ratio5m
+        expr: |
+          sum(rate(rpc_calls_total{app="niffyinsure-api",
+                                   rpc_method=~"build_file_appeal|finalize_appeal"}[5m]))
+          /
+          sum(rate(rpc_calls_total{app="niffyinsure-api"}[5m]))
+
   - name: niffyinsure_http_errors
     interval: 60s
     rules:

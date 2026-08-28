@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useWallet } from '@/features/wallet'
 import { useLatestLedger } from '@/hooks/use-latest-ledger'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { APPEAL_FEATURE_FLAG } from '@/config/features'
 import {
   fetchClaim,
   fetchEligibility,
@@ -81,6 +83,9 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   const [simError, setSimError] = useState<string | null>(null)
 
   // Appeal state
+  // #1355: the whole appeal flow (button, status check, modal) is gated behind
+  // the `claims_appeal_enabled` flag so it can be released per environment.
+  const { enabled: appealFeatureEnabled } = useFeatureFlag(APPEAL_FEATURE_FLAG)
   const [appealState, setAppealState] = useState<AppealState>('idle')
   const [appealSubmitted, setAppealSubmitted] = useState(false)
   const [appealTxHash, setAppealTxHash] = useState<string | null>(null)
@@ -141,6 +146,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
 
   // ── Check appeal status for rejected claims ─────────────────────────────────
   useEffect(() => {
+    if (!appealFeatureEnabled) return
     if (!claim || claim.status !== 'Rejected') return
     // #1337: surface loading state while the status check resolves
     setLoadingAppealStatus(true)
@@ -158,7 +164,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         setAppealSubmitted(false)
       })
       .finally(() => setLoadingAppealStatus(false))
-  }, [claim, claimId])
+  }, [appealFeatureEnabled, claim, claimId])
 
   // ── Vote flow ───────────────────────────────────────────────────────────────
   const handleVoteClick = useCallback(
@@ -565,8 +571,8 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         </div>
       )}
 
-      {/* Appeal button for rejected claims */}
-      {claim.status === 'Rejected' && (
+      {/* Appeal button for rejected claims — gated by the appeal feature flag (#1355) */}
+      {appealFeatureEnabled && claim.status === 'Rejected' && (
         <AppealButton
           claim={claim}
           walletAddress={walletAddress}
