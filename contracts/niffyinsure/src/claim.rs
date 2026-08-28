@@ -51,12 +51,11 @@
 //   - The `PolicyDeactivated` and `StrikeIncremented` events carry enough
 //     context for an appeal system to reverse their effects off-chain.
 //
-// ── Appeal vs. dispute: two distinct, mutually exclusive escalation paths ─────
+// ── Appeal vs. dispute vs. escalation: three distinct mechanisms ──────────────
 //
-// This module has two separate escalation mechanisms that are easy to
-// conflate by name. They apply to opposite outcomes and can never overlap on
-// the same claim, because each one's entry guard requires a status the other
-// one can't produce:
+// Full definitions, including the triggering actor and status precondition for
+// each, live in the glossary: `docs/GLOSSARY.md` ("Appeal vs. dispute vs.
+// escalation"). Summary, because these three are easy to conflate by name:
 //
 //   - `open_appeal` (claimant-initiated): requires `claim.status ==
 //     Rejected`. Lets the claimant contest a rejection. Transitions
@@ -64,12 +63,17 @@
 //   - `dispute_claim` (admin-initiated): requires `claim.status ==
 //     Approved`. Lets the admin freeze payout on an approved claim pending
 //     review. Transitions Approved → Disputed.
+//   - `escalate_claim` (admin-initiated): requires `claim.status ==
+//     Processing`. Shortens a stalled claim's voting deadline. Changes the
+//     schedule only — no status transition, no effect on the outcome.
 //
-// A claim that is `Rejected` cannot be `Approved`, and a claim that is
-// `Approved`/`Disputed` cannot be `Rejected`/`UnderAppeal` — the statuses
-// partition the claim's lifecycle, so `open_appeal` and `dispute_claim` can
-// never both apply to the same claim at the same time. See
-// `tests/appeal_dispute_mutual_exclusion.rs` for a test asserting this.
+// The three can never overlap on the same claim, because each one's entry
+// guard requires a status the other two can't produce: a claim that is
+// `Rejected` cannot be `Approved`, and a claim that is `Approved`/`Disputed`
+// cannot be `Rejected`/`UnderAppeal`, and both are past `Processing`. The
+// statuses partition the claim's lifecycle. See
+// `tests/appeal_dispute_mutual_exclusion.rs` for a test asserting this for the
+// appeal/dispute pair.
 //
 // ── Governance risk documentation ─────────────────────────────────────────────
 //
@@ -1158,6 +1162,9 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
 
 /// Admin-only: dispute an approved claim within the dispute window.
 /// Freezes payout and sets status to Disputed for review.
+///
+/// Not to be confused with `open_appeal` (claimant, on `Rejected`) or
+/// `escalate_claim` (admin, on `Processing`) — see `docs/GLOSSARY.md`.
 pub fn dispute_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
@@ -1623,6 +1630,9 @@ pub struct AppealVoteCast {
 
 /// Claimant-only: open an appeal on a rejected claim.
 ///
+/// Not to be confused with `dispute_claim` (admin, on `Approved`) or
+/// `escalate_claim` (admin, on `Processing`) — see `docs/GLOSSARY.md`.
+///
 /// Preconditions:
 ///   - `claim.status == Rejected`
 ///   - `now <= claim.appeal_open_deadline_ledger` (within appeal window).
@@ -1945,6 +1955,10 @@ pub struct ClaimEscalated {
 }
 
 /// Admin-only: reduce the voting deadline of a stalled `Processing` claim.
+///
+/// This is *escalation*: it changes the voting schedule only. It does not
+/// revisit a decision — that is `open_appeal` (claimant, on `Rejected`) or
+/// `dispute_claim` (admin, on `Approved`). See `docs/GLOSSARY.md`.
 ///
 /// Invariants enforced:
 /// - Claim must be in `Processing` status.

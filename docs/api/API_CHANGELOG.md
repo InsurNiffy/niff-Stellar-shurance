@@ -29,7 +29,16 @@ field type), add entries to **both** files, cross-referencing each other.
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- Claimant appeal endpoints (additive, no version bump — see the compliance
+  review in [`docs/api-versioning-policy.md`](../api-versioning-policy.md#appeal-endpoints--additive-no-version-bump-reviewed-2026-08-28-1360)):
+  - `POST /api/claims/:id/appeal/build-transaction` — build an unsigned
+    `file_appeal` XDR for a rejected claim. Body: `claimant`, `claimId`,
+    `reason`. Returns the unsigned XDR plus fee estimates.
+  - `POST /api/claims/:id/appeal` — submit the signed appeal transaction.
+    Body: `transactionXdr`, `txHash` (idempotency key; a repeat submission with
+    the same `txHash` returns the cached result).
+  - `POST /api/admin/claims/:id/finalize-appeal` — admin force-finalize of a
+    stalled appeal.
 
 ### Changed
 - Nothing yet.

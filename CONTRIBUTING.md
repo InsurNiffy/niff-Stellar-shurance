@@ -66,6 +66,10 @@ This checks `backend/.env` and `frontend/.env.local` for all required variables 
 
 The Soroban smart contract lives in `contracts/niffyinsure/`.
 
+Domain terms that are easy to mix up — in particular **appeal** vs. **dispute**
+vs. **escalation**, which have different triggering actors and different claim
+status preconditions — are defined in [`docs/GLOSSARY.md`](docs/GLOSSARY.md).
+
 ### Setup
 
 ```bash
