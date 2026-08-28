@@ -30,5 +30,9 @@
   "_comment_cross_contract": "Baselines for cross-contract vs local premium-calculation paths (Issue #1160). Recorded on first benchmark run; update by running `cargo test --test gas_cross_contract --features testutils -- --nocapture`.",
   "premium_calc.cross_contract": 500000,
   "premium_pure.local": 50000,
-  "cross_contract_overhead": 450000
+  "cross_contract_overhead": 450000,
+  "_comment_appeal_footprint": "Appeal storage/ledger footprint vs. a normal vote cycle: open_appeal writes a fresh voter snapshot + quorum snapshot + reset tallies on top of the shared file+reject prefix. CPU instruction cost is used as the proxy for ledger read/write footprint (see tests/gas_appeal_footprint.rs). Placeholder values below pending an actual `cargo test --test gas_appeal_footprint --features testutils -- --nocapture` run to fill in measured numbers.",
+  "appeal_footprint.normal_vote_cycle": null,
+  "appeal_footprint.appeal_cycle": null,
+  "appeal_footprint.storage_delta": null
 }
