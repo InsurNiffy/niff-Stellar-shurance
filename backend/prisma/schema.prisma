@@ -36,6 +36,12 @@ model Claim {
   /// Set when the row is logically removed (admin/compliance). Null = active.
   deletedAt         DateTime? @map("deleted_at")
 
+  // ── Appeal fields ────────────────────────────────────────────────────────
+  /// Number of appeals opened for this claim. Used for idempotency checks.
+  appealsCount      Int       @default(0) @map("appeals_count")
+  /// The tx hash of the most recent appeal submission. Used to detect duplicate submissions.
+  appealTxHash      String?   @map("appeal_tx_hash")
+
   // Relations
   policy            Policy    @relation(fields: [policyId], references: [id])
   votes             Vote[]
@@ -180,6 +186,7 @@ enum ClaimStatus {
   APPROVED
   PAID
   REJECTED
+  UNDER_APPEAL
 }
 
 enum ClaimSeverity {

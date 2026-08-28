@@ -103,6 +103,31 @@ export class MetricsService implements OnModuleInit {
   /** Total claim notification batch accumulate/flush operations. */
   readonly claimNotificationBatchTotal: client.Counter<string>;
 
+  // ── Appeal metrics ─────────────────────────────────────────────────────────
+  /**
+   * Total appeal submissions opened by claimants.
+   * Incremented in ClaimsService.submitAppealTransaction after successful submission.
+   */
+  readonly appealsOpenedTotal: client.Counter<string>;
+
+  /**
+   * Total appeals resolved as approved.
+   * Incremented by the indexer when it decodes an appeal_approved event.
+   */
+  readonly appealsApprovedTotal: client.Counter<string>;
+
+  /**
+   * Total appeals resolved as rejected.
+   * Incremented by the indexer when it decodes an appeal_rejected event.
+   */
+  readonly appealsRejectedTotal: client.Counter<string>;
+
+  /**
+   * Current number of in-flight (open) appeals that have not yet been resolved.
+   * Gauge: +1 on open, -1 on resolved (approved or rejected).
+   */
+  readonly appealsInFlightGauge: client.Gauge<string>;
+
   constructor(cardinalityGuard: MetricsCardinalityGuard) {
     this.cardinalityGuard = cardinalityGuard;
     this.registry = new client.Registry();
@@ -347,6 +372,30 @@ export class MetricsService implements OnModuleInit {
       labelNames: ['action'],
       registers: [this.registry],
     });
+
+    this.appealsOpenedTotal = new client.Counter({
+      name: 'appeals_opened_total',
+      help: 'Total appeal submissions opened by claimants',
+      registers: [this.registry],
+    });
+
+    this.appealsApprovedTotal = new client.Counter({
+      name: 'appeals_approved_total',
+      help: 'Total appeals resolved as approved (indexed from on-chain events)',
+      registers: [this.registry],
+    });
+
+    this.appealsRejectedTotal = new client.Counter({
+      name: 'appeals_rejected_total',
+      help: 'Total appeals resolved as rejected (indexed from on-chain events)',
+      registers: [this.registry],
+    });
+
+    this.appealsInFlightGauge = new client.Gauge({
+      name: 'appeals_in_flight',
+      help: 'Number of appeals currently open (not yet resolved)',
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -521,6 +570,32 @@ export class MetricsService implements OnModuleInit {
     _opts: { walletAddress: string; eventCount: number },
   ) {
     this.claimNotificationBatchTotal.inc({ action });
+  }
+
+  // ── Appeal metric helpers ────────────────────────────────────────────────
+
+  /** Call after a successful appeal transaction submission. */
+  recordAppealOpened() {
+    this.appealsOpenedTotal.inc();
+    this.appealsInFlightGauge.inc();
+  }
+
+  /**
+   * Call when the indexer decodes an appeal-approved on-chain event.
+   * Decrements in-flight gauge because the appeal is now resolved.
+   */
+  recordAppealApproved() {
+    this.appealsApprovedTotal.inc();
+    this.appealsInFlightGauge.dec();
+  }
+
+  /**
+   * Call when the indexer decodes an appeal-rejected on-chain event.
+   * Decrements in-flight gauge because the appeal is now resolved.
+   */
+  recordAppealRejected() {
+    this.appealsRejectedTotal.inc();
+    this.appealsInFlightGauge.dec();
   }
 
   async getMetrics(): Promise<string> {

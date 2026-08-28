@@ -1375,6 +1375,194 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Build an unsigned file_appeal transaction for a rejected claim.
+   * Contract signature: file_appeal(claimant, claim_id, reason)
+   */
+  async buildAppealTransaction(args: {
+    claimant: string;
+    claimId: number;
+    reason: string;
+  }): Promise<BuildTransactionResult> {
+    return this.trackRpc('build_file_appeal', () =>
+      this._buildAppealTransaction(args),
+    );
+  }
+
+  private async _buildAppealTransaction(args: {
+    claimant: string;
+    claimId: number;
+    reason: string;
+  }): Promise<BuildTransactionResult> {
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, args.claimant);
+    const ledgerInfo = await server.getLatestLedger();
+
+    const scArgs = [
+      new Address(args.claimant).toScVal(),
+      nativeToScVal(args.claimId, { type: 'u64' }),
+      nativeToScVal(args.reason, { type: 'string' }),
+    ];
+
+    const contract = new Contract(this.contractId);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(contract.call('file_appeal', ...scArgs))
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+
+    if (Api.isSimulationError(simulation)) {
+      const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+      this.mapSimulationError(err.error);
+    }
+
+    const successSim = simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+    const assembled = assembleTransaction(tx, successSim);
+    const unsignedXdr = assembled.build().toEnvelope().toXDR('base64');
+
+    const baseFee = BigInt(BASE_FEE);
+    const resourceFee = BigInt(successSim.minResourceFee ?? '0');
+    const totalFee = baseFee + resourceFee;
+
+    const authRequirements: AuthRequirement[] = [];
+    for (const authEntry of successSim.result?.auth ?? []) {
+      const credentials = authEntry.credentials();
+      if (
+        credentials.switch().value ===
+        xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
+      ) {
+        const addrObj = credentials.address().address();
+        const stellarAddr = Address.fromScAddress(addrObj);
+        const isContract =
+          addrObj.switch().value ===
+          xdr.ScAddressType.scAddressTypeContract().value;
+        authRequirements.push({ address: stellarAddr.toString(), isContract });
+      }
+    }
+
+    if (!authRequirements.some((r) => r.address === args.claimant)) {
+      authRequirements.unshift({ address: args.claimant, isContract: false });
+    }
+
+    return {
+      unsignedXdr,
+      minResourceFee: successSim.minResourceFee ?? '0',
+      baseFee: BASE_FEE.toString(),
+      totalEstimatedFee: totalFee.toString(),
+      totalEstimatedFeeXlm: SorobanService.stroopsToXlm(totalFee),
+      authRequirements,
+      memoConvention:
+        'NiffyInsure does not use memos for appeal correlation. ' +
+        'claim_id is embedded in the file_appeal contract call arguments.',
+      currentLedger: ledgerInfo.sequence,
+    };
+  }
+
+  /**
+   * Invoke on-chain `finalize_appeal` for a stalled appeal (admin only).
+   * The appeal deadline must have passed but no keeper has finalized it.
+   * Requires CLAIM_KEEPER_SECRET_KEY and a funded keeper source account.
+   */
+  async finalizeAppeal(claimId: number): Promise<FinalizeClaimResult> {
+    return this.trackRpc('finalize_appeal', () => this._finalizeAppeal(claimId));
+  }
+
+  private async _finalizeAppeal(claimId: number): Promise<FinalizeClaimResult> {
+    if (!this.contractId) {
+      throw new BadRequestException({
+        code: 'CONTRACT_NOT_INITIALIZED',
+        message: 'CONTRACT_ID is not configured; cannot finalize appeals.',
+      });
+    }
+
+    const source =
+      this.configService.get<string>('CLAIM_KEEPER_SOURCE_ACCOUNT') ||
+      this.configService.get<string>('SOLVENCY_SIMULATION_SOURCE_ACCOUNT');
+    const secret = this.configService.get<string>('CLAIM_KEEPER_SECRET_KEY');
+
+    if (!source || !secret) {
+      throw new ServiceUnavailableException({
+        code: 'KEEPER_NOT_CONFIGURED',
+        message:
+          'Claim keeper is not configured (CLAIM_KEEPER_SOURCE_ACCOUNT / CLAIM_KEEPER_SECRET_KEY).',
+      });
+    }
+
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, source);
+    const contract = new Contract(this.contractId);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        contract.call('finalize_appeal', nativeToScVal(claimId, { type: 'u64' })),
+      )
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+    if (Api.isSimulationError(simulation)) {
+      const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+      this.mapSimulationError(err.error);
+    }
+
+    const successSim = simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+    const assembled = assembleTransaction(tx, successSim).build();
+    const keypair = Keypair.fromSecret(secret);
+    assembled.sign(keypair);
+
+    const sendResponse = await server.sendTransaction(assembled);
+    if (sendResponse.status === 'ERROR') {
+      throw new BadRequestException({
+        code: 'FINALIZE_APPEAL_REJECTED',
+        message: 'finalize_appeal transaction was rejected by the network.',
+        details: sendResponse.errorResult,
+      });
+    }
+
+    const txHash = sendResponse.hash;
+    let ledger = 0;
+    let onChainStatus = 'Unknown';
+
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const txResponse = await server.getTransaction(txHash);
+      if (txResponse.status === 'SUCCESS') {
+        ledger = txResponse.ledger;
+        const retval = txResponse.returnValue;
+        if (retval) {
+          const native = scValToNative(retval);
+          onChainStatus =
+            typeof native === 'object' && native !== null && 'tag' in (native as object)
+              ? String((native as { tag?: string }).tag)
+              : String(native);
+        }
+        break;
+      }
+      if (txResponse.status === 'FAILED') {
+        throw new BadRequestException({
+          code: 'FINALIZE_APPEAL_FAILED',
+          message: 'finalize_appeal transaction failed on-chain.',
+        });
+      }
+    }
+
+    if (!ledger) {
+      throw new ServiceUnavailableException({
+        code: 'FINALIZE_APPEAL_TIMEOUT',
+        message: `Timed out waiting for finalize_appeal confirmation (hash=${txHash}).`,
+      });
+    }
+
+    return { txHash, ledger, onChainStatus };
+  }
+
+  /**
    * Build unsigned batch_register_voter transaction.
    * Signature: batch_register_voter(admin, voters: Vec<Address>)
    */
