@@ -34,10 +34,17 @@ export interface AppealConfirmModalProps {
   onConfirm: (notifyOnOutcome: boolean) => void;
   /** Callback when user cancels */
   onCancel: () => void;
+  /** Ref to the element that triggered the modal — focus returns here on close (#1339) */
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
 /**
  * AppealConfirmModal — confirmation dialog explaining appeal rules before submission.
+ *
+ * Accessibility (#1339):
+ *  - aria-modal, aria-labelledby, aria-describedby matching VoteConfirmModal pattern
+ *  - onEscapeKeyDown blocked during submission (mirrors VoteConfirmModal)
+ *  - Focus returns to triggerRef element on close
  *
  * Appeal Rules:
  * - Only one appeal allowed per claim
@@ -60,6 +67,7 @@ export function AppealConfirmModal({
   walletAddress,
   onConfirm,
   onCancel,
+  triggerRef,
 }: AppealConfirmModalProps) {
   const t = useTranslations('claims.appeal');
   const [notifyOnOutcome, setNotifyOnOutcome] = useState(true);
@@ -106,16 +114,30 @@ export function AppealConfirmModal({
         - The rule list now uses break-words to prevent long words from overflowing.
       */}
       <DialogContent
-        className="flex max-h-[90dvh] w-full max-w-[calc(100vw-2rem)] flex-col overflow-y-auto rounded-lg p-4 sm:max-w-md sm:p-6"
-        aria-describedby="appeal-description"
+        className="sm:max-w-md"
+        aria-modal="true"
+        aria-labelledby="appeal-confirm-title"
+        aria-describedby="appeal-confirm-desc"
+        onEscapeKeyDown={(e) => {
+          // Prevent ESC during submission to avoid accidental cancellation
+          // — mirrors VoteConfirmModal pattern (#1339)
+          if (submitting) {
+            e.preventDefault();
+          } else {
+            onCancel();
+          }
+        }}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-yellow-600" aria-hidden="true" />
-            {t('modalTitle')}
+          <DialogTitle
+            id="appeal-confirm-title"
+            className="flex items-center gap-2"
+          >
+            <AlertTriangle className="h-5 w-5 text-yellow-600" aria-hidden="true" />
+            Appeal Claim Decision
           </DialogTitle>
-          <DialogDescription id="appeal-description">
-            {t('modalDescription', { claimId: claim.claim_id })}
+          <DialogDescription id="appeal-confirm-desc">
+            Review the appeal rules before submitting your appeal for claim #{claim.claim_id}.
           </DialogDescription>
         </DialogHeader>
 
@@ -232,11 +254,15 @@ export function AppealConfirmModal({
           </div>
 
           {/* Warning */}
-          <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3">
-            <p className="break-words text-xs text-yellow-900">
-              <AlertTriangle className="mr-1 inline h-3 w-3" aria-hidden="true" />
-              <strong>{t('warningImportant')}</strong>{' '}
-              {t('warningText')}
+          <div
+            role="note"
+            className="rounded-lg border border-yellow-200 bg-yellow-50 p-3"
+          >
+            <p className="text-xs text-yellow-900">
+              <AlertTriangle className="inline h-3 w-3 mr-1" aria-hidden="true" />
+              <strong>Important:</strong> Submitting an appeal will require you to sign a
+              transaction with your wallet. Make sure you understand the appeal rules before
+              proceeding.
             </p>
           </div>
         </div>
@@ -247,6 +273,7 @@ export function AppealConfirmModal({
             onClick={onCancel}
             disabled={submitting}
             className="w-full sm:w-auto"
+            aria-label="Cancel appeal and close dialog"
           >
             {t('cancelButton')}
           </Button>
@@ -254,9 +281,10 @@ export function AppealConfirmModal({
             onClick={handleConfirm}
             disabled={submitting || walletMismatch}
             className="w-full sm:w-auto"
-            aria-label={t('confirmAriaLabel')}
+            aria-label="Confirm and submit appeal"
+            aria-busy={submitting}
           >
-            {submitting ? t('confirmSubmittingButton') : t('confirmButton')}
+            {submitting ? 'Submitting…' : 'Confirm & Submit Appeal'}
           </Button>
         </DialogFooter>
       </DialogContent>

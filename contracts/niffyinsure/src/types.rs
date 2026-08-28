@@ -189,40 +189,41 @@ pub enum ClaimStatus {
     Withdrawn = 9,
     /// Admin disputed the claim after approval; payout is frozen pending review.
     Disputed = 10,
-    /// RESERVED — appeal in progress; not yet implemented.
+    /// RESERVED — superseded by `UnderAppeal`. Never constructed. Kept, not removed.
     ///
-    /// This variant is declared to **reserve the discriminant** in the on-chain
-    /// ABI and prevent future contract upgrades from introducing a breaking enum
-    /// change.  No existing entrypoint constructs or transitions to this status;
-    /// it is purely a forward-compatibility placeholder.
+    /// # Decision (recorded)
     ///
-    /// Default builds compile without any appeal logic executing — this variant
-    /// exists in the type system but is unreachable through any live code path
-    /// until the full appeal flow is implemented and audited.
+    /// The appeal flow was implemented using **`UnderAppeal` (discriminant 6)**,
+    /// not this variant. `Appealed` predates that implementation: it was reserved
+    /// while the appeal design was still open, and by the time `open_appeal` /
+    /// `vote_on_appeal` / `finalize_appeal` shipped, `UnderAppeal` had already been
+    /// picked as the live in-flight status. Removing `Appealed` now would be a
+    /// breaking ABI change (discriminants are positional in XDR — see the
+    /// forward-compatibility note above), for a variant that costs nothing to
+    /// leave in place. Decision: **keep it reserved, do not remove it, do not
+    /// repurpose it.** Do not construct it in any entrypoint; use `UnderAppeal`
+    /// for "appeal in progress" everywhere.
     ///
-    /// # Intended appeal flow (future implementation)
+    /// This variant is declared only to **reserve the discriminant** in the
+    /// on-chain ABI so a future variant can't accidentally collide with it.
+    /// Default builds compile without ever constructing this variant — it exists
+    /// in the type system but is unreachable through any live code path.
+    ///
+    /// # Relationship to `UnderAppeal`
+    ///
+    /// Read `Appealed` in this file as historical/reserved and `UnderAppeal` as
+    /// canonical. The real appeal lifecycle is:
     ///
     /// ```text
-    /// Rejected → Appealed        (claimant calls open_appeal within APPEAL_OPEN_WINDOW_LEDGERS)
-    ///                             appeal vote runs for APPEAL_VOTE_WINDOW_LEDGERS
-    /// Appealed → AppealApproved  (majority approve or deadline plurality)
-    /// Appealed → AppealRejected  (majority reject or deadline plurality)
+    /// Rejected     → UnderAppeal      (claimant calls open_appeal within APPEAL_OPEN_WINDOW_LEDGERS)
+    ///                                  appeal vote runs for APPEAL_VOTE_WINDOW_LEDGERS
+    /// UnderAppeal  → AppealApproved   (majority approve or deadline plurality)
+    /// UnderAppeal  → AppealRejected   (majority reject or deadline plurality)
     /// ```
     ///
-    /// # Auto-deactivation interaction
-    ///
-    /// When `on_reject` fires and the policy strike count reaches
-    /// `STRIKE_DEACTIVATION_THRESHOLD`, auto-deactivation MUST be deferred
-    /// while the claim is `Appealed`.  Implement by checking
-    /// `env.ledger().sequence() > appeal_open_deadline_ledger` before writing
-    /// `is_active = false` to the policy.
-    ///
-    /// # is_terminal() contract
-    ///
-    /// `Appealed` is intentionally **not** a terminal state — the claim is
-    /// still in flight.  `is_terminal()` returns `false` for this variant so
-    /// that voting and finalization guards correctly reject further transitions
-    /// until the appeal round resolves.
+    /// `is_terminal()` returns `false` for `UnderAppeal` (not for `Appealed`,
+    /// which is never reached) so voting/finalization guards correctly reject
+    /// further transitions until the appeal round resolves.
     Appealed = 11,
 }
 

@@ -51,6 +51,26 @@
 //   - The `PolicyDeactivated` and `StrikeIncremented` events carry enough
 //     context for an appeal system to reverse their effects off-chain.
 //
+// ── Appeal vs. dispute: two distinct, mutually exclusive escalation paths ─────
+//
+// This module has two separate escalation mechanisms that are easy to
+// conflate by name. They apply to opposite outcomes and can never overlap on
+// the same claim, because each one's entry guard requires a status the other
+// one can't produce:
+//
+//   - `open_appeal` (claimant-initiated): requires `claim.status ==
+//     Rejected`. Lets the claimant contest a rejection. Transitions
+//     Rejected → UnderAppeal → (AppealApproved | AppealRejected).
+//   - `dispute_claim` (admin-initiated): requires `claim.status ==
+//     Approved`. Lets the admin freeze payout on an approved claim pending
+//     review. Transitions Approved → Disputed.
+//
+// A claim that is `Rejected` cannot be `Approved`, and a claim that is
+// `Approved`/`Disputed` cannot be `Rejected`/`UnderAppeal` — the statuses
+// partition the claim's lifecycle, so `open_appeal` and `dispute_claim` can
+// never both apply to the same claim at the same time. See
+// `tests/appeal_dispute_mutual_exclusion.rs` for a test asserting this.
+//
 // ── Governance risk documentation ─────────────────────────────────────────────
 //
 // Admin override path: the admin can call `admin_terminate_policy` with

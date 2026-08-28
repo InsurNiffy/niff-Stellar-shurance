@@ -131,3 +131,56 @@ export function trackRouteSegmentError(opts: {
   if (opts.digest) props.digest = opts.digest.slice(0, 128)
   track('route_segment_error', props)
 }
+
+// ── Appeal funnel analytics ─────────────────────────────────────────────────
+//
+// Mirrors the trackVoteCast pattern. Each call corresponds to one stage of the
+// appeal funnel:
+//   appeal_button_clicked → appeal_confirm_opened → appeal_simulated →
+//   appeal_signing → appeal_submitted → appeal_success | appeal_failure
+//
+// Error codes are coarse categorical values only (never PII).
+
+/** User taps "Appeal Decision" button — funnel entry point. */
+export function trackAppealButtonClicked(): void {
+  track('appeal_button_clicked')
+}
+
+/** User sees the confirmation modal (after clicking Appeal). */
+export function trackAppealConfirmOpened(): void {
+  track('appeal_confirm_opened')
+}
+
+/** Server-side simulation completed (pre-wallet step). */
+export function trackAppealSimulated(outcome: 'pass' | 'fail', errorCode?: string): void {
+  const props: Record<string, string | number | boolean> = { outcome }
+  if (errorCode) props.error_code = errorCode.slice(0, 64)
+  track('appeal_simulated', props)
+}
+
+/** Wallet signing prompt was opened. */
+export function trackAppealSigning(): void {
+  track('appeal_signing')
+}
+
+/** Signed XDR sent to the backend (final network call). */
+export function trackAppealSubmitted(): void {
+  track('appeal_submitted')
+}
+
+/** Backend confirmed the transaction on-chain. */
+export function trackAppealSuccess(): void {
+  track('appeal_success')
+}
+
+/** Any stage from simulation through submission resulted in an error. */
+export function trackAppealFailure(opts: {
+  stage: 'simulate' | 'sign' | 'submit'
+  errorCode?: string
+}): void {
+  const props: Record<string, string | number | boolean> = {
+    stage: opts.stage,
+  }
+  if (opts.errorCode) props.error_code = opts.errorCode.slice(0, 64)
+  track('appeal_failure', props)
+}
