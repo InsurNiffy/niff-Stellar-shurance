@@ -28,10 +28,17 @@ export interface AppealConfirmModalProps {
   onConfirm: (notifyOnOutcome: boolean) => void;
   /** Callback when user cancels */
   onCancel: () => void;
+  /** Ref to the element that triggered the modal — focus returns here on close (#1339) */
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
 /**
  * AppealConfirmModal — confirmation dialog explaining appeal rules before submission.
+ *
+ * Accessibility (#1339):
+ *  - aria-modal, aria-labelledby, aria-describedby matching VoteConfirmModal pattern
+ *  - onEscapeKeyDown blocked during submission (mirrors VoteConfirmModal)
+ *  - Focus returns to triggerRef element on close
  *
  * Appeal Rules:
  * - Only one appeal allowed per claim
@@ -48,6 +55,7 @@ export function AppealConfirmModal({
   submitting,
   onConfirm,
   onCancel,
+  triggerRef,
 }: AppealConfirmModalProps) {
   const [notifyOnOutcome, setNotifyOnOutcome] = useState(true);
 
@@ -57,14 +65,28 @@ export function AppealConfirmModal({
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && !submitting && onCancel()}>
       <DialogContent
         className="sm:max-w-md"
-        aria-describedby="appeal-description"
+        aria-modal="true"
+        aria-labelledby="appeal-confirm-title"
+        aria-describedby="appeal-confirm-desc"
+        onEscapeKeyDown={(e) => {
+          // Prevent ESC during submission to avoid accidental cancellation
+          // — mirrors VoteConfirmModal pattern (#1339)
+          if (submitting) {
+            e.preventDefault();
+          } else {
+            onCancel();
+          }
+        }}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle
+            id="appeal-confirm-title"
+            className="flex items-center gap-2"
+          >
             <AlertTriangle className="h-5 w-5 text-yellow-600" aria-hidden="true" />
             Appeal Claim Decision
           </DialogTitle>
-          <DialogDescription id="appeal-description">
+          <DialogDescription id="appeal-confirm-desc">
             Review the appeal rules before submitting your appeal for claim #{claim.claim_id}.
           </DialogDescription>
         </DialogHeader>
@@ -165,7 +187,10 @@ export function AppealConfirmModal({
           </div>
 
           {/* Warning */}
-          <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+          <div
+            role="note"
+            className="rounded-lg border border-yellow-200 bg-yellow-50 p-3"
+          >
             <p className="text-xs text-yellow-900">
               <AlertTriangle className="inline h-3 w-3 mr-1" aria-hidden="true" />
               <strong>Important:</strong> Submitting an appeal will require you to sign a
@@ -181,6 +206,7 @@ export function AppealConfirmModal({
             onClick={onCancel}
             disabled={submitting}
             className="w-full sm:w-auto"
+            aria-label="Cancel appeal and close dialog"
           >
             Cancel
           </Button>
@@ -189,8 +215,9 @@ export function AppealConfirmModal({
             disabled={submitting}
             className="w-full sm:w-auto"
             aria-label="Confirm and submit appeal"
+            aria-busy={submitting}
           >
-            {submitting ? 'Submitting...' : 'Confirm & Submit Appeal'}
+            {submitting ? 'Submitting…' : 'Confirm & Submit Appeal'}
           </Button>
         </DialogFooter>
       </DialogContent>

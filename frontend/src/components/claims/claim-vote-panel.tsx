@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle, XCircle, ExternalLink, AlertTriangle, AlertCircle } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -85,6 +85,15 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   const [appealSubmitted, setAppealSubmitted] = useState(false)
   const [appealTxHash, setAppealTxHash] = useState<string | null>(null)
   const [appealError, setAppealError] = useState<string | null>(null)
+  // #1337: track whether the appeal-status check is in flight
+  const [loadingAppealStatus, setLoadingAppealStatus] = useState(false)
+  // #1336: explicit ineligibility reason derived from API error codes
+  const [appealIneligibilityReason, setAppealIneligibilityReason] =
+    useState<AppealIneligibilityReason>(null)
+  // #1337: whether the last simulateAppeal call failed for a retryable reason
+  const [appealSimRetryable, setAppealSimRetryable] = useState(false)
+  // #1339: ref to the appeal button so focus can be restored on modal close
+  const appealTriggerRef = useRef<HTMLElement | null>(null)
 
   // Withdrawal state
   const [withdrawalState, setWithdrawalState] = useState<WithdrawalState>('idle')
@@ -133,9 +142,22 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   // ── Check appeal status for rejected claims ─────────────────────────────────
   useEffect(() => {
     if (!claim || claim.status !== 'Rejected') return
+    // #1337: surface loading state while the status check resolves
+    setLoadingAppealStatus(true)
     checkAppealStatus(claimId)
-      .then(setAppealSubmitted)
-      .catch(() => setAppealSubmitted(false))
+      .then((submitted) => {
+        setAppealSubmitted(submitted)
+        // #1336: if already appealed, surface the specific reason
+        if (submitted) {
+          setAppealIneligibilityReason('APPEAL_ALREADY_SUBMITTED')
+        }
+      })
+      .catch(() => {
+        // On error we default to not-submitted so the user can try to appeal;
+        // the backend will reject with a clear error if the appeal already exists.
+        setAppealSubmitted(false)
+      })
+      .finally(() => setLoadingAppealStatus(false))
   }, [claim, claimId])
 
   // ── Vote flow ───────────────────────────────────────────────────────────────
@@ -209,19 +231,50 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   }, [])
 
   // ── Appeal flow ─────────────────────────────────────────────────────────────
-  const handleAppealClick = useCallback(() => {
+  const handleAppealClick = useCallback((e?: React.MouseEvent<HTMLElement>) => {
+    // #1339: capture the trigger element for focus-return on close
+    if (e?.currentTarget) {
+      appealTriggerRef.current = e.currentTarget
+    }
     setAppealError(null)
+    setAppealSimRetryable(false)
+    // #1338: track funnel entry
+    trackAppealButtonClicked()
     setAppealState('confirming')
+    // #1338: track confirm modal opened
+    trackAppealConfirmOpened()
   }, [])
 
   const handleAppealConfirm = useCallback(async (notifyOnOutcome: boolean) => {
     if (!walletAddress) return
     setAppealState('signing')
+    setAppealSimRetryable(false)
 
     try {
       // Simulate appeal first
       const simErr = await simulateAppeal(claimId, walletAddress)
       if (simErr) {
+        // #1338: track simulation failure with error code if available
+        const errCode = simErr  // simErr is a message string from simulateAppeal
+        trackAppealSimulated('fail', errCode)
+        trackAppealFailure({ stage: 'simulate', errorCode: errCode })
+
+        // #1337: determine whether this is an ineligibility error (not retryable)
+        // vs a transient failure (retryable). Ineligibility codes are from APPEAL_ERROR_MESSAGES.
+        const INELIGIBILITY_CODES = new Set([
+          'NOT_CLAIMANT',
+          'CLAIM_NOT_REJECTED',
+          'APPEAL_ALREADY_SUBMITTED',
+          'APPEAL_WINDOW_CLOSED',
+        ])
+        const isIneligible = INELIGIBILITY_CODES.has(simErr)
+        setAppealSimRetryable(!isIneligible)
+
+        // #1336: surface the specific ineligibility reason when we can map it
+        if (isIneligible && (simErr as AppealIneligibilityReason)) {
+          setAppealIneligibilityReason(simErr as AppealIneligibilityReason)
+        }
+
         setAppealError(simErr)
         setAppealState('idle')
         toast({
@@ -232,15 +285,27 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         return
       }
 
+      // #1338: simulation passed
+      trackAppealSimulated('pass')
+
+      // #1338: wallet signing step
+      trackAppealSigning()
+      setAppealState('signing')
+
       // Request wallet signature
       const signedXdr = await signTransaction(`appeal:${claimId}`)
 
+      // #1338: signed — about to submit
+      trackAppealSubmitted()
       setAppealState('submitting')
       const result = await submitAppeal(claimId, walletAddress, signedXdr)
 
       setAppealTxHash(result.transactionHash)
       setAppealSubmitted(true)
       setAppealState('done')
+
+      // #1338: confirmed on-chain
+      trackAppealSuccess()
 
       // Reload claim to get updated status
       await loadClaim()
@@ -261,12 +326,34 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         description: 'Your appeal has been submitted successfully. A new voting window is now open.',
       })
     } catch (e) {
-      const msg =
-        e instanceof VoteAPIError
-          ? getAppealErrorMessage(e)
-          : e instanceof Error
-            ? e.message
-            : 'Appeal submission failed'
+      const isVoteErr = e instanceof VoteAPIError
+      const msg = isVoteErr
+        ? getAppealErrorMessage(e)
+        : e instanceof Error
+          ? e.message
+          : 'Appeal submission failed'
+
+      // #1338: track failure at the right stage
+      const stage = appealState === 'submitting' ? 'submit' : 'sign'
+      trackAppealFailure({
+        stage,
+        errorCode: isVoteErr ? e.code : undefined,
+      })
+
+      // #1336: if the backend returned an ineligibility code, surface it
+      if (isVoteErr) {
+        const code = e.code as AppealIneligibilityReason
+        if (
+          code === 'NOT_CLAIMANT' ||
+          code === 'CLAIM_NOT_REJECTED' ||
+          code === 'APPEAL_ALREADY_SUBMITTED' ||
+          code === 'APPEAL_WINDOW_CLOSED'
+        ) {
+          setAppealIneligibilityReason(code)
+          setAppealSubmitted(code === 'APPEAL_ALREADY_SUBMITTED')
+        }
+      }
+
       setAppealError(msg)
       toast({ title: 'Appeal failed', description: msg, variant: 'destructive' })
       setAppealState('idle')
@@ -479,14 +566,46 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
       )}
 
       {/* Appeal button for rejected claims */}
-      {claim.status === 'Rejected' && !appealSubmitted && (
+      {claim.status === 'Rejected' && (
         <AppealButton
           claim={claim}
           walletAddress={walletAddress}
+          loadingAppealStatus={loadingAppealStatus}
+          ineligibilityReason={appealIneligibilityReason}
           submitting={appealState === 'signing' || appealState === 'submitting'}
-          onClick={handleAppealClick}
+          onClick={(e) => handleAppealClick(e)}
           className="mt-4"
         />
+      )}
+
+      {/* #1337: Retry affordance when simulateAppeal fails for a transient (non-ineligibility) reason */}
+      {appealSimRetryable && appealError && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-xs text-yellow-900"
+        >
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <div className="flex-1 space-y-1">
+            <p>
+              <strong>Pre-flight check failed:</strong> {appealError}
+            </p>
+            <p className="text-muted-foreground">This may be a temporary issue. You can try again.</p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 text-xs"
+            onClick={() => {
+              setAppealError(null)
+              setAppealSimRetryable(false)
+              setAppealState('confirming')
+            }}
+            aria-label="Retry appeal submission"
+          >
+            <RefreshCw className="mr-1 h-3 w-3" aria-hidden="true" />
+            Retry
+          </Button>
+        </div>
       )}
 
       {/* Appeal error */}
@@ -627,6 +746,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         submitting={appealState === 'signing' || appealState === 'submitting'}
         onConfirm={handleAppealConfirm}
         onCancel={handleAppealCancel}
+        triggerRef={appealTriggerRef}
       />
 
       {/* Withdrawal confirmation dialog */}
