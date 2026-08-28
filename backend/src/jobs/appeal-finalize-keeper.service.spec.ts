@@ -27,6 +27,37 @@ describe('AppealFinalizeKeeperService', () => {
   });
 
   describe('runFinalizationCycle', () => {
+    it('correctly identifies expired vs non-expired UNDER_APPEAL claims', async () => {
+      mockConfigService.get.mockReturnValue('GSOMEACCOUNT');
+      mockPrisma.claim.findMany.mockResolvedValue([
+        { id: 1, status: 'UNDER_APPEAL' },
+        { id: 2, status: 'UNDER_APPEAL' },
+      ]);
+      mockSoroban.getLatestLedger.mockResolvedValue(10000);
+      mockSoroban.simulateGetClaimsBatch.mockResolvedValue([
+        { status: 2, appeal_open_deadline_ledger: 9000 }, // Expired
+        { status: 2, appeal_open_deadline_ledger: 11000 }, // Not expired
+      ]);
+      mockSoroban.finalizeAppeal.mockResolvedValue({
+        txHash: 'deadbeef',
+        ledger: 10001,
+        onChainStatus: 'Approved',
+      });
+
+      const logSpy = jest.spyOn(service['logger'], 'log');
+
+      await service.runFinalizationCycle();
+
+      // Should identify 1 expired claim and log the distinction
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Found 1 expired appeal'),
+      );
+      expect(mockSoroban.finalizeAppeal).toHaveBeenCalledWith(1);
+      expect(mockSoroban.finalizeAppeal).toHaveBeenCalledTimes(1);
+
+      logSpy.mockRestore();
+    });
+
     it('identifies expired UNDER_APPEAL claims and calls finalize_appeal', async () => {
       mockConfigService.get.mockReturnValue('GSOMEACCOUNT');
       mockPrisma.claim.findMany.mockResolvedValue([
@@ -163,6 +194,112 @@ describe('AppealFinalizeKeeperService', () => {
 
       // Both runs should succeed (idempotent)
       expect(mockSoroban.finalizeAppeal).toHaveBeenCalledTimes(2);
+    });
+
+    it('tracks persistent failures across cycles and alerts at threshold', async () => {
+      mockConfigService.get.mockReturnValue('GSOMEACCOUNT');
+      mockPrisma.claim.findMany.mockResolvedValue([
+        { id: 1, status: 'UNDER_APPEAL' },
+      ]);
+      mockSoroban.getLatestLedger.mockResolvedValue(10000);
+      mockSoroban.simulateGetClaimsBatch.mockResolvedValue([
+        { status: 2, appeal_open_deadline_ledger: 9000 },
+      ]);
+      // Persistent failure across cycles
+      mockSoroban.finalizeAppeal.mockRejectedValue(
+        new Error('Persistent RPC failure'),
+      );
+
+      const logSpy = jest.spyOn(service['logger'], 'warn');
+
+      // First cycle: fails 3 times (retries), no alert yet
+      await service.runFinalizationCycle();
+      expect(logSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('persistent failure'),
+      );
+
+      // Second cycle: fails 3 times again, reaches threshold
+      await service.runFinalizationCycle();
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/ALERT.*persistent failure.*1.*Manual intervention/),
+      );
+
+      logSpy.mockRestore();
+    });
+
+    it('resets failure counter on successful finalization', async () => {
+      mockConfigService.get.mockReturnValue('GSOMEACCOUNT');
+      mockPrisma.claim.findMany.mockResolvedValue([
+        { id: 1, status: 'UNDER_APPEAL' },
+      ]);
+      mockSoroban.getLatestLedger.mockResolvedValue(10000);
+      mockSoroban.simulateGetClaimsBatch.mockResolvedValue([
+        { status: 2, appeal_open_deadline_ledger: 9000 },
+      ]);
+
+      // First call fails, then succeeds on retry
+      mockSoroban.finalizeAppeal
+        .mockRejectedValueOnce(new Error('Transient error'))
+        .mockResolvedValueOnce({
+          txHash: 'deadbeef',
+          ledger: 10001,
+          onChainStatus: 'Approved',
+        });
+
+      const logSpy = jest.spyOn(service['logger'], 'warn');
+
+      await service.runFinalizationCycle();
+
+      // Failure counter should be reset after successful retry
+      // Run again with same claim still expired but now succeeds immediately
+      mockSoroban.finalizeAppeal.mockResolvedValueOnce({
+        txHash: 'deadbeef2',
+        ledger: 10002,
+        onChainStatus: 'Approved',
+      });
+
+      await service.runFinalizationCycle();
+
+      // No persistent failure alert should occur since counter was reset
+      expect(logSpy).not.toHaveBeenCalledWith(
+        expect.stringMatching(/ALERT.*persistent failure/),
+      );
+
+      logSpy.mockRestore();
+    });
+
+    it('skips claims not found on-chain without failing the entire cycle', async () => {
+      mockConfigService.get.mockReturnValue('GSOMEACCOUNT');
+      mockPrisma.claim.findMany.mockResolvedValue([
+        { id: 1, status: 'UNDER_APPEAL' },
+        { id: 2, status: 'UNDER_APPEAL' },
+      ]);
+      mockSoroban.getLatestLedger.mockResolvedValue(10000);
+      // One claim not found on-chain (null)
+      mockSoroban.simulateGetClaimsBatch.mockResolvedValue([
+        null,
+        { status: 2, appeal_open_deadline_ledger: 9000 },
+      ]);
+      mockSoroban.finalizeAppeal.mockResolvedValue({
+        txHash: 'deadbeef',
+        ledger: 10001,
+        onChainStatus: 'Approved',
+      });
+
+      const logSpy = jest.spyOn(service['logger'], 'debug');
+
+      await service.runFinalizationCycle();
+
+      // Should log debug for skipped claim
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('not found on-chain'),
+      );
+
+      // Should only finalize the one found on-chain
+      expect(mockSoroban.finalizeAppeal).toHaveBeenCalledWith(2);
+      expect(mockSoroban.finalizeAppeal).toHaveBeenCalledTimes(1);
+
+      logSpy.mockRestore();
     });
   });
 });
