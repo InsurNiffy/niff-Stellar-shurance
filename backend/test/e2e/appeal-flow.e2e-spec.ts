@@ -26,6 +26,8 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { MetricsService } from '../../src/metrics/metrics.service';
 import { SorobanService } from '../../src/rpc/soroban.service';
 import { IndexerService } from '../../src/indexer/indexer.service';
+import { FeatureFlagsService } from '../../src/feature-flags/feature-flags.service';
+import { APPEAL_FEATURE_FLAG } from '../../src/claims/claims.constants';
 import { mintUserToken, mintAdminToken } from '../helpers/jwt';
 
 // ── Test fixtures ────────────────────────────────────────────────────────────
@@ -120,6 +122,23 @@ describe('Appeal flow (E2E #1331)', () => {
     soroban = moduleFixture.get(SorobanService);
     indexer = moduleFixture.get(IndexerService);
 
+    // ── Enable the appeal feature flag (#1355) ───────────────────────────────
+    // The appeal endpoints are gated by FeatureFlagsGuard, which reads the
+    // in-memory flag map loaded from the DB at boot. Seed the row and refresh
+    // so the gated routes are reachable in this suite.
+    const featureFlags = moduleFixture.get(FeatureFlagsService);
+    await prisma.featureFlag.upsert({
+      where:  { key: APPEAL_FEATURE_FLAG },
+      create: {
+        key: APPEAL_FEATURE_FLAG,
+        enabled: true,
+        description: '[experimental] appeal flow — enabled for e2e',
+        updatedBy: 'appeal-flow.e2e-spec',
+      },
+      update: { enabled: true },
+    });
+    await featureFlags.refreshFlags();
+
     // ── Mock SorobanService methods so no real network calls are made ────────
     jest.spyOn(soroban, 'buildAppealTransaction').mockResolvedValue({
       unsignedXdr: 'AAAAA_MOCK_UNSIGNED_XDR==',
@@ -151,6 +170,7 @@ describe('Appeal flow (E2E #1331)', () => {
       await prisma.claim.deleteMany({ where: { id } });
     }
     await prisma.policy.deleteMany({ where: { id: POLICY_ID } });
+    await prisma.featureFlag.deleteMany({ where: { key: APPEAL_FEATURE_FLAG } });
     await app.close();
   });
 

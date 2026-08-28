@@ -44,6 +44,8 @@ import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
 import { ClaimRateLimitGuard } from '../rate-limit/claim-rate-limit.guard';
 import { MAX_LIMIT, DEFAULT_LIMIT } from '../helpers/pagination';
 import { OptionalJwtAuthGuard } from '../tx/guards/optional-jwt.guard';
+import { Feature } from '../feature-flags/feature.decorator';
+import { APPEAL_FEATURE_FLAG } from './claims.constants';
 
 /** Maximum claim IDs accepted per status-poll or SSE subscription. */
 const MAX_WATCH_IDS = 50;
@@ -239,6 +241,9 @@ export class ClaimsController {
   }
 
   // ── Appeal endpoints ─────────────────────────────────────────────────────
+  // Both endpoints are gated behind the `claims_appeal_enabled` feature flag
+  // (#1355) so the appeal feature can be staged per environment. When the flag
+  // is off, FeatureFlagsGuard returns the configured disabled status (404/403).
 
   /**
    * POST /api/claims/:id/appeal/build-transaction
@@ -247,6 +252,7 @@ export class ClaimsController {
    * The client signs the XDR with their wallet and submits it via POST ./:id/appeal.
    */
   @Post(':id/appeal/build-transaction')
+  @Feature(APPEAL_FEATURE_FLAG)
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -275,6 +281,7 @@ export class ClaimsController {
    * result is returned without re-submitting or double-counting the appeal.
    */
   @Post(':id/appeal')
+  @Feature(APPEAL_FEATURE_FLAG)
   @UseGuards(JwtAuthGuard, ClaimRateLimitGuard, RateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

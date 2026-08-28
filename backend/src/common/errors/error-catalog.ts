@@ -198,6 +198,45 @@ export const ERROR_CATALOG = {
     i18nKey: 'errors.claim.alreadyFinalized',
     description: 'Claim has already been finalized and cannot be modified.',
   },
+  CLAIMS_PAUSED: {
+    code: 'CLAIMS_PAUSED',
+    httpStatus: HttpStatus.SERVICE_UNAVAILABLE,
+    i18nKey: 'errors.claim.claimsPaused',
+    description: 'Claim operations (including appeals) are paused by the contract admin.',
+  },
+
+  // ── Appeals ───────────────────────────────────────────────────────────────
+  // Emitted by the appeal endpoints (POST /claims/:id/appeal/build-transaction
+  // and POST /claims/:id/appeal). Each maps 1-to-1 onto a contract-side
+  // `validate::Error` variant surfaced through Soroban simulation.
+  NOT_CLAIMANT: {
+    code: 'NOT_CLAIMANT',
+    httpStatus: HttpStatus.FORBIDDEN,
+    i18nKey: 'errors.appeal.notClaimant',
+    description:
+      'Only the original claimant may appeal a claim; the calling wallet is a different address.',
+  },
+  CLAIM_NOT_REJECTED: {
+    code: 'CLAIM_NOT_REJECTED',
+    httpStatus: HttpStatus.CONFLICT,
+    i18nKey: 'errors.appeal.claimNotRejected',
+    description:
+      'Appeals are only permitted on rejected claims; this claim is in a different status.',
+  },
+  APPEAL_ALREADY_SUBMITTED: {
+    code: 'APPEAL_ALREADY_SUBMITTED',
+    httpStatus: HttpStatus.CONFLICT,
+    i18nKey: 'errors.appeal.alreadySubmitted',
+    description:
+      'An appeal has already been recorded for this claim (contract allows one appeal per claim).',
+  },
+  APPEAL_WINDOW_CLOSED: {
+    code: 'APPEAL_WINDOW_CLOSED',
+    httpStatus: HttpStatus.CONFLICT,
+    i18nKey: 'errors.appeal.windowClosed',
+    description:
+      'The appeal window closed; the current ledger is past the claim appeal_open_deadline_ledger.',
+  },
 
   // ── Rate limiting ─────────────────────────────────────────────────────────
   RATE_LIMIT_EXCEEDED: {

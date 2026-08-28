@@ -39,6 +39,21 @@ Returns all feature flags with their current state.
 ]
 ```
 
+### Read a Single Feature Flag (public)
+
+```
+GET /api/feature-flags/{key}
+```
+
+Read-only view of one allowlisted flag, used by the frontend `useFeatureFlag`
+hook so the UI gates on the same key the backend gates its endpoints with.
+Keys outside `ALLOWED_FLAG_KEYS` return 404.
+
+**Response:**
+```json
+{ "key": "claims_appeal_enabled", "enabled": true }
+```
+
 ### Update Feature Flag
 
 ```

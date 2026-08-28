@@ -1377,6 +1377,11 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   /**
    * Build an unsigned file_appeal transaction for a rejected claim.
    * Contract signature: file_appeal(claimant, claim_id, reason)
+   *
+   * Cost tracking (#1356): the `build_file_appeal` label is what makes this
+   * simulation show up as its own line item in cost monitoring. Any new appeal
+   * RPC call needs its own label added to the `rpc_method=~...` matcher in the
+   * `niffyinsure_rpc_cost` rules in backend/docs/prometheus-rules.yml.
    */
   async buildAppealTransaction(args: {
     claimant: string;
