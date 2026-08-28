@@ -760,6 +760,8 @@ impl NiffyInsure {
     }
 
     /// Admin-only: dispute an approved claim during the dispute window.
+    ///
+    /// Distinct from `open_appeal` and `escalate_claim` — see `docs/GLOSSARY.md`.
     pub fn admin_dispute_claim(env: Env, claim_id: u64) -> Result<(), validate::Error> {
         let admin = storage::get_admin(&env);
         admin.require_auth();
@@ -770,6 +772,8 @@ impl NiffyInsure {
     ///
     /// Allows fast-tracking stalled claims when voter turnout is too low to reach quorum.
     /// `new_deadline_ledger` must be in the future and earlier than the current deadline.
+    ///
+    /// Distinct from `open_appeal` and `admin_dispute_claim` — see `docs/GLOSSARY.md`.
     pub fn escalate_claim(
         env: Env,
         claim_id: u64,
@@ -783,6 +787,8 @@ impl NiffyInsure {
     // ── Appeal mechanism (Issue #1) ───────────────────────────────────────────
 
     /// Claimant-only: open an appeal on a rejected claim within the appeal window.
+    ///
+    /// Distinct from `admin_dispute_claim` and `escalate_claim` — see `docs/GLOSSARY.md`.
     ///
     /// Preconditions: status == Rejected, within appeal_open_deadline_ledger, appeals_count < 1.
     /// Transitions: Rejected → UnderAppeal. Resets vote counts, sets appeal_deadline_ledger,

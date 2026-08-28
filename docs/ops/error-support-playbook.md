@@ -154,6 +154,24 @@ All codes are sourced from `backend/src/common/errors/error-catalog.ts`.
 2. **Tier 2** — Support agent: collect `requestId`, look up logs, check Stellar explorer.
 3. **Tier 3** — Engineering: provide `requestId` + full log context + Stellar tx hash.
 
+### Escalation matrix — which team owns which symptom
+
+Use this to route a Tier 3 escalation to the right team the first time. Always
+attach the `requestId`; attach the claim id and tx hash where the row asks.
+
+| Workflow | Symptom | Owning team | Attach |
+|---|---|---|---|
+| **Appeal workflow** — appeal rejected on submit with `NOT_CLAIMANT`, `CLAIM_NOT_REJECTED`, `APPEAL_ALREADY_SUBMITTED`, or `APPEAL_WINDOW_CLOSED` | The contract refused the appeal. Usually **not a bug** — check the claim's status and appeal window first (see `docs/GLOSSARY.md` for the preconditions). | **Contract** — only if the claim genuinely meets the preconditions and the call still fails | Claim id, claimant address, current claim status, the ledger the user tried at |
+| **Appeal workflow** — appeal submitted on-chain but the UI still shows the claim as `Rejected` | Indexer lag or a stalled decode of `appeal_approved` / `appeal_rejected`. Check the Indexer Ledger Gap panel before escalating. | **Backend / indexer** | Claim id, appeal tx hash, time of submission, current indexer ledger gap |
+| **Appeal workflow** — appeal stuck in `UNDER_APPEAL` well past its deadline | The appeal vote never got finalized. `finalize_appeal` is permissionless, so this is a keeper problem, not a contract one. Admin can force-finalize via `POST /admin/claims/:id/finalize-appeal`. | **Backend** (keeper); **Contract** only if a manual `finalize_appeal` also fails | Claim id, `appeal_deadline_ledger`, current ledger |
+| **Appeal workflow** — Appeal button missing, greyed out, or showing the wrong ineligibility message | Client-side eligibility logic or a stale appeal-status fetch. The user is not blocked on-chain. | **Frontend** | Claim id, connected wallet address, the on-screen message, browser + screenshot |
+| **Appeal workflow** — appeal build/simulate call returns 5xx or times out | Soroban RPC or simulation failure on the build path. | **Backend** | `requestId`, claim id, timestamp |
+
+> **Appeal vs. dispute vs. escalation:** these are three different mechanisms
+> with different triggering actors and preconditions. A user saying "my claim
+> was disputed" usually means their appeal was rejected. Check
+> [`docs/GLOSSARY.md`](../GLOSSARY.md) before routing.
+
 ---
 
 ## 6. PII Policy for Error Events
