@@ -252,6 +252,28 @@ export interface ClaimStatusChangedEvent {
   at_ledger: number;
 }
 
+/** appeal_opened — emitted when a claimant opens an appeal on a rejected claim.
+ *  topics: (NS_POLICY, "appeal_opened", claim_id: u64) */
+export interface AppealOpenedEvent {
+  policy_id: number;
+  claimant: string;
+  appeal_deadline_ledger: number;
+  quorum_bps: number;
+  at_ledger: number;
+}
+
+/** appeal_resolved — emitted when an appeal vote round resolves.
+ *  topics: (NS_POLICY, "appeal_resolved", claim_id: u64) */
+export interface AppealResolvedEvent {
+  policy_id: number;
+  claimant: string;
+  /** On-chain ClaimStatus: AppealApproved | AppealRejected */
+  outcome: string;
+  approve_votes: number;
+  reject_votes: number;
+  at_ledger: number;
+}
+
 /** payout_asset_override_applied — emitted when a PolicyTypeConfig override is used.
  *  topics: (NS_POLICY, "payout_asset_override_applied", claim_id: u64) */
 export interface PayoutAssetOverrideAppliedEvent {
@@ -328,6 +350,8 @@ export type EventKey =
   | 'niffyins:clm_final'
   | 'niffyins:clm_paid'
   | 'niffyins:claim_status_changed'
+  | 'niffyinsure:appeal_opened'
+  | 'niffyinsure:appeal_resolved'
   | 'niffyinsure:claim_withdrawn'
   | 'niffyinsure:PolicyInitiated'
   | 'niffyinsure:PolicyRenewed'
@@ -386,6 +410,12 @@ export const EVENT_PARSERS: Record<
   },
   'niffyins:claim_status_changed': {
     1: (r) => r as ClaimStatusChangedEvent,
+  },
+  'niffyinsure:appeal_opened': {
+    1: (r) => r as AppealOpenedEvent,
+  },
+  'niffyinsure:appeal_resolved': {
+    1: (r) => r as AppealResolvedEvent,
   },
   'niffyinsure:claim_withdrawn': {
     1: (r) => r as ClaimWithdrawnEvent,

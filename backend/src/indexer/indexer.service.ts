@@ -85,6 +85,37 @@ const getStringArray = (value: unknown): string[] => {
   return value.map((entry) => getStringValue(entry));
 };
 
+/** Map on-chain appeal outcome labels onto Prisma ClaimStatus appeal variants. */
+const mapAppealOutcome = (
+  outcome: unknown,
+  opts: { allowBareApprovedRejected?: boolean } = {},
+): 'APPEAL_APPROVED' | 'APPEAL_REJECTED' | null => {
+  const normalized = getStringValue(outcome).toLowerCase().replace(/_/g, '');
+  if (normalized === 'appealapproved') {
+    return 'APPEAL_APPROVED';
+  }
+  if (normalized === 'appealrejected') {
+    return 'APPEAL_REJECTED';
+  }
+  // Legacy appeal_approved / appeal_rejected topic handlers pass APPROVED|REJECTED.
+  if (opts.allowBareApprovedRejected) {
+    if (normalized === 'approved') return 'APPEAL_APPROVED';
+    if (normalized === 'rejected') return 'APPEAL_REJECTED';
+  }
+  return null;
+};
+
+/** Resolve claim_id from payload or topic[2] (Soroban #[topic] fields). */
+const resolveClaimId = (data: EventPayload, topics: StellarNativeValue[]): number => {
+  if (data.claim_id != null && data.claim_id !== '') {
+    return getNumberValue(data.claim_id);
+  }
+  if (topics[2] != null) {
+    return getNumberValue(topics[2]);
+  }
+  return NaN;
+};
+
 @Injectable()
 export class IndexerService {
   private readonly logger = new Logger(IndexerService.name);
@@ -378,19 +409,33 @@ export class IndexerService {
         await this.handleAssetRemoved(tx, dataNative, event);
       } else if (
         (mainTopic === 'appeal' && subTopic === 'filed') ||
-        (mainTopic === 'niffyinsure' && subTopic === 'appeal_filed')
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_filed') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_opened')
       ) {
-        await this.handleAppealFiled(tx, dataNative, event);
+        await this.handleAppealOpened(tx, dataNative, event, topics);
       } else if (
         (mainTopic === 'appeal' && subTopic === 'approved') ||
         (mainTopic === 'niffyinsure' && subTopic === 'appeal_approved')
       ) {
-        await this.handleAppealResolved(tx, dataNative, event, 'APPROVED');
+        await this.handleAppealResolved(tx, dataNative, event, 'APPEAL_APPROVED', topics);
       } else if (
         (mainTopic === 'appeal' && subTopic === 'rejected') ||
         (mainTopic === 'niffyinsure' && subTopic === 'appeal_rejected')
       ) {
-        await this.handleAppealResolved(tx, dataNative, event, 'REJECTED');
+        await this.handleAppealResolved(tx, dataNative, event, 'APPEAL_REJECTED', topics);
+      } else if (mainTopic === 'niffyinsure' && subTopic === 'appeal_resolved') {
+        const mapped = mapAppealOutcome(dataNative.outcome, {
+          allowBareApprovedRejected: true,
+        });
+        if (mapped) {
+          await this.handleAppealResolved(tx, dataNative, event, mapped, topics);
+        } else {
+          this.logger.warn(
+            `Skipping appeal_resolved with unknown outcome=${String(dataNative.outcome)}`,
+          );
+        }
+      } else if (mainTopic === 'niffyins' && subTopic === 'claim_status_changed') {
+        await this.handleAppealClaimStatusChanged(tx, dataNative, event, topics);
       }
 
       await this.advanceCursorInTx(tx, network, event.ledger);
@@ -650,17 +695,43 @@ export class IndexerService {
   }
 
   /**
-   * On-chain `AppealFiled` (topics: ['appeal', 'filed']) — a claimant has
-   * opened an appeal on a finalized claim. Updates the DB status to UNDER_APPEAL.
+   * On-chain `AppealOpened` (topics: ['niffyinsure', 'appeal_opened', claim_id])
+   * plus legacy aliases. Sets UNDER_APPEAL and reconciles `appealsCount` with the
+   * optimistic write in ClaimsService.submitAppealTransaction (increment only when
+   * the API path has not already moved the row).
    */
-  private async handleAppealFiled(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
-    const claimId = getNumberValue(data.claim_id);
+  private async handleAppealOpened(
+    tx: IndexerTx,
+    data: EventPayload,
+    event: SorobanEvent,
+    topics: StellarNativeValue[],
+  ) {
+    const claimId = resolveClaimId(data, topics);
+    if (!Number.isFinite(claimId)) {
+      this.logger.warn('Skipping AppealOpened: missing claim_id');
+      return;
+    }
+
+    const existing = await tx.claim.findFirst({
+      where: { id: claimId, deletedAt: null },
+      select: { status: true, appealsCount: true },
+    });
+    if (!existing) {
+      this.logger.warn(`Skipping AppealOpened for missing claim ${claimId}`);
+      return;
+    }
+
+    // Optimistic API submit already sets UNDER_APPEAL + increments appealsCount.
+    // Only bump the counter when chain caught up without that write (indexer-only path).
+    const alreadyCounted =
+      existing.status === 'UNDER_APPEAL' && existing.appealsCount > 0;
 
     await tx.claim.updateMany({
       where: { id: claimId, deletedAt: null },
       data: {
         status: 'UNDER_APPEAL',
         updatedAtLedger: event.ledger,
+        ...(alreadyCounted ? {} : { appealsCount: { increment: 1 } }),
       },
     });
 
@@ -674,18 +745,57 @@ export class IndexerService {
   }
 
   /**
-   * On-chain `AppealApproved` or `AppealRejected` — the appeal has been
-   * resolved. Updates the DB status and records appeal-outcome metrics.
-   *
-   * @param outcome - 'APPROVED' or 'REJECTED'
+   * Appeal-outcome `ClaimStatusChanged` (UnderAppeal / AppealApproved / AppealRejected).
+   * Non-appeal status transitions are ignored here — other handlers own those paths.
+   */
+  private async handleAppealClaimStatusChanged(
+    tx: IndexerTx,
+    data: EventPayload,
+    event: SorobanEvent,
+    topics: StellarNativeValue[],
+  ) {
+    const newStatus = getStringValue(data.new_status);
+    const normalized = newStatus.toLowerCase().replace(/_/g, '');
+
+    if (normalized === 'underappeal') {
+      await this.handleAppealOpened(tx, data, event, topics);
+      return;
+    }
+
+    const outcome = mapAppealOutcome(newStatus);
+    if (outcome) {
+      await this.handleAppealResolved(tx, data, event, outcome, topics);
+    }
+  }
+
+  /**
+   * On-chain `AppealResolved` / appeal ClaimStatusChanged — persist APPEAL_APPROVED
+   * or APPEAL_REJECTED and record appeal-outcome metrics once per transition.
    */
   private async handleAppealResolved(
     tx: IndexerTx,
     data: EventPayload,
     event: SorobanEvent,
-    outcome: 'APPROVED' | 'REJECTED',
+    outcome: 'APPEAL_APPROVED' | 'APPEAL_REJECTED',
+    topics: StellarNativeValue[] = [],
   ) {
-    const claimId = getNumberValue(data.claim_id);
+    const claimId = resolveClaimId(data, topics);
+    if (!Number.isFinite(claimId)) {
+      this.logger.warn('Skipping AppealResolved: missing claim_id');
+      return;
+    }
+
+    const existing = await tx.claim.findFirst({
+      where: { id: claimId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!existing) {
+      this.logger.warn(`Skipping AppealResolved for missing claim ${claimId}`);
+      return;
+    }
+
+    const alreadyTerminal =
+      existing.status === 'APPEAL_APPROVED' || existing.status === 'APPEAL_REJECTED';
 
     await tx.claim.updateMany({
       where: { id: claimId, deletedAt: null },
@@ -696,11 +806,14 @@ export class IndexerService {
       },
     });
 
-    // Record appeal resolution metrics (task #1328)
-    if (outcome === 'APPROVED') {
-      this.metrics?.recordAppealApproved();
-    } else {
-      this.metrics?.recordAppealRejected();
+    // Record appeal resolution metrics once (ClaimStatusChanged + AppealResolved
+    // both fire on-chain; skip if we already applied a terminal appeal status).
+    if (!alreadyTerminal) {
+      if (outcome === 'APPEAL_APPROVED') {
+        this.metrics?.recordAppealApproved();
+      } else {
+        this.metrics?.recordAppealRejected();
+      }
     }
 
     await this.claimEvents?.publish({

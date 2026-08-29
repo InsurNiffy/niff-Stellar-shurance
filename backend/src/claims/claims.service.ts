@@ -474,8 +474,9 @@ export class ClaimsService {
     const result = await this.soroban.submitTransaction(transactionXdr);
 
     // Persist appeal tracking fields and set claim status to UNDER_APPEAL.
-    // The indexer will later decode the appeal_approved / appeal_rejected event
-    // and move the claim to APPROVED or REJECTED.
+    // The indexer later decodes AppealOpened / claim_status_changed(UnderAppeal)
+    // and AppealResolved / claim_status_changed(AppealApproved|AppealRejected)
+    // to keep the row in sync without relying solely on this optimistic write.
     await this.prisma.claim.update({
       where: { id: claimId },
       data: {
