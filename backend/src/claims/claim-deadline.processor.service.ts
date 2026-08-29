@@ -14,6 +14,7 @@ import {
   CLAIM_DEADLINE_BATCH_SIZE,
   CLAIM_VOTING_WINDOW_LEDGERS,
 } from './claim-deadline.constants';
+import { APPEAL_OPEN_WINDOW_LEDGERS } from './appeal-window-reminder.constants';
 
 function mapOnChainStatus(status: string): ClaimStatus | null {
   const normalized = status.toLowerCase();
@@ -92,6 +93,13 @@ export class ClaimDeadlineProcessorService {
           ...(dbStatus ? { status: dbStatus } : {}),
           updatedAtLedger: result.ledger,
           txHash: result.txHash,
+          // Mirror on-chain appeal_open_deadline_ledger so reminder scans can query Postgres.
+          ...(dbStatus === 'REJECTED'
+            ? {
+                appealOpenDeadlineLedger:
+                  result.ledger + APPEAL_OPEN_WINDOW_LEDGERS,
+              }
+            : {}),
         },
       });
 

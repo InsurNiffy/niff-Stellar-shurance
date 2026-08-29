@@ -150,6 +150,10 @@ export interface EnvironmentVariables {
   PAGINATION_HMAC_SECRET: string;
   DISABLE_REINDEX_WORKER: string;
   RENEWAL_REMINDER_CRON: string;
+  /** Cron for scanning REJECTED claims nearing appeal_open_deadline_ledger. */
+  APPEAL_WINDOW_REMINDER_CRON: string;
+  /** Ledgers before appeal_open_deadline_ledger to notify the claimant. */
+  APPEAL_WINDOW_REMINDER_LEDGERS: number;
   /** Maximum pending jobs in tx-submit queue before rejecting with 429 backpressure. */
   TX_SUBMIT_QUEUE_MAX_DEPTH: number;
   /** Per-queue BullMQ concurrency levels: format "queue-name=N,..." Defaults per queue if not specified. */
@@ -1452,6 +1456,24 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '0 * * * *',
     required: 'required',
     schema: Joi.string().default('0 * * * *'),
+  },
+  APPEAL_WINDOW_REMINDER_CRON: {
+    key: 'APPEAL_WINDOW_REMINDER_CRON',
+    section: 'Operations',
+    description:
+      'Cron expression for appeal-window closing reminder scans (REJECTED claims nearing appeal_open_deadline_ledger).',
+    example: '0 */15 * * * *',
+    required: 'optional',
+    schema: Joi.string().default('0 */15 * * * *'),
+  },
+  APPEAL_WINDOW_REMINDER_LEDGERS: {
+    key: 'APPEAL_WINDOW_REMINDER_LEDGERS',
+    section: 'Operations',
+    description:
+      'How many ledgers before appeal_open_deadline_ledger to notify the claimant (default 17280 ≈ 1 day).',
+    example: '17280',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(17280),
   },
   TX_SUBMIT_QUEUE_MAX_DEPTH: {
     key: 'TX_SUBMIT_QUEUE_MAX_DEPTH',

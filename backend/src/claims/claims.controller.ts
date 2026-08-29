@@ -184,6 +184,23 @@ export class ClaimsController {
     return this.claimsService.getClaimVoters(id);
   }
 
+  /**
+   * GET /api/claims/:id/appeal/voters
+   *
+   * Lists the appeal-round electorate (offline mirror of snapshot_appeal_voters)
+   * once an appeal is open. Same DTO shape as GET /claims/:id/voters.
+   */
+  @Get(':id/appeal/voters')
+  @Feature(APPEAL_FEATURE_FLAG)
+  @ApiOperation({ summary: 'List eligible voters for the current appeal round' })
+  @ApiResponse({ status: 200, description: 'Appeal voters with eligibility', type: [ClaimVoterDto] })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  async getAppealVoters(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ClaimVoterDto[]> {
+    return this.claimsService.getAppealVoters(id);
+  }
+
   @Post(':id/evidence/metadata')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
