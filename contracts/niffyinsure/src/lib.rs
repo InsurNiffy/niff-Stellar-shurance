@@ -2367,6 +2367,15 @@ impl NiffyInsure {
         rolling_claim_cap::reset_on_renewal(&env, &holder, policy_id, now);
     }
 
+    /// Test-only: force `appeal_open_deadline_ledger` so overflow scenarios can
+    /// exercise `open_appeal` near `u32::MAX` without filing at that ledger
+    /// (Soroban host TTL arithmetic panics near the u32 ceiling).
+    pub fn test_set_appeal_open_deadline(env: Env, claim_id: u64, deadline: u32) {
+        let mut claim = storage::get_claim(&env, claim_id).expect("claim not found");
+        claim.appeal_open_deadline_ledger = deadline;
+        storage::set_claim(&env, &claim);
+    }
+
     pub fn admin_set_open_claim_count(
         env: Env,
         admin: Address,

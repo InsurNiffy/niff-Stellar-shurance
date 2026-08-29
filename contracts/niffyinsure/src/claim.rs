@@ -1648,6 +1648,13 @@ pub struct AppealVoteCast {
 /// A fresh voter snapshot is taken at appeal opening so new policy-holders
 /// can participate in the appeal vote (and departed ones cannot).
 pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), Error> {
+    let now = env.ledger().sequence();
+    // Fail fast before any TTL-touching storage so near-u32::MAX ledgers
+    // surface Overflow instead of a host InternalError on extend_ttl.
+    let appeal_deadline = now
+        .checked_add(ledger::APPEAL_VOTE_WINDOW_LEDGERS)
+        .ok_or(Error::Overflow)?;
+
     storage::assert_claims_not_paused(env);
 
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
@@ -1661,8 +1668,6 @@ pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), E
     if claim.status != ClaimStatus::Rejected {
         return Err(Error::ClaimAlreadyTerminal);
     }
-
-    let now = env.ledger().sequence();
 
     // Appeal window: must be called within APPEAL_OPEN_WINDOW_LEDGERS of rejection.
     if now > claim.appeal_open_deadline_ledger {
@@ -1679,9 +1684,7 @@ pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), E
     claim.appeal_reject_votes = 0;
 
     // Set the appeal voting deadline.
-    claim.appeal_deadline_ledger = now
-        .checked_add(ledger::APPEAL_VOTE_WINDOW_LEDGERS)
-        .ok_or(Error::Overflow)?;
+    claim.appeal_deadline_ledger = appeal_deadline;
 
     claim.appeals_count = claim.appeals_count.saturating_add(1);
 
@@ -1998,4 +2001,30 @@ pub fn escalate_claim(env: &Env, claim_id: u64, new_deadline_ledger: u32) -> Res
     .publish(env);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod open_appeal_overflow_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Address, Env,
+    };
+
+    /// Contract entrypoints auto-extend instance TTL and panic near u32::MAX.
+    /// Call `open_appeal` directly so the fail-fast Overflow path is reachable.
+    #[test]
+    fn open_appeal_returns_overflow_near_u32_max() {
+        let overflow_now = u32::MAX - ledger::APPEAL_VOTE_WINDOW_LEDGERS + 1;
+        assert!(overflow_now
+            .checked_add(ledger::APPEAL_VOTE_WINDOW_LEDGERS)
+            .is_none());
+
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.sequence_number = overflow_now);
+        let claimant = Address::generate(&env);
+
+        let err = open_appeal(&env, &claimant, 1).expect_err("must Overflow near u32::MAX");
+        assert_eq!(err, Error::Overflow);
+    }
 }
