@@ -117,6 +117,10 @@ export interface EnvironmentVariables {
   SOLVENCY_TENANT_ID: string;
   SOLVENCY_ALERT_WEBHOOK_URL: string;
   SOLVENCY_ALERT_WEBHOOK_SECRET: string;
+  APPEAL_SLA_MONITOR_ENABLED: string;
+  APPEAL_SLA_GRACE_LEDGERS: number;
+  APPEAL_SLA_ALERT_WEBHOOK_URL: string;
+  APPEAL_SLA_ALERT_WEBHOOK_SECRET: string;
   IPFS_PIN_CHECK_ENABLED: string;
   IPFS_PIN_CHECK_CRON: string;
   IPFS_PIN_CHECK_ALERT_WEBHOOK_URL: string;
@@ -1237,6 +1241,41 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     key: 'SOLVENCY_ALERT_WEBHOOK_SECRET',
     section: 'Operations',
     description: 'Shared secret sent with solvency alert webhooks.',
+    example: '',
+    required: 'optional',
+    secret: true,
+    schema: Joi.string().allow('').default(''),
+  },
+  APPEAL_SLA_MONITOR_ENABLED: {
+    key: 'APPEAL_SLA_MONITOR_ENABLED',
+    section: 'Operations',
+    description: 'Enable scheduled UNDER_APPEAL stuck-finalize SLA monitoring (#1348).',
+    example: 'true',
+    required: 'optional',
+    schema: Joi.string().valid('true', 'false', '1', '0').default('true'),
+  },
+  APPEAL_SLA_GRACE_LEDGERS: {
+    key: 'APPEAL_SLA_GRACE_LEDGERS',
+    section: 'Operations',
+    description:
+      'Ledgers past appeal_deadline_ledger before a UNDER_APPEAL claim is considered stuck (default ~1 day).',
+    example: '17280',
+    required: 'optional',
+    schema: Joi.number().integer().min(0).default(17280),
+  },
+  APPEAL_SLA_ALERT_WEBHOOK_URL: {
+    key: 'APPEAL_SLA_ALERT_WEBHOOK_URL',
+    section: 'Operations',
+    description: 'Webhook URL that receives stuck-appeal SLA breach alerts.',
+    example: '',
+    required: 'optional',
+    secret: true,
+    schema: Joi.string().uri().allow('').default(''),
+  },
+  APPEAL_SLA_ALERT_WEBHOOK_SECRET: {
+    key: 'APPEAL_SLA_ALERT_WEBHOOK_SECRET',
+    section: 'Operations',
+    description: 'Shared secret sent with appeal SLA alert webhooks.',
     example: '',
     required: 'optional',
     secret: true,

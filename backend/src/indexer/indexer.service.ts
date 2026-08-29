@@ -14,6 +14,7 @@ import { rpc as SorobanRpc, scValToNative } from '@stellar/stellar-sdk';
 import { tryNormalizeAddress } from '../common/utils/normalize-address';
 import { QuoteSimulationCacheService } from '../quote/quote-simulation-cache.service';
 import { ClaimSummaryCacheService } from '../claims/services/claim-summary-cache.service';
+import { ClaimsService } from '../claims/claims.service';
 import { VotePubSubService } from '../graphql/vote-pubsub.service';
 import { AdminAnalyticsService } from '../admin/admin-analytics.service';
 import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
@@ -686,6 +687,7 @@ export class IndexerService {
     outcome: 'APPROVED' | 'REJECTED',
   ) {
     const claimId = getNumberValue(data.claim_id);
+    const updatedAt = new Date(event.ledgerClosedAt).toISOString();
 
     await tx.claim.updateMany({
       where: { id: claimId, deletedAt: null },
@@ -703,10 +705,17 @@ export class IndexerService {
       this.metrics?.recordAppealRejected();
     }
 
+    // Push live status to GET /claims/status/stream subscribers (#1326).
+    ClaimsService.publishStatusChange({
+      claimId: String(claimId),
+      status: outcome.toLowerCase(),
+      updatedAt,
+    });
+
     await this.claimEvents?.publish({
       claimId: String(claimId),
       status: outcome,
-      updatedAt: new Date(event.ledgerClosedAt).toISOString(),
+      updatedAt,
       ledger: event.ledger,
     });
     await this.claimSummaryCache?.invalidateClaim(claimId);
