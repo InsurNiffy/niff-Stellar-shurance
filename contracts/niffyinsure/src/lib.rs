@@ -60,6 +60,15 @@ pub enum SubscriptionError {
     /// Subscription not found or already expired.
     NotFound = 2,
 }
+#[contractevent(topics = ["niffyinsure", "voter_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VoterRemovedEvent {
+    #[topic]
+    pub admin: Address,
+    #[topic]
+    pub voter: Address,
+}
+
 #[contractevent(topics = ["niffyinsure", "allowed_asset_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AllowedAssetUpdated {
@@ -209,6 +218,7 @@ impl NiffyInsure {
         storage::set_protocol_fee_bps(&env, 0);
         storage::set_fee_recipient(&env, &env.current_contract_address());
         storage::set_min_solvency_ratio_bps(&env, 0);
+        storage::set_claim_filing_fee(&env, 0);
         storage::set_voting_duration_ledgers(&env, ledger::VOTE_WINDOW_LEDGERS);
         storage::set_quorum_bps(&env, types::DEFAULT_QUORUM_BPS);
         admin::emit_admin_action(&env, &admin, "initialize");
@@ -361,6 +371,7 @@ impl NiffyInsure {
             57 => validate::Error::CooldownActive,
             80 => validate::Error::DuplicateEvidence,
             81 => validate::Error::PageSizeTooLarge,
+            86 => validate::Error::EvidenceUrlTooLong,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -758,6 +769,8 @@ impl NiffyInsure {
     }
 
     /// Admin-only: dispute an approved claim during the dispute window.
+    ///
+    /// Distinct from `open_appeal` and `escalate_claim` — see `docs/GLOSSARY.md`.
     pub fn admin_dispute_claim(env: Env, claim_id: u64) -> Result<(), validate::Error> {
         let admin = storage::get_admin(&env);
         admin.require_auth();
@@ -768,6 +781,8 @@ impl NiffyInsure {
     ///
     /// Allows fast-tracking stalled claims when voter turnout is too low to reach quorum.
     /// `new_deadline_ledger` must be in the future and earlier than the current deadline.
+    ///
+    /// Distinct from `open_appeal` and `admin_dispute_claim` — see `docs/GLOSSARY.md`.
     pub fn escalate_claim(
         env: Env,
         claim_id: u64,
@@ -781,6 +796,8 @@ impl NiffyInsure {
     // ── Appeal mechanism (Issue #1) ───────────────────────────────────────────
 
     /// Claimant-only: open an appeal on a rejected claim within the appeal window.
+    ///
+    /// Distinct from `admin_dispute_claim` and `escalate_claim` — see `docs/GLOSSARY.md`.
     ///
     /// Preconditions: status == Rejected, within appeal_open_deadline_ledger, appeals_count < 1.
     /// Transitions: Rejected → UnderAppeal. Resets vote counts, sets appeal_deadline_ledger,
@@ -862,6 +879,19 @@ impl NiffyInsure {
         results
     }
 
+    /// Admin-only: set the flat fee (stroops) charged to the claimant at file_claim.
+    /// 0 = disabled. Fee is transferred to the treasury before claim creation.
+    pub fn admin_set_claim_filing_fee(env: Env, fee: i128) {
+        let _admin = admin::require_admin(&env);
+        storage::bump_instance(&env);
+        storage::set_claim_filing_fee(&env, fee);
+    }
+
+    /// Read-only: the current claim filing fee. 0 = disabled.
+    pub fn get_claim_filing_fee(env: Env) -> i128 {
+        storage::get_claim_filing_fee(&env)
+    }
+
     pub fn get_policy_counter(env: Env, holder: Address) -> u32 {
         storage::get_policy_counter(&env, &holder)
     }
@@ -902,6 +932,25 @@ impl NiffyInsure {
 
     pub fn voter_registry_contains(env: Env, holder: Address) -> bool {
         storage::get_voters(&env).iter().any(|v| v == holder)
+    }
+
+    /// Remove an ineligible address from the voter registry.
+    ///
+    /// Authenticated by admin. Existing votes cast by the removed address in
+    /// already-snapshotted claims are **not** retroactively invalidated — this
+    /// is a deliberate design choice: the vote was cast when the voter was
+    /// eligible, and retroactive removal would change outcomes after the fact.
+    ///
+    /// Emits a `VoterRemoved` event on success.
+    pub fn admin_remove_voter(env: Env, voter: Address) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        storage::remove_voter(&env, &voter);
+        VoterRemovedEvent {
+            admin: admin.clone(),
+            voter: voter.clone(),
+        }
+        .publish(&env);
     }
 
     pub fn holder_active_policy_count(env: Env, holder: Address) -> u32 {
@@ -1555,10 +1604,7 @@ impl NiffyInsure {
     ///
     /// Valid range: 1–30 seconds. The default is 5 (Stellar Mainnet Protocol 20+).
     /// Name shortened to satisfy Soroban's 32-char entrypoint limit.
-    pub fn admin_set_ledger_close_secs(
-        env: Env,
-        secs: u32,
-    ) -> Result<(), validate::Error> {
+    pub fn admin_set_ledger_close_secs(env: Env, secs: u32) -> Result<(), validate::Error> {
         let admin = storage::get_admin(&env);
         admin.require_auth();
         if secs == 0 || secs > 30 {
@@ -1936,9 +1982,61 @@ impl NiffyInsure {
         Ok(())
     }
 
-    // ── Issue #587: Asset-specific claim amount bounds ────────────────────────
+    // ── Issue #787: Coverage amount floor ────────────────────────────────────
 
-    /// Admin: set min/max claim amount bounds for an asset.
+    /// Admin: set the minimum coverage amount floor. Policies below this are rejected.
+    pub fn admin_set_min_coverage_amount(env: Env, amount: i128) -> Result<(), validate::Error> {
+        let _admin = admin::require_admin(&env);
+        if amount < 0 {
+            return Err(validate::Error::ZeroCoverage);
+        }
+        storage::set_min_coverage_amount(&env, amount);
+        Ok(())
+    }
+
+    /// Read the current minimum coverage amount floor.
+    pub fn get_min_coverage_amount(env: Env) -> i128 {
+        storage::get_min_coverage_amount(&env)
+    }
+
+    // ── Issue #783: Voter count hard cap ──────────────────────────────────────
+
+    /// Admin: set the maximum number of unique voters per claim.
+    pub fn admin_set_max_voters_per_claim(env: Env, cap: u32) -> Result<(), validate::Error> {
+        let _admin = admin::require_admin(&env);
+        if cap == 0 {
+            return Err(validate::Error::VotingDurationOutOfBounds);
+        }
+        storage::set_max_voters_per_claim(&env, cap);
+        Ok(())
+    }
+
+    /// Read the current max voters per claim cap.
+    pub fn get_max_voters_per_claim(env: Env) -> u32 {
+        storage::get_max_voters_per_claim(&env)
+    }
+
+    // ── Issue #782: Token decimal normalization ───────────────────────────────
+
+    /// Admin: manually store decimals for an asset (issue #782).
+    pub fn admin_set_asset_decimals(env: Env, asset: Address, decimals: u32) {
+        let _admin = admin::require_admin(&env);
+        storage::set_asset_decimals(&env, &asset, decimals);
+    }
+
+    /// Read the stored decimals for an asset (None if not yet queried).
+    pub fn get_asset_decimals(env: Env, asset: Address) -> Option<u32> {
+        storage::get_asset_decimals(&env, &asset)
+    }
+
+    // ── Issue #786: Claim description length validation ───────────────────────
+
+    /// Read the maximum claim description byte length constant (issue #786).
+    pub fn get_max_claim_description_bytes(env: Env) -> u32 {
+        let _ = env;
+        types::DETAILS_MAX_LEN
+    }
+
     /// Dust claims below min and over-coverage claims above max will revert.
     pub fn admin_set_asset_claim_bounds(
         env: Env,
@@ -2267,6 +2365,7 @@ impl NiffyInsure {
             strike_count: 0,
             metadata_uri: String::from_str(&env, "ipfs://test-policy-metadata"),
             terms_hash: soroban_sdk::BytesN::from_array(&env, &hash_bytes),
+            token_decimals: 7,
         };
         let key = storage::DataKey::Policy(holder.clone(), policy_id);
         env.storage().persistent().set(&key, &policy);
