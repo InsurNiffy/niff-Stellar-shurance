@@ -109,6 +109,10 @@
 | `CACHE_TTL_SECONDS` | `required` | Default cache TTL in seconds for cache-backed reads. | `60` |
 | `QUOTE_SIMULATION_CACHE_ENABLED` | `required` | Enable Redis caching for successful quote simulations. | `true` |
 | `QUOTE_SIMULATION_CACHE_TTL_SECONDS` | `required` | TTL for cached quote simulation results in seconds. | `30` |
+| `APPEAL_SIMULATION_CACHE_ENABLED` | `optional` | Enable short-TTL Redis cache for appeal `/simulate` (not `/build-transaction`). | `true` |
+| `APPEAL_SIMULATION_CACHE_TTL_SECONDS` | `optional` | TTL for cached appeal simulation results (claimId + wallet). | `30` |
+| `MAX_APPEALS_PER_WALLET_PER_HOUR` | `optional` | Dedicated appeal rate limit per wallet per hour (#1322). | `2` |
+| `MAX_APPEALS_PER_WALLET_PER_DAY` | `optional` | Dedicated appeal rate limit per wallet per day (#1322). | `5` |
 | `ALLOWED_ASSETS_REFRESH_INTERVAL_MS` | `optional` | Base refresh interval for allowed assets cache in milliseconds. | `300000` |
 | `ALLOWED_ASSETS_REFRESH_JITTER_MS` | `optional` | Randomized jitter added to refresh interval to avoid thundering herd (in milliseconds). | `60000` |
 

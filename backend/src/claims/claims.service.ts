@@ -22,6 +22,7 @@ import {
   clampLimit,
 } from '../helpers/pagination';
 import { ClaimViewMapper } from './claim-view.mapper';
+import { AppealSimulationCacheService } from './services/appeal-simulation-cache.service';
 
 export interface ListClaimsParams {
   after?: string;
@@ -47,6 +48,7 @@ export class ClaimsService {
     private readonly aggregation: ClaimAggregationService,
     private readonly claimSummaryCache: ClaimSummaryCacheService,
     private readonly metrics: MetricsService,
+    private readonly appealSimulationCache: AppealSimulationCacheService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
@@ -415,7 +417,59 @@ export class ClaimsService {
   // ── Appeal submission ─────────────────────────────────────────────────────
 
   /**
+   * Simulate file_appeal for a rejected claim (wallet pre-flight).
+   *
+   * Short-TTL Redis cache keyed by (claimId, walletAddress) avoids redundant
+   * RPC on retries (#1327). Successful responses never include unsignedXdr —
+   * callers that need signing material must hit buildAppealTransaction, which
+   * always runs a fresh simulation.
+   */
+  async simulateAppealTransaction(args: {
+    claimId: number;
+    walletAddress: string;
+    reason?: string;
+  }) {
+    const tenantId = this.tenantCtx.tenantId;
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: args.claimId }),
+      select: { id: true },
+    });
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${args.claimId} not found`);
+    }
+
+    const cached = await this.appealSimulationCache.get(args.claimId, args.walletAddress);
+    if (cached) {
+      this.logger.debug(
+        `Appeal simulate cache hit claim=${args.claimId} wallet=${args.walletAddress}`,
+      );
+      return { ...cached, cached: true as const };
+    }
+
+    const built = await this.soroban.buildAppealTransaction({
+      claimant: args.walletAddress,
+      claimId: args.claimId,
+      reason: args.reason?.trim() || 'Appeal simulation',
+    });
+
+    const payload = {
+      ok: true as const,
+      claimId: args.claimId,
+      walletAddress: args.walletAddress,
+      minResourceFee: built.minResourceFee,
+      baseFee: built.baseFee,
+      totalEstimatedFee: built.totalEstimatedFee,
+      totalEstimatedFeeXlm: built.totalEstimatedFeeXlm,
+      currentLedger: built.currentLedger,
+    };
+
+    await this.appealSimulationCache.set(args.claimId, args.walletAddress, payload);
+    return { ...payload, cached: false as const };
+  }
+
+  /**
    * Build an unsigned file_appeal transaction for a rejected claim.
+   * Always fresh RPC — never reads the appeal simulate cache (#1327).
    */
   async buildAppealTransaction(args: {
     claimant: string;
