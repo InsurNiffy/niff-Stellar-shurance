@@ -128,6 +128,13 @@ export class MetricsService implements OnModuleInit {
    */
   readonly appealsInFlightGauge: client.Gauge<string>;
 
+  /**
+   * Total appeal-field corrections applied by the scheduled reconciliation job
+   * (backend/src/indexer/reconciliation.service.ts) when it detects drift
+   * between the stored appealsCount/appealTxHash and the indexed on-chain state.
+   */
+  readonly appealReconciliationCorrectionsTotal: client.Counter<string>;
+
   constructor(cardinalityGuard: MetricsCardinalityGuard) {
     this.cardinalityGuard = cardinalityGuard;
     this.registry = new client.Registry();
@@ -396,6 +403,12 @@ export class MetricsService implements OnModuleInit {
       help: 'Number of appeals currently open (not yet resolved)',
       registers: [this.registry],
     });
+
+    this.appealReconciliationCorrectionsTotal = new client.Counter({
+      name: 'appeal_reconciliation_corrections_total',
+      help: 'Total appeal-field corrections applied by the scheduled reconciliation job',
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -596,6 +609,15 @@ export class MetricsService implements OnModuleInit {
   recordAppealRejected() {
     this.appealsRejectedTotal.inc();
     this.appealsInFlightGauge.dec();
+  }
+
+  /**
+   * Call when the scheduled reconciliation job corrects an appeal field
+   * (appealsCount / appealTxHash) that drifted from the indexed on-chain state.
+   */
+  recordAppealReconciliationCorrection(claimId: number) {
+    const normalizedClaimId = this.cardinalityGuard.normalizeClaimId(claimId);
+    this.appealReconciliationCorrectionsTotal.inc({ claim_id: normalizedClaimId });
   }
 
   async getMetrics(): Promise<string> {
