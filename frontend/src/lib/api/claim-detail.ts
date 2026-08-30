@@ -4,7 +4,7 @@ export const ClaimMetadataSchema = z.object({
   id: z.number(),
   policyId: z.string(),
   creatorAddress: z.string(),
-  status: z.enum(['pending', 'approved', 'paid', 'rejected', 'appeal']),
+  status: z.enum(['pending', 'approved', 'paid', 'rejected', 'appeal', 'appeal_approved', 'appeal_rejected', 'withdrawn']),
   amount: z.string(),
   description: z.string().optional(),
   evidenceHash: z.string(),
@@ -49,7 +49,7 @@ export const ConsistencyMetadataSchema = z.object({
 })
 
 export const ClaimStatusHistoryEntrySchema = z.object({
-  status: z.enum(['pending', 'approved', 'paid', 'rejected', 'appeal']),
+  status: z.enum(['pending', 'approved', 'paid', 'rejected', 'appeal', 'appeal_approved', 'appeal_rejected', 'withdrawn']),
   ledger: z.number(),
   timestamp: z.string(),
 })
@@ -84,6 +84,8 @@ export const ClaimDetailResponseSchema = z.object({
   userVote: z.enum(['yes', 'no']).optional(),
   payout_deadline_ledger: z.number().optional(),
   fraud_score: z.number().optional(),
+  /** Whether an appeal has been submitted for this claim. */
+  appeal_submitted: z.boolean().optional(),
 })
 
 export type DisputeInfo = z.infer<typeof DisputeInfoSchema>
@@ -120,4 +122,26 @@ export async function fetchClaimDetail(claimId: string): Promise<ClaimDetailResp
 
   const data = await response.json()
   return ClaimDetailResponseSchema.parse(data)
+}
+
+// ── Timeline API ─────────────────────────────────────────────────────────────
+
+export const ClaimTimelineEntrySchema = z.object({
+  status: z.string(),
+  ledger: z.number(),
+  timestamp: z.string(),
+  actor: z.string().nullable(),
+  reason: z.string().nullable(),
+})
+
+export type ClaimTimelineEntry = z.infer<typeof ClaimTimelineEntrySchema>
+
+export async function fetchClaimTimeline(claimId: string): Promise<ClaimTimelineEntry[]> {
+  const response = await fetch(`/api/claims/${encodeURIComponent(claimId)}/timeline`)
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({ message: 'Failed to load timeline' }))
+    throw new Error(errorBody.message ?? 'Failed to load claim timeline')
+  }
+  const data = await response.json()
+  return z.array(ClaimTimelineEntrySchema).parse(data)
 }
