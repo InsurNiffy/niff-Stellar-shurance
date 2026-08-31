@@ -349,6 +349,9 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
             "claimant's token allowance is insufficient to cover the claim filing fee"
         }
         Error::VoterCapReached => "claim has already reached the maximum number of unique voters",
+        Error::VoterRegistryCapExceeded => {
+            "batch would push the global voter registry past its configured maximum"
+        }
     };
 
     QuoteFailure {
