@@ -44,7 +44,16 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
+      - name: Cache node_modules
+        id: node-modules-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: backend/node_modules
+          key: ${{ runner.os }}-backend-node_modules-${{ hashFiles('backend/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-backend-node_modules-
+
       - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Generate Prisma client
