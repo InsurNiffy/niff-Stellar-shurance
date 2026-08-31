@@ -337,6 +337,7 @@ Emitted when a holder sets or changes their designated payout beneficiary.
 | `adm_prop` | `(NS, "adm_prop", old_admin, new_admin)` | `version` only |
 | `adm_acc` | `(NS, "adm_acc", old_admin, new_admin)` | `version` only |
 | `adm_can` | `(NS, "adm_can", admin, cancelled_pending)` | `version` only |
+| `admin_rotated` | `("niffyinsure", "admin_rotated", old_admin, new_admin)` | `ledger: u32` |
 | `adm_tok` | `(NS, "adm_tok")` | `old_token`, `new_token` |
 | `adm_paus` | `(NS, "adm_paus", admin)` | `paused: 0\|1` |
 | `adm_drn` | `(NS, "adm_drn", admin)` | `recipient`, `amount` (stroops) |
@@ -356,6 +357,32 @@ Emitted when a holder sets or changes their designated payout beneficiary.
 ```
 
 Does not retroactively affect claims already in `Processing`.
+
+---
+
+### `admin_rotated` — admin address changed (chain-of-custody record)
+
+Emitted from `accept_admin`, the point where `storage::set_admin` actually
+changes the stored admin post-initialization. This contract only exposes
+admin rotation via the two-step propose/accept flow today; any future
+single-step rotation entrypoint must also emit this event so it stays a
+complete audit trail regardless of rotation path.
+
+**Topics:** `("niffyinsure", "admin_rotated", old_admin: Address, new_admin: Address)`
+
+```json
+{
+  "old_admin": "G...",
+  "new_admin": "G...",
+  "ledger": 123456
+}
+```
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `old_admin` | string (G...) | Admin address before rotation |
+| `new_admin` | string (G...) | Admin address after rotation |
+| `ledger` | u32 | Ledger sequence at rotation time |
 
 ---
 
