@@ -5,6 +5,15 @@ pub const DETAILS_MAX_LEN: u32 = 256;
 pub const IMAGE_URL_MAX_LEN: u32 = 128;
 /// Default evidence attachment limit when admin config is unset.
 pub const IMAGE_URLS_MAX: u32 = 5;
+/// Maximum byte length of a single evidence URL accepted by `file_claim`.
+///
+/// Rationale: Soroban host functions cap total invocation argument size, and
+/// `Vec<ClaimEvidenceEntry>` is passed inline in every `file_claim` call. An
+/// unbounded (or very long) URL string multiplies storage cost per claim and
+/// pushes a batch of evidence entries toward the Soroban argument size limit.
+/// 128 bytes comfortably fits IPFS CIDs and allowlisted gateway URLs while
+/// keeping per-claim storage cost predictable.
+pub const MAX_EVIDENCE_URL_BYTES: u32 = 128;
 pub const REASON_MAX_LEN: u32 = 128;
 pub const SAFETY_SCORE_MAX: u32 = 100;
 

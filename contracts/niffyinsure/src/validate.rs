@@ -2,7 +2,7 @@ use soroban_sdk::{contracterror, Bytes, BytesN, Env, String, Vec};
 
 use crate::types::{
     Claim, ClaimEvidenceEntry, MultiplierTable, Policy, RiskInput, DETAILS_MAX_LEN,
-    IMAGE_URL_MAX_LEN, REASON_MAX_LEN, SAFETY_SCORE_MAX,
+    IMAGE_URL_MAX_LEN, MAX_EVIDENCE_URL_BYTES, REASON_MAX_LEN, SAFETY_SCORE_MAX,
 };
 #[cfg(feature = "experimental")]
 use crate::types::{OracleSource, OracleTrigger, TriggerEventType, TriggerStatus};
@@ -129,6 +129,8 @@ pub enum Error {
     CommitmentNotFound = 78,
     /// Revealed vote does not match the prior commitment hash.
     CommitmentMismatch = 79,
+    /// Evidence URL exceeds `MAX_EVIDENCE_URL_BYTES` (issue: evidence URL length cap).
+    EvidenceUrlTooLong = 80,
 }
 
 pub fn check_claim_evidence_update(
@@ -240,8 +242,10 @@ pub fn check_claim_fields(
         return Err(Error::InsufficientEvidence);
     }
     for entry in evidence.iter() {
-        if entry.url.len() > IMAGE_URL_MAX_LEN {
-            return Err(Error::ImageUrlTooLong);
+        // Each URL in the array is checked individually — not just the first —
+        // since `evidence` is attacker-controlled input filed by the claimant.
+        if entry.url.len() > MAX_EVIDENCE_URL_BYTES {
+            return Err(Error::EvidenceUrlTooLong);
         }
         if !sha256_commitment_non_zero(&entry.hash) {
             // `ExcessiveEvidenceBytes` is the reserved evidence bucket (no dedicated enum slot left).
