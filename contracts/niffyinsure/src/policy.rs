@@ -70,6 +70,10 @@ pub enum PolicyError {
     InvalidTermsHash = 125,
     /// Supplied address is the zero address, which cannot hold funds or authorize transactions.
     ZeroAddress = 126,
+    /// Holder already has an active policy covering the same asset type and
+    /// region with an overlapping ledger window. See `initiate_policy`'s
+    /// "Overlap definition" doc comment for the exact rule.
+    DuplicateCoverageActive = 127,
 }
 
 #[contracttype]
@@ -561,6 +565,42 @@ pub fn initiate_policy(
 
     if storage::has_policy(env, &holder, policy_id) {
         return Err(PolicyError::DuplicatePolicyId);
+    }
+
+    // ── Overlapping active coverage check ─────────────────────────────────
+    //
+    // Overlap definition: a new policy conflicts with an existing one when
+    // ALL of the following hold:
+    //   1. Same holder (implicit — we only scan this holder's own policies).
+    //   2. Same asset type: `policy_type` matches (e.g. both `Auto`).
+    //   3. Same `region`.
+    //   4. The existing policy is still active (`is_active == true`, i.e.
+    //      not terminated and not lapsed).
+    //   5. Ledger windows overlap: `existing.start_ledger < new_end_ledger`
+    //      AND `new_start_ledger < existing.end_ledger`. This is a
+    //      half-open `[start, end)` interval overlap test, so two policies
+    //      whose windows merely touch at a boundary (one ends exactly when
+    //      the other begins) are NOT considered overlapping.
+    //
+    // Without this check a holder could open two simultaneous policies on
+    // the same asset/region and file duplicate claims against both for a
+    // single loss event (double-payout risk).
+    let new_start_ledger = env.ledger().sequence();
+    let new_end_ledger = new_start_ledger
+        .checked_add(ledger::POLICY_DURATION_LEDGERS)
+        .ok_or(PolicyError::LedgerOverflow)?;
+    let existing_count = storage::get_policy_counter(env, &holder);
+    for existing_id in 1..=existing_count {
+        if let Some(existing) = storage::get_policy(env, &holder, existing_id) {
+            if existing.is_active
+                && existing.policy_type == policy_type
+                && existing.region == region
+                && existing.start_ledger < new_end_ledger
+                && new_start_ledger < existing.end_ledger
+            {
+                return Err(PolicyError::DuplicateCoverageActive);
+            }
+        }
     }
 
     // Premium transfer: holder -> treasury and fee recipient using the policy's bound asset.
