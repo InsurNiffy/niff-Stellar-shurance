@@ -728,6 +728,23 @@ fn finalize_claim_inner(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> 
     let quorum_bps = effective_quorum_bps(env, claim_id);
 
     if participation_quorum_met(cast, eligible, quorum_bps) {
+        // ── Tie-breaking rule ────────────────────────────────────────────
+        //
+        // When `approve_votes == reject_votes` exactly, the claim is
+        // Rejected, not Approved. This is a strict `>` comparison (not
+        // `>=`), so a tie falls through to the `else` branch below.
+        //
+        // Rationale (insurer-favored default, matching the no-quorum branch
+        // a few lines down): approval should require an affirmative
+        // majority, not merely "no fewer" reject votes. This mirrors
+        // `resolve_plurality_if_quorum_met` (used by `vote_on_claim` for
+        // early resolution), which applies the identical `>` comparison —
+        // so the outcome of a tie is the same whether the claim resolves
+        // early via voting or later via `finalize_claim`/deadline, and is
+        // independent of the order in which votes were submitted (only the
+        // final approve/reject totals matter). See
+        // `tests/finalize_tie_vote.rs` and `docs/GOVERNANCE.md` /
+        // `docs/EVENT_DICTIONARY.md` for the documented rule.
         if claim.approve_votes > claim.reject_votes {
             claim.status = ClaimStatus::Approved;
         } else {

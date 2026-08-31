@@ -129,6 +129,16 @@ Emitted when voting reaches majority **or** the vote window expires.
 |-------|------|-------------|
 | `status` | `"Approved"` \| `"Rejected"` | Final outcome |
 
+**Tie-breaking rule:** when `approve_votes == reject_votes` exactly (quorum
+met but no majority either way), the claim resolves to **`Rejected`**, not
+`Approved`. This is a strict `>` comparison on `approve_votes`, applied
+identically whether the claim resolves early during voting
+(`resolve_plurality_if_quorum_met`) or later via `finalize_claim` — so the
+outcome for a tie is deterministic regardless of vote submission order. See
+`contracts/niffyinsure/docs/GOVERNANCE.md` and the tie-break comment in
+`finalize_claim_inner` (`contracts/niffyinsure/src/claim.rs`), and the
+regression test `contracts/niffyinsure/tests/finalize_tie_vote.rs`.
+
 ---
 
 ### `clm_paid` — payout executed
