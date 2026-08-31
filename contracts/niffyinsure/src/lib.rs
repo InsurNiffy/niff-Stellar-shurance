@@ -202,6 +202,8 @@ impl NiffyInsure {
         if env.storage().instance().has(&storage::DataKey::Admin) {
             return Err(InitError::AlreadyInitialized);
         }
+        admin::require_non_zero_addr(&env, &admin);
+        admin::require_non_zero_addr(&env, &token);
         storage::set_admin(&env, &admin);
         storage::set_token(&env, &token);
         storage::set_multiplier_table(&env, &premium::default_multiplier_table(&env));
@@ -1442,6 +1444,7 @@ impl NiffyInsure {
     /// Pass the main admin address to "hold all roles" for single-admin deployments.
     pub fn set_pause_admin(env: Env, addr: Address) {
         let _admin = admin::require_admin(&env);
+        admin::require_non_zero_addr(&env, &addr);
         storage::set_pause_admin(&env, &addr);
     }
 
@@ -1453,6 +1456,7 @@ impl NiffyInsure {
     /// Set the dedicated treasury-admin address. Only the main admin can call this.
     pub fn set_treasury_admin(env: Env, addr: Address) {
         let _admin = admin::require_admin(&env);
+        admin::require_non_zero_addr(&env, &addr);
         storage::set_treasury_admin(&env, &addr);
     }
 
@@ -1464,6 +1468,7 @@ impl NiffyInsure {
     /// Set the dedicated param-admin address. Only the main admin can call this.
     pub fn set_param_admin(env: Env, addr: Address) {
         let _admin = admin::require_admin(&env);
+        admin::require_non_zero_addr(&env, &addr);
         storage::set_param_admin(&env, &addr);
     }
 
@@ -1489,10 +1494,12 @@ impl NiffyInsure {
     }
 
     pub fn set_token(env: Env, new_token: Address) {
+        admin::require_non_zero_addr(&env, &new_token);
         admin::set_token(&env, new_token);
     }
 
     pub fn set_treasury(env: Env, new_treasury: Address) {
+        admin::require_non_zero_addr(&env, &new_treasury);
         admin::set_treasury(&env, new_treasury);
     }
 

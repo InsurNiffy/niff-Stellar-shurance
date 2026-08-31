@@ -266,6 +266,16 @@ pub fn require_admin(env: &Env) -> Address {
     admin
 }
 
+pub fn require_non_zero_addr(env: &Env, addr: &Address) {
+    let zero = Address::from_string(&soroban_sdk::String::from_str(
+        env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
+    if *addr == zero {
+        panic_with_error!(env, AdminError::InvalidAddress);
+    }
+}
+
 // ── Scoped role helpers (Issue #1161) ─────────────────────────────────────────
 //
 // Three roles reduce the blast radius of any single compromised key:
@@ -438,15 +448,8 @@ pub fn cancel_admin_action(env: &Env) {
 /// Sets a time-locked expiry based on the configured admin action window.
 pub fn propose_admin(env: &Env, new_admin: Address) {
     let current = require_admin(env);
-    // Zero-address guard: the zero address cannot authorize the accept_admin call.
-    if new_admin
-        == Address::from_string(&soroban_sdk::String::from_str(
-            env,
-            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-        ))
-    {
-        panic_with_error!(env, AdminError::InvalidAddress);
-    }
+    require_non_zero_addr(env, &new_admin);
+    storage::check_and_clear_expired_admin_action(env);
     let window = storage::get_admin_action_window_ledgers(env);
     let now = env.ledger().sequence();
     let expiry = now.saturating_add(window);
