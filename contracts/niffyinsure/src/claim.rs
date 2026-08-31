@@ -190,6 +190,23 @@ pub struct ClaimFeeCollected {
     pub at_ledger: u32,
 }
 
+/// Emitted when a previously-collected filing fee is refunded in full because
+/// the claimant withdrew the claim before any vote was cast.
+///
+/// Topic layout: ["niffyinsure", "claim_fee_refunded", claim_id]
+/// Data: { fee_amount, recipient, at_ledger }
+#[contractevent(topics = ["niffyinsure", "claim_fee_refunded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimFeeRefunded {
+    #[topic]
+    pub claim_id: u64,
+    /// Fee amount refunded (stroops); always equal to the amount originally collected.
+    pub fee_amount: i128,
+    /// Address the refund was sent to (the claimant).
+    pub recipient: Address,
+    pub at_ledger: u32,
+}
+
 /// Emitted when the claimant withdraws before any vote is cast.
 ///
 /// Topic layout: ["niffyinsure", "claim_withdrawn", claim_id]
@@ -383,6 +400,7 @@ pub fn file_claim(
         }
 
         crate::token::collect_premium(env, holder, &policy.asset, filing_fee);
+        storage::set_claim_filing_fee_paid(env, claim_id, filing_fee);
 
         ClaimFeeCollected {
             claim_id,
@@ -493,6 +511,25 @@ pub fn withdraw_claim(env: &Env, claimant: &Address, claim_id: u64) -> Result<()
     }
 
     storage::set_claim(env, &claim);
+
+    // ── Filing fee refund ────────────────────────────────────────────────
+    //
+    // If a non-zero filing fee was collected at `file_claim`, refund it in
+    // full now. Withdrawal is only reachable while `approve_votes ==
+    // reject_votes == 0` (checked above), so this always refunds a claim
+    // that has not yet been voted on.
+    if let Some(fee_paid) = storage::take_claim_filing_fee_paid(env, claim_id) {
+        if fee_paid > 0 {
+            crate::token::refund_fee(env, &claim.claimant, &claim.asset, fee_paid);
+            ClaimFeeRefunded {
+                claim_id,
+                fee_amount: fee_paid,
+                recipient: claim.claimant.clone(),
+                at_ledger: now,
+            }
+            .publish(env);
+        }
+    }
 
     ClaimWithdrawn {
         claim_id,
