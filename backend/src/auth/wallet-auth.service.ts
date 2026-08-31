@@ -18,9 +18,10 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { Keypair, StrKey } from '@stellar/stellar-sdk';
+import { StrKey } from '@stellar/stellar-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { NonceService } from './nonce.service';
+import { WalletSignatureService } from './wallet-signature.service';
 import { normalizeAddress } from '../common/utils/normalize-address';
 import { RefreshTokenService } from './refresh-token.service';
 
@@ -33,6 +34,7 @@ export class WalletAuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly refreshTokenService: RefreshTokenService,
+    private readonly walletSignatureService: WalletSignatureService,
   ) {}
 
   private get domain(): string {
@@ -112,19 +114,12 @@ export class WalletAuthService {
     }
 
     try {
-      const keypair = Keypair.fromPublicKey(canonicalKey);
-      const valid = keypair.verify(
-        Buffer.from(stored.message),
-        Buffer.from(signatureBase64, 'base64'),
+      await this.walletSignatureService.verifyEd25519(
+        canonicalKey,
+        stored.message,
+        signatureBase64,
       );
-      if (!valid) {
-        throw new UnauthorizedException({
-          code: 'INVALID_SIGNATURE',
-          message: 'Signature verification failed. Sign the exact message string.',
-        });
-      }
-    } catch (err) {
-      if (err instanceof UnauthorizedException) throw err;
+    } catch {
       throw new UnauthorizedException({
         code: 'INVALID_SIGNATURE',
         message: 'Signature verification failed.',

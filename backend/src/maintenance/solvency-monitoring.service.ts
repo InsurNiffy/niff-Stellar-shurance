@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
 import { RedisService } from '../cache/redis.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
 import { getRuntimeEnv } from '../config/runtime-env';
 import {
   SOLVENCY_SNAPSHOT_REDIS_KEY,
@@ -36,6 +37,7 @@ export class SolvencyMonitoringService {
     private readonly soroban: SorobanService,
     private readonly redis: RedisService,
     @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly outboundWebhook?: OutboundWebhookService,
   ) {}
 
   /** Dashboard: last job snapshot only — no Soroban RPC. */
@@ -230,33 +232,37 @@ export class SolvencyMonitoringService {
   }
 
   private async sendWebhookAlert(snapshot: SolvencySnapshot): Promise<void> {
+    const alertPayload = {
+      event: 'solvency_buffer_low',
+      severity: 'critical',
+      checkedAt: snapshot.checkedAt,
+      bufferStroops: snapshot.bufferStroops,
+      thresholdStroops: snapshot.thresholdStroops,
+      contractBalanceStroops: snapshot.contractBalanceStroops,
+      outstandingApprovedStroops: snapshot.outstandingApprovedStroops,
+    };
+
+    // Queue delivery to all registered treasury alert endpoints (#893).
+    await this.outboundWebhook?.deliverTreasuryAlert(alertPayload, `treasury_alert:${snapshot.checkedAt}`);
+
+    // Legacy single-URL direct delivery for backward compatibility.
     const webhookUrl = this.config.get<string>('SOLVENCY_ALERT_WEBHOOK_URL')?.trim();
     if (!webhookUrl) {
-      this.logger.warn(
-        '[solvency] SOLVENCY_ALERT_WEBHOOK_URL not set — buffer-low alert logged only',
-      );
+      if (!this.outboundWebhook || (this.config.get<string>('TREASURY_ALERT_WEBHOOK_URLS', '') === '')) {
+        this.logger.warn(
+          '[solvency] no alert endpoint configured — buffer-low alert logged only',
+        );
+      }
       return;
     }
 
     const { default: axios } = await import('axios');
     const secret = this.config.get<string>('SOLVENCY_ALERT_WEBHOOK_SECRET', '');
     try {
-      await axios.post(
-        webhookUrl,
-        {
-          event: 'solvency_buffer_low',
-          severity: 'critical',
-          checkedAt: snapshot.checkedAt,
-          bufferStroops: snapshot.bufferStroops,
-          thresholdStroops: snapshot.thresholdStroops,
-          contractBalanceStroops: snapshot.contractBalanceStroops,
-          outstandingApprovedStroops: snapshot.outstandingApprovedStroops,
-        },
-        {
-          headers: secret ? { 'X-Webhook-Secret': secret } : undefined,
-          timeout: 10_000,
-        },
-      );
+      await axios.post(webhookUrl, alertPayload, {
+        headers: secret ? { 'X-Webhook-Secret': secret } : undefined,
+        timeout: 10_000,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`[solvency] webhook delivery failed: ${msg}`);

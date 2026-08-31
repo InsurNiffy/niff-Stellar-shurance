@@ -6,6 +6,33 @@
 //! window bucket, so at most one open claim per policy (`DuplicateOpenClaim`) keeps the
 //! check consistent with paid totals.
 //!
+//! # Window definition (ledger boundary semantics)
+//! Let `W = rolling_claim_window_ledgers`. For ledger sequence `now`, the active bucket is
+//! the half-open interval
+//! ```text
+//! [floor(now / W) * W,  floor(now / W) * W + W)
+//! ```
+//! Equivalently, `window_start = floor(now / W) * W`.
+//!
+//! **Boundary inclusion:**
+//! - A claim at ledger `window_start + W - 1` belongs to the **current** bucket.
+//! - A claim at ledger `window_start + W` (the exact boundary) opens the **next** bucket
+//!   and therefore does **not** count toward the previous bucket's cumulative.
+//! - A claim at ledger `window_start + W + 1` is also in the next bucket.
+//!
+//! This is intentional: the boundary ledger is the first ledger of the new window
+//! (exclusive end of the previous window). Off-by-one regressions must preserve this.
+//!
+//! # Policy renewal boundary (Issue #1152)
+//!
+//! **Design decision: the rolling cap RESETS across a policy renewal.**
+//!
+//! Each renewed term is a new coverage period. Paid claims from the prior term must not
+//! consume headroom in the renewed term, even if both filings fall inside the same
+//! ledger-anchored window bucket. On successful renewal the contract clears
+//! `cumulative_paid` (and re-anchors `window_start` to the current bucket) via
+//! [`reset_on_renewal`]. Non-renewal ledger-window rollover behaviour is unchanged.
+//!
 //! # Deductible / net vs gross (product note)
 //! This MVP applies the cap to **gross** on-chain `claim.amount` (the same field used for
 //! payout). If a deductible or net-of-deductible payout is introduced later, explicitly
@@ -42,7 +69,7 @@ pub struct RollingClaimWindowLedgersUpdated {
 }
 
 #[inline]
-fn window_bucket_start(now: u32, window_len: u32) -> u32 {
+pub fn window_bucket_start(now: u32, window_len: u32) -> u32 {
     if window_len == 0 {
         return 0;
     }
@@ -75,6 +102,19 @@ fn sync_state_to_ledger(
 
 fn persist_state(env: &Env, holder: &Address, policy_id: u32, state: &RollingClaimWindowState) {
     storage::set_rolling_claim_state(env, holder, policy_id, state);
+}
+
+/// Reset the rolling accumulator for a policy after a successful renewal.
+///
+/// Clears `cumulative_paid` and re-anchors `window_start` to the current ledger bucket
+/// so prior-term paid claims do not consume renewed-term headroom.
+pub fn reset_on_renewal(env: &Env, holder: &Address, policy_id: u32, now: u32) {
+    let wlen = storage::get_rolling_claim_window_ledgers(env);
+    let state = RollingClaimWindowState {
+        window_start: window_bucket_start(now, wlen),
+        cumulative_paid: 0,
+    };
+    persist_state(env, holder, policy_id, &state);
 }
 
 /// Validate before accepting a new claim amount.

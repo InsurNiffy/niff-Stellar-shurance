@@ -207,3 +207,78 @@ export async function getIdempotencyEntry(
   if (!entry || entry.version !== currentVersion) return null;
   return entry;
 }
+
+// ── Single-flight lock for cache stampede protection ──────────────────────────
+
+/**
+ * Execute a function with single-flight lock protection around cache-miss recomputation.
+ * When multiple concurrent requests hit an expired cache key, only one executes the
+ * expensive function while others wait for the result from cache.
+ *
+ * If lock acquisition fails (Redis unavailable), falls through to unprotected execution.
+ */
+export async function withSingleFlightLock<T>(
+  key: string,
+  fn: () => Promise<T>,
+  ttlSeconds: number = 15,
+): Promise<T> {
+  const client = getRedisClient();
+  const lockKey = `lock:${key}`;
+
+  try {
+    // Try to acquire lock (NX = only set if not exists)
+    const lockAcquired = await client.set(lockKey, '1', 'EX', 30, 'NX') === 'OK';
+
+    if (lockAcquired) {
+      try {
+        // We hold the lock — execute the expensive function
+        const result = await fn();
+
+        // Cache the result
+        await cacheSet(key, result, ttlSeconds);
+        return result;
+      } finally {
+        // Always release the lock
+        await client.del(lockKey).catch(() => {
+          // Ignore lock release errors
+        });
+      }
+    } else {
+      // Another request is computing — wait for it to finish
+      const maxWaitMs = 5000;
+      const pollIntervalMs = 50;
+      const startTime = Date.now();
+
+      while (Date.now() - startTime < maxWaitMs) {
+        const cached = await cacheGet<T>(key);
+        if (cached !== null) {
+          return cached;
+        }
+
+        // Check if lock still exists
+        const lockExists = await client.exists(lockKey);
+        if (lockExists === 0) {
+          // Lock released but cache miss — other request may have failed
+          // Fall through to compute ourselves
+          const result = await fn();
+          await cacheSet(key, result, ttlSeconds);
+          return result;
+        }
+
+        // Wait a bit and retry
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      }
+
+      // Timeout waiting for lock — try cache one more time, fall back to compute
+      const cached = await cacheGet<T>(key);
+      if (cached !== null) {
+        return cached;
+      }
+
+      return await fn();
+    }
+  } catch {
+    // Redis error — degrade gracefully to unprotected execution
+    return await fn();
+  }
+}

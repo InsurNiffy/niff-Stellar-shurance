@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import * as client from 'prom-client';
+import { MetricsCardinalityGuard } from './cardinality-guard.service';
 
 /**
  * MetricsService — single source of truth for all Prometheus metrics.
@@ -11,6 +12,8 @@ import * as client from 'prom-client';
  *                for the histogram; exact code for counters is fine because the
  *                set is bounded.
  *  - `rpc_method`: one of a fixed enum of Soroban RPC calls
+ *  - `claim_id`: bucketed to ranges (0-999, 1000-1999, ...) via cardinality guard
+ *  - `tenant`: normalized to hash or well-known ID via cardinality guard
  *
  * Extension point for OpenTelemetry:
  *  Replace the prom-client calls in recordHttpRequest / recordRpcCall with
@@ -20,6 +23,7 @@ import * as client from 'prom-client';
 @Injectable()
 export class MetricsService implements OnModuleInit {
   private readonly registry: client.Registry;
+  private readonly cardinalityGuard: MetricsCardinalityGuard;
 
   // ── HTTP metrics ──────────────────────────────────────────────────────────
   readonly httpRequestDuration: client.Histogram<string>;
@@ -31,9 +35,15 @@ export class MetricsService implements OnModuleInit {
   // ── Queue / DLQ metrics ───────────────────────────────────────────────────
   readonly dlqDepth: client.Gauge<string>;
   readonly dlqJobFailed: client.Counter<string>;
+  readonly queueActiveWorkers: client.Gauge<string>;
+  readonly queueDepth: client.Gauge<string>;
+  readonly bullmqJobRetriesTotal: client.Counter<string>;
+  readonly jobProcessingDuration: client.Histogram<string>;
 
   // ── Indexer / observability metrics ───────────────────────────────────────
   readonly indexerLag: client.Gauge<string>;
+  readonly indexerLedgerGap: client.Gauge<string>;
+  readonly indexerLastLedgerAge: client.Gauge<string>;
   readonly solvencyBufferStroops: client.Gauge<string>;
   readonly solvencyBufferThresholdStroops: client.Gauge<string>;
 
@@ -75,7 +85,51 @@ export class MetricsService implements OnModuleInit {
   /** Total Redis connection errors. */
   readonly redisConnectionErrors: client.Counter<string>;
 
-  constructor() {
+  // ── Vote reconciliation metrics ────────────────────────────────────────────
+  /** Total vote tally mismatches detected between indexed and on-chain state. */
+  readonly voteTallyMismatches: client.Counter<string>;
+  /** Total vote reconciliation errors during checking. */
+  readonly voteReconciliationErrors: client.Counter<string>;
+  /** Total mismatches found in a single reconciliation run. */
+  readonly voteReconciliationMismatchCount: client.Counter<string>;
+
+  // ── Maintenance metrics ───────────────────────────────────────────────────
+  /** Total VACUUM operations run against high-churn tables. */
+  readonly vacuumOperationsTotal: client.Counter<string>;
+  /** Table bloat ratio (percentage of dead tuples) per high-churn table. */
+  readonly tableBloatRatio: client.Gauge<string>;
+
+  // ── Notification batching metrics ────────────────────────────────────────
+  /** Total claim notification batch accumulate/flush operations. */
+  readonly claimNotificationBatchTotal: client.Counter<string>;
+
+  // ── Appeal metrics ─────────────────────────────────────────────────────────
+  /**
+   * Total appeal submissions opened by claimants.
+   * Incremented in ClaimsService.submitAppealTransaction after successful submission.
+   */
+  readonly appealsOpenedTotal: client.Counter<string>;
+
+  /**
+   * Total appeals resolved as approved.
+   * Incremented by the indexer when it decodes an appeal_approved event.
+   */
+  readonly appealsApprovedTotal: client.Counter<string>;
+
+  /**
+   * Total appeals resolved as rejected.
+   * Incremented by the indexer when it decodes an appeal_rejected event.
+   */
+  readonly appealsRejectedTotal: client.Counter<string>;
+
+  /**
+   * Current number of in-flight (open) appeals that have not yet been resolved.
+   * Gauge: +1 on open, -1 on resolved (approved or rejected).
+   */
+  readonly appealsInFlightGauge: client.Gauge<string>;
+
+  constructor(cardinalityGuard: MetricsCardinalityGuard) {
+    this.cardinalityGuard = cardinalityGuard;
     this.registry = new client.Registry();
     this.registry.setDefaultLabels({ app: 'niffyinsure-api' });
 
@@ -134,9 +188,46 @@ export class MetricsService implements OnModuleInit {
       registers: [this.registry],
     });
 
+    this.queueActiveWorkers = new client.Gauge({
+      name: 'bullmq_queue_active_workers',
+      help: 'Number of active workers for a queue (jobs being processed)',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
+    this.queueDepth = new client.Gauge({
+      name: 'bullmq_queue_depth',
+      help: 'Number of jobs currently pending in a queue',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
+    this.bullmqJobRetriesTotal = new client.Counter({
+      name: 'bullmq_job_retries_total',
+      help: 'Total job retry attempts per queue (excludes first attempt and final exhaustion)',
+      labelNames: ['queue', 'job_name'],
+      registers: [this.registry],
+    });
+
+    this.jobProcessingDuration = new client.Histogram({
+      name: 'bullmq_job_processing_duration_seconds',
+      help: 'Job processing duration in seconds per queue',
+      labelNames: ['queue', 'job_name', 'status'],
+      buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 300],
+      registers: [this.registry],
+    });
+
     this.indexerLag = new client.Gauge({
       name: 'indexer_lag_ledgers',
       help: 'Current indexer lag in ledger count behind the network head',
+      labelNames: ['network'],
+      registers: [this.registry],
+    });
+    this.indexerLedgerGap = new client.Gauge({      name: 'indexer_ledger_gap',      help: 'Gap between latest chain ledger and last processed ledger',      labelNames: ['network'],      registers: [this.registry],    });
+
+    this.indexerLastLedgerAge = new client.Gauge({
+      name: 'indexer_last_processed_ledger_age_seconds',
+      help: 'Seconds since the close time of the last ledger processed by the indexer',
       labelNames: ['network'],
       registers: [this.registry],
     });
@@ -241,6 +332,70 @@ export class MetricsService implements OnModuleInit {
       help: 'Total Redis connection errors',
       registers: [this.registry],
     });
+
+    this.voteTallyMismatches = new client.Counter({
+      name: 'vote_tally_mismatches_total',
+      help: 'Total vote tally mismatches detected between indexed DB and on-chain state',
+      labelNames: ['claim_id'],
+      registers: [this.registry],
+    });
+
+    this.voteReconciliationErrors = new client.Counter({
+      name: 'vote_reconciliation_errors_total',
+      help: 'Total errors during vote reconciliation checks',
+      registers: [this.registry],
+    });
+
+    this.voteReconciliationMismatchCount = new client.Counter({
+      name: 'vote_reconciliation_mismatches_total',
+      help: 'Total mismatches detected in a reconciliation run',
+      registers: [this.registry],
+    });
+
+    this.vacuumOperationsTotal = new client.Counter({
+      name: 'db_vacuum_operations_total',
+      help: 'Total VACUUM operations run against high-churn tables',
+      labelNames: ['table', 'result'],
+      registers: [this.registry],
+    });
+
+    this.tableBloatRatio = new client.Gauge({
+      name: 'db_table_bloat_ratio',
+      help: 'Table bloat ratio (percentage of dead tuples) per high-churn table',
+      labelNames: ['table'],
+      registers: [this.registry],
+    });
+
+    this.claimNotificationBatchTotal = new client.Counter({
+      name: 'claim_notification_batch_operations_total',
+      help: 'Total claim notification batch accumulate/flush operations',
+      labelNames: ['action'],
+      registers: [this.registry],
+    });
+
+    this.appealsOpenedTotal = new client.Counter({
+      name: 'appeals_opened_total',
+      help: 'Total appeal submissions opened by claimants',
+      registers: [this.registry],
+    });
+
+    this.appealsApprovedTotal = new client.Counter({
+      name: 'appeals_approved_total',
+      help: 'Total appeals resolved as approved (indexed from on-chain events)',
+      registers: [this.registry],
+    });
+
+    this.appealsRejectedTotal = new client.Counter({
+      name: 'appeals_rejected_total',
+      help: 'Total appeals resolved as rejected (indexed from on-chain events)',
+      registers: [this.registry],
+    });
+
+    this.appealsInFlightGauge = new client.Gauge({
+      name: 'appeals_in_flight',
+      help: 'Number of appeals currently open (not yet resolved)',
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -322,14 +477,22 @@ export class MetricsService implements OnModuleInit {
   recordIndexerLag(opts: { network: string; lag: number }) {
     this.indexerLag.set({ network: opts.network }, opts.lag);
   }
+  recordIndexerLedgerGap(opts: { network: string; gap: number }) {    this.indexerLedgerGap.set({ network: opts.network }, opts.gap);  }
+
+  recordLastProcessedLedgerAge(opts: { network: string; ledgerClosedAt: Date }) {
+    const ageSeconds = (Date.now() - opts.ledgerClosedAt.getTime()) / 1000;
+    this.indexerLastLedgerAge.set({ network: opts.network }, Math.max(0, ageSeconds));
+  }
 
   recordSolvencyBuffer(opts: { tenant: string; bufferStroops: bigint }) {
-    this.solvencyBufferStroops.set({ tenant: opts.tenant }, Number(opts.bufferStroops));
+    const normalizedTenant = this.cardinalityGuard.normalizeTenantId(opts.tenant);
+    this.solvencyBufferStroops.set({ tenant: normalizedTenant }, Number(opts.bufferStroops));
   }
 
   recordSolvencyThreshold(opts: { tenant: string; thresholdStroops: bigint }) {
+    const normalizedTenant = this.cardinalityGuard.normalizeTenantId(opts.tenant);
     this.solvencyBufferThresholdStroops.set(
-      { tenant: opts.tenant },
+      { tenant: normalizedTenant },
       Number(opts.thresholdStroops),
     );
   }
@@ -354,6 +517,85 @@ export class MetricsService implements OnModuleInit {
 
   recordDuplicateEvent(opts: { eventType: 'raw_event' | 'vote'; network: string }) {
     this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
+  }
+
+  recordVoteTallyMismatch(claimId: number) {
+    const normalizedClaimId = this.cardinalityGuard.normalizeClaimId(claimId);
+    this.voteTallyMismatches.inc({ claim_id: normalizedClaimId });
+  }
+
+  recordVoteReconciliationError() {
+    this.voteReconciliationErrors.inc();
+  }
+
+  recordVoteReconciliationMismatchCount(count: number) {
+    this.voteReconciliationMismatchCount.inc({}, count);
+  }
+
+  recordJobRetry(opts: { queue: string; jobName: string }) {
+    this.bullmqJobRetriesTotal.inc({ queue: opts.queue, job_name: opts.jobName });
+  }
+
+  recordQueueActiveWorkers(opts: { queue: string; count: number }) {
+    this.queueActiveWorkers.set({ queue: opts.queue }, opts.count);
+  }
+
+  recordQueueDepth(opts: { queue: string; depth: number }) {
+    this.queueDepth.set({ queue: opts.queue }, opts.depth);
+  }
+
+  recordJobProcessingDuration(opts: {
+    queue: string;
+    jobName: string;
+    status: string;
+    durationMs: number;
+  }) {
+    const { queue, jobName, status, durationMs } = opts;
+    this.jobProcessingDuration.observe(
+      { queue, job_name: jobName, status },
+      durationMs / 1000,
+    );
+  }
+
+  recordVacuumOperation(table: string, result: 'success' | 'failure') {
+    this.vacuumOperationsTotal.inc({ table, result });
+  }
+
+  recordTableBloat(table: string, bloatRatioPercent: number) {
+    this.tableBloatRatio.set({ table }, bloatRatioPercent);
+  }
+
+  recordClaimNotificationBatch(
+    action: 'accumulated' | 'flushed',
+    _opts: { walletAddress: string; eventCount: number },
+  ) {
+    this.claimNotificationBatchTotal.inc({ action });
+  }
+
+  // ── Appeal metric helpers ────────────────────────────────────────────────
+
+  /** Call after a successful appeal transaction submission. */
+  recordAppealOpened() {
+    this.appealsOpenedTotal.inc();
+    this.appealsInFlightGauge.inc();
+  }
+
+  /**
+   * Call when the indexer decodes an appeal-approved on-chain event.
+   * Decrements in-flight gauge because the appeal is now resolved.
+   */
+  recordAppealApproved() {
+    this.appealsApprovedTotal.inc();
+    this.appealsInFlightGauge.dec();
+  }
+
+  /**
+   * Call when the indexer decodes an appeal-rejected on-chain event.
+   * Decrements in-flight gauge because the appeal is now resolved.
+   */
+  recordAppealRejected() {
+    this.appealsRejectedTotal.inc();
+    this.appealsInFlightGauge.dec();
   }
 
   async getMetrics(): Promise<string> {

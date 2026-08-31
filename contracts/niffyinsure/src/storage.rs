@@ -69,6 +69,8 @@ pub enum DataKey {
     // ── Instance tier ────────────────────────────────────────────────────
     Admin,
     PendingAdmin,
+    /// Expiry ledger for pending admin proposal (time lock).
+    PendingAdminExpiry,
     Token,
     /// Address where collected premiums are sent.
     Treasury,
@@ -203,6 +205,9 @@ pub enum DataKey {
     WhitelistEnabled,
     /// Per-address whitelist entry for KYC compliance gating.
     Whitelisted(Address),
+    /// Optional flat fee (stroops) charged to the claimant at file_claim.
+    /// 0 = disabled. Transferred directly to the treasury before claim creation.
+    ClaimFilingFee,
     // ── Appeal mechanism (Issue #1) ───────────────────────────────────────────
     /// Voter snapshot for an appeal round (separate from the base-claim snapshot).
     AppealVoters(u64),
@@ -216,6 +221,8 @@ pub enum DataKey {
     AllowedAssetConfig(Address),
     // ── Issue #585: Admin role delegation ────────────────────────────────────
     Delegation(Address),
+    /// Ordered index of operators that currently have a stored delegation record.
+    DelegationOperatorIndex,
     // ── Issue #581: Reinsurance pool ─────────────────────────────────────────
     ReinsuranceContract,
     // ── Treasury depositor allowlist ─────────────────────────────────────────
@@ -232,7 +239,33 @@ pub enum DataKey {
     SubscriptionCounter,
     Subscription(u64),
     OwnerSubscriptionIds(Address),
+    // ── Governance cooldown (Issue #844) ──────────────────────────────────────
+    GovernanceCooldownLedgers,
+    LastParamChangeLedger,
+    // ── Treasury withdrawal limit (Issue #845) ────────────────────────────────
+    MaxSweepPerLedger,
+    LastSweepLedger,
+    CumulativeSweptThisLedger,
+    // ── Ledger close time estimate (Issue #842) ───────────────────────────────
+    /// Admin-configurable seconds-per-ledger estimate for UI deadline display.
+    /// Falls back to [`crate::ledger::SECS_PER_LEDGER`] (5) when unset.
+    SecsPerLedgerEstimate,
+    // ── Admin role separation (Issue #1161) ───────────────────────────────────
+    /// Address authorized to call pause/unpause. Falls back to Admin when unset.
+    PauseAdmin,
+    /// Address authorized to call treasury operations (drain, sweep, rotation). Falls back to Admin.
+    TreasuryAdmin,
+    /// Address authorized to call governance parameter changes. Falls back to Admin.
+    ParamAdmin,
+    // ── Issue #787: Coverage amount floor ────────────────────────────────────
+    MinCoverageAmount,
+    // ── Issue #783: Voter count hard cap ─────────────────────────────────────
+    MaxVotersPerClaim,
+    // ── Issue #782: Token decimal normalization ───────────────────────────────
+    /// Stored decimals for an allowlisted asset (queried at bind time).
+    AssetDecimals(Address),
 }
+
 pub fn has_open_claim(env: &Env, holder: &Address, policy_id: u32) -> bool {
     env.storage()
         .instance()
@@ -277,8 +310,21 @@ pub fn get_pending_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::PendingAdmin)
 }
 
+pub fn set_pending_admin_expiry(env: &Env, expiry_ledger: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingAdminExpiry, &expiry_ledger);
+}
+
+pub fn get_pending_admin_expiry(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::PendingAdminExpiry)
+}
+
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingAdminExpiry);
 }
 
 // ── New: Pending Admin Action ─────────────────────────────────────────────────
@@ -622,12 +668,12 @@ pub fn get_claim_counter(env: &Env) -> u64 {
         .unwrap_or(0u64)
 }
 
-pub fn next_claim_id(env: &Env) -> u64 {
+pub fn next_claim_id(env: &Env) -> Result<u64, crate::validate::Error> {
     let next = get_claim_counter(env)
         .checked_add(1)
-        .unwrap_or_else(|| panic!("claim_id overflow"));
+        .ok_or(crate::validate::Error::ClaimIdOverflow)?;
     env.storage().instance().set(&DataKey::ClaimCounter, &next);
-    next
+    Ok(next)
 }
 
 // ── Voters (instance) ─────────────────────────────────────────────────────────
@@ -785,6 +831,19 @@ pub fn get_policy_counter(env: &Env, holder: &Address) -> u32 {
         .unwrap_or(0u32)
 }
 
+/// Atomically increment and return the next policy ID for a holder.
+///
+/// This function reads, increments, stores, and returns the policy ID counter
+/// in a single operation to ensure atomicity and prevent duplicate IDs under
+/// concurrent calls. The counter is stored in persistent storage per holder.
+///
+/// # Returns
+/// The next sequential policy ID (u32) for the given holder.
+///
+/// # Storage
+/// - Reads: `PolicyCounter(holder)` from persistent storage
+/// - Writes: Increments and stores the new value
+/// - Extends TTL to prevent eviction
 pub fn next_policy_id(env: &Env, holder: &Address) -> u32 {
     let key = DataKey::PolicyCounter(holder.clone());
     let next: u32 = env.storage().persistent().get(&key).unwrap_or(0u32) + 1;
@@ -1115,6 +1174,22 @@ pub fn get_max_weight_cap(env: &Env) -> i128 {
         .instance()
         .get(&DataKey::MaxWeightCap)
         .unwrap_or(i128::MAX)
+}
+
+// ── Claim filing fee (instance) ────────────────────────────────────────────
+
+/// Set the flat fee (stroops) charged to the claimant at file_claim.
+/// 0 = disabled. Fee is transferred to the treasury before claim creation.
+pub fn set_claim_filing_fee(env: &Env, fee: i128) {
+    env.storage().instance().set(&DataKey::ClaimFilingFee, &fee);
+}
+
+/// Get the current claim filing fee. Defaults to 0 (disabled) when unset.
+pub fn get_claim_filing_fee(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ClaimFilingFee)
+        .unwrap_or(0)
 }
 
 // ── Per-policy cooldown (persistent) ─────────────────────────────────────────
@@ -1745,6 +1820,45 @@ pub fn remove_delegation(env: &Env, operator: &Address) {
         .remove(&DataKey::Delegation(operator.clone()));
 }
 
+fn get_delegation_operator_index(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::DelegationOperatorIndex)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn set_delegation_operator_index(env: &Env, index: &Vec<Address>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::DelegationOperatorIndex, index);
+}
+
+/// Insert `operator` into the delegation index if not already present.
+pub fn index_delegation_operator(env: &Env, operator: &Address) {
+    let mut index = get_delegation_operator_index(env);
+    for i in 0..index.len() {
+        if index.get(i).as_ref() == Some(operator) {
+            return;
+        }
+    }
+    index.push_back(operator.clone());
+    set_delegation_operator_index(env, &index);
+}
+
+/// Remove `operator` from the delegation index (no-op if absent).
+pub fn unindex_delegation_operator(env: &Env, operator: &Address) {
+    let index = get_delegation_operator_index(env);
+    let mut next: Vec<Address> = Vec::new(env);
+    for i in 0..index.len() {
+        if let Some(addr) = index.get(i) {
+            if &addr != operator {
+                next.push_back(addr);
+            }
+        }
+    }
+    set_delegation_operator_index(env, &next);
+}
+
 // ── Issue #581: Reinsurance pool ──────────────────────────────────────────────
 
 pub fn set_reinsurance_contract(env: &Env, addr: &Address) {
@@ -2005,4 +2119,179 @@ pub fn set_allowed_payout_recipient(env: &Env, recipient: &Address, allowed: boo
         &DataKey::AllowedPayoutRecipient(recipient.clone()),
         &allowed,
     );
+}
+
+// ── Governance cooldown (Issue #844) ──────────────────────────────────────
+
+pub fn set_governance_cooldown_ledgers(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceCooldownLedgers, &ledgers);
+}
+
+pub fn get_governance_cooldown_ledgers(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovernanceCooldownLedgers)
+        .unwrap_or(0)
+}
+
+pub fn set_last_param_change_ledger(env: &Env, ledger: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::LastParamChangeLedger, &ledger);
+}
+
+pub fn get_last_param_change_ledger(env: &Env) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::LastParamChangeLedger)
+}
+
+// ── Treasury withdrawal limit (Issue #845) ────────────────────────────────
+
+pub fn set_max_sweep_per_ledger(env: &Env, cap: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxSweepPerLedger, &cap);
+}
+
+pub fn get_max_sweep_per_ledger(env: &Env) -> Option<i128> {
+    env.storage().instance().get(&DataKey::MaxSweepPerLedger)
+}
+
+pub fn set_last_sweep_ledger(env: &Env, ledger: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::LastSweepLedger, &ledger);
+}
+
+pub fn get_last_sweep_ledger(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::LastSweepLedger)
+}
+
+pub fn set_cumulative_swept_this_ledger(env: &Env, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CumulativeSweptThisLedger, &amount);
+}
+
+pub fn get_cumulative_swept_this_ledger(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::CumulativeSweptThisLedger)
+        .unwrap_or(0)
+}
+
+// ── Ledger close time estimate (Issue #842) ───────────────────────────────────
+//
+// Returns the admin-configured seconds-per-ledger estimate used by the UI
+// to convert ledger sequence numbers to approximate wall-clock deadlines.
+//
+// NOTE: This is an **estimate only**. Actual Stellar ledger close times vary
+// between approximately 3–7 seconds depending on network conditions. This
+// value MUST NOT be used for on-chain enforcement — only for UX display.
+
+/// Set the admin-configurable seconds-per-ledger estimate.
+/// Caller must validate range before calling (recommend 1–30).
+pub fn set_secs_per_ledger_estimate(env: &Env, secs: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::SecsPerLedgerEstimate, &secs);
+}
+
+/// Get the configured seconds-per-ledger estimate.
+/// Returns [`crate::ledger::SECS_PER_LEDGER`] (5) when not explicitly set.
+///
+/// NOTE: This is an **estimate** — actual ledger close times vary. Do not
+/// use for legal deadlines or on-chain enforcement.
+pub fn get_secs_per_ledger_estimate(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::SecsPerLedgerEstimate)
+        .unwrap_or(crate::ledger::SECS_PER_LEDGER)
+}
+
+// ── Admin role separation (Issue #1161) ───────────────────────────────────────
+//
+// Three scoped roles supplement the single admin key:
+//   - PauseAdmin   : may call pause / unpause only.
+//   - TreasuryAdmin: may call drain, sweep, and treasury-rotation operations.
+//   - ParamAdmin   : may call governance parameter changes (evidence count, cooldowns, …).
+//
+// When a role is unset, the main Admin address is accepted as a fallback so
+// that existing single-admin deployments continue to work without re-configuration.
+
+pub fn set_pause_admin(env: &Env, addr: &Address) {
+    env.storage().instance().set(&DataKey::PauseAdmin, addr);
+}
+
+pub fn get_pause_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PauseAdmin)
+}
+
+pub fn set_treasury_admin(env: &Env, addr: &Address) {
+    env.storage().instance().set(&DataKey::TreasuryAdmin, addr);
+}
+
+pub fn get_treasury_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::TreasuryAdmin)
+}
+
+pub fn set_param_admin(env: &Env, addr: &Address) {
+    env.storage().instance().set(&DataKey::ParamAdmin, addr);
+}
+
+pub fn get_param_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::ParamAdmin)
+}
+
+// ── Issue #787: Coverage amount floor (instance) ─────────────────────────────
+
+/// Default safe minimum: 1_000_000 stroops (0.1 XLM equivalent).
+pub const DEFAULT_MIN_COVERAGE_AMOUNT: i128 = 1_000_000;
+
+pub fn set_min_coverage_amount(env: &Env, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MinCoverageAmount, &amount);
+}
+
+pub fn get_min_coverage_amount(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MinCoverageAmount)
+        .unwrap_or(DEFAULT_MIN_COVERAGE_AMOUNT)
+}
+
+// ── Issue #783: Voter count hard cap (instance) ───────────────────────────────
+
+/// Default safe cap: 100 voters per claim.
+pub const DEFAULT_MAX_VOTERS_PER_CLAIM: u32 = 100;
+
+pub fn set_max_voters_per_claim(env: &Env, cap: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxVotersPerClaim, &cap);
+}
+
+pub fn get_max_voters_per_claim(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MaxVotersPerClaim)
+        .unwrap_or(DEFAULT_MAX_VOTERS_PER_CLAIM)
+}
+
+// ── Issue #782: Token decimal normalization (instance) ────────────────────────
+
+pub fn set_asset_decimals(env: &Env, asset: &Address, decimals: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AssetDecimals(asset.clone()), &decimals);
+}
+
+pub fn get_asset_decimals(env: &Env, asset: &Address) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::AssetDecimals(asset.clone()))
 }

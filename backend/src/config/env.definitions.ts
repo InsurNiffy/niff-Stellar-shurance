@@ -13,6 +13,7 @@ export interface EnvironmentVariables {
   REDIS_URL: string;
   STELLAR_NETWORK: StellarNetwork;
   SOROBAN_RPC_URL: string;
+  SOROBAN_SIMULATE_TIMEOUT_MS: number;
   HORIZON_URL: string;
   STELLAR_NETWORK_PASSPHRASE: string;
   CONTRACT_ID: string;
@@ -55,10 +56,13 @@ export interface EnvironmentVariables {
   FRONTEND_ORIGINS: string;
   ADMIN_CORS_ORIGINS: string;
   CORS_ALLOWED_ORIGINS: string;
+  BLOCKED_COUNTRIES: string;
   LOG_LEVEL: LogLevel;
   CACHE_TTL_SECONDS: number;
   QUOTE_SIMULATION_CACHE_ENABLED: 'true' | 'false' | '1' | '0';
   QUOTE_SIMULATION_CACHE_TTL_SECONDS: number;
+  ALLOWED_ASSETS_REFRESH_INTERVAL_MS: number;
+  ALLOWED_ASSETS_REFRESH_JITTER_MS: number;
   CAPTCHA_PROVIDER: CaptchaProvider;
   CAPTCHA_SECRET_KEY: string;
   CAPTCHA_SITE_KEY: string;
@@ -66,11 +70,15 @@ export interface EnvironmentVariables {
   TENANT_RESOLUTION_ENABLED: boolean;
   TENANT_BASE_DOMAIN: string;
   DATA_RETENTION_DAYS: number;
+  INDEXER_RETENTION_DAYS: number;
   DB_POOL_MAX: number;
   DB_POOL_MIN: number;
   DB_POOL_IDLE_TIMEOUT_MS: number;
   DB_POOL_CONNECTION_TIMEOUT_MS: number;
   DB_SLOW_QUERY_MS: number;
+  DB_CONNECT_MAX_ATTEMPTS: number;
+  DB_CONNECT_INITIAL_DELAY_MS: number;
+  DB_CONNECT_MAX_DELAY_MS: number;
   GRAPHQL_ENABLED: boolean;
   GRAPHQL_PATH: string;
   GRAPHQL_INTROSPECTION_IN_PRODUCTION: boolean;
@@ -109,6 +117,10 @@ export interface EnvironmentVariables {
   SOLVENCY_TENANT_ID: string;
   SOLVENCY_ALERT_WEBHOOK_URL: string;
   SOLVENCY_ALERT_WEBHOOK_SECRET: string;
+  IPFS_PIN_CHECK_ENABLED: string;
+  IPFS_PIN_CHECK_CRON: string;
+  IPFS_PIN_CHECK_ALERT_WEBHOOK_URL: string;
+  IPFS_PIN_CHECK_ALERT_WEBHOOK_SECRET: string;
   WASM_DRIFT_WEBHOOK_URL: string;
   WASM_DRIFT_WEBHOOK_SECRET: string;
   DEPLOYMENT_REGISTRY_PATH: string;
@@ -119,9 +131,31 @@ export interface EnvironmentVariables {
   WEBHOOK_IP_ALLOWLIST_GITHUB: string;
   WEBHOOK_IP_ALLOWLIST_STRIPE: string;
   WEBHOOK_IP_ALLOWLIST_GENERIC: string;
+  /** Comma-separated CIDR allowlist for admin endpoints (#857). Empty = all IPs allowed. */
+  ADMIN_ALLOWED_CIDRS: string;
+  /** Comma-separated URLs that receive outbound claim.filed webhook deliveries (#891). */
+  CLAIM_FILED_WEBHOOK_URLS: string;
+  /** Comma-separated URLs that receive outbound vote.cast webhook deliveries (#892). */
+  VOTE_CAST_WEBHOOK_URLS: string;
+  /** Comma-separated URLs that receive treasury balance-low alert webhooks (#893). */
+  TREASURY_ALERT_WEBHOOK_URLS: string;
+  /** Maximum outbound webhook payload size in bytes. Payloads exceeding this are rejected. Defaults to 1 MB. */
+  MAX_OUTBOUND_WEBHOOK_SIZE_BYTES: number;
+  /** Webhook verification challenge timeout in milliseconds. Defaults to 5 minutes. */
+  WEBHOOK_VERIFICATION_TIMEOUT_MS: number;
+  /** Maximum attempts to send verification challenge before marking webhook inactive. Defaults to 3. */
+  WEBHOOK_MAX_VERIFICATION_ATTEMPTS: number;
+  /** API base URL for webhook verification links. */
+  API_BASE_URL: string;
   PAGINATION_HMAC_SECRET: string;
   DISABLE_REINDEX_WORKER: string;
   RENEWAL_REMINDER_CRON: string;
+  /** Maximum pending jobs in tx-submit queue before rejecting with 429 backpressure. */
+  TX_SUBMIT_QUEUE_MAX_DEPTH: number;
+  /** Per-queue BullMQ concurrency levels: format "queue-name=N,..." Defaults per queue if not specified. */
+  QUEUE_CONCURRENCY_MAP: string;
+  /** Per-queue BullMQ retry configuration: format "queue-name=maxAttempts,backoffType,initialDelayMs;..." */
+  QUEUE_RETRY_MAP: string;
   /**
    * Optional incoming JWT signing key used during zero-downtime rotation.
    * When set, tokens signed with JWT_SECRET_NEXT are also accepted.
@@ -307,6 +341,14 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: 'https://soroban-testnet.stellar.org',
     required: 'required',
     schema: Joi.string().uri().required(),
+  },
+  SOROBAN_SIMULATE_TIMEOUT_MS: {
+    key: 'SOROBAN_SIMULATE_TIMEOUT_MS',
+    section: 'Stellar',
+    description: 'Max ms to wait for simulate_transaction before returning 504 (issue #895).',
+    example: '30000',
+    required: 'required',
+    schema: Joi.number().integer().min(1000).default(30_000),
   },
   HORIZON_URL: {
     key: 'HORIZON_URL',
@@ -680,6 +722,15 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     required: 'optional',
     schema: Joi.string().allow('').default(''),
   },
+  BLOCKED_COUNTRIES: {
+    key: 'BLOCKED_COUNTRIES',
+    section: 'Compliance',
+    description:
+      'Comma-separated ISO 3166-1 alpha-2 country codes blocked from policy initiation (geo-compliance). Empty = no blocking.',
+    example: 'KP,IR,CU',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
   LOG_LEVEL: {
     key: 'LOG_LEVEL',
     section: 'Observability',
@@ -711,6 +762,22 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '30',
     required: 'required',
     schema: Joi.number().integer().min(1).max(600).default(30),
+  },
+  ALLOWED_ASSETS_REFRESH_INTERVAL_MS: {
+    key: 'ALLOWED_ASSETS_REFRESH_INTERVAL_MS',
+    section: 'Caching',
+    description: 'Base refresh interval for allowed assets cache in milliseconds.',
+    example: '300000',
+    required: 'optional',
+    schema: Joi.number().integer().min(1000).default(300000),
+  },
+  ALLOWED_ASSETS_REFRESH_JITTER_MS: {
+    key: 'ALLOWED_ASSETS_REFRESH_JITTER_MS',
+    section: 'Caching',
+    description: 'Randomized jitter added to refresh interval to avoid thundering herd (in milliseconds).',
+    example: '60000',
+    required: 'optional',
+    schema: Joi.number().integer().min(0).default(60000),
   },
   CAPTCHA_PROVIDER: {
     key: 'CAPTCHA_PROVIDER',
@@ -790,6 +857,14 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     required: 'required',
     schema: Joi.number().integer().min(1).default(730),
   },
+  INDEXER_RETENTION_DAYS: {
+    key: 'INDEXER_RETENTION_DAYS',
+    section: 'Operations',
+    description: 'Days to keep RawEvent and inactive LedgerCursor rows before pruning (issue #897).',
+    example: '90',
+    required: 'required',
+    schema: Joi.number().integer().min(1).default(90),
+  },
   DB_POOL_MAX: {
     key: 'DB_POOL_MAX',
     section: 'Database',
@@ -829,6 +904,30 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '250',
     required: 'required',
     schema: Joi.number().integer().min(10).default(250),
+  },
+  DB_CONNECT_MAX_ATTEMPTS: {
+    key: 'DB_CONNECT_MAX_ATTEMPTS',
+    section: 'Database',
+    description: 'Max $connect() attempts with exponential backoff before startup fails (issue #894).',
+    example: '5',
+    required: 'required',
+    schema: Joi.number().integer().min(1).default(5),
+  },
+  DB_CONNECT_INITIAL_DELAY_MS: {
+    key: 'DB_CONNECT_INITIAL_DELAY_MS',
+    section: 'Database',
+    description: 'Initial retry delay in ms for DB connection backoff (doubles each attempt).',
+    example: '500',
+    required: 'required',
+    schema: Joi.number().integer().min(100).default(500),
+  },
+  DB_CONNECT_MAX_DELAY_MS: {
+    key: 'DB_CONNECT_MAX_DELAY_MS',
+    section: 'Database',
+    description: 'Maximum retry delay cap in ms for DB connection backoff.',
+    example: '30000',
+    required: 'required',
+    schema: Joi.number().integer().min(1000).default(30_000),
   },
   GRAPHQL_ENABLED: {
     key: 'GRAPHQL_ENABLED',
@@ -1143,6 +1242,40 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     secret: true,
     schema: Joi.string().allow('').default(''),
   },
+  IPFS_PIN_CHECK_ENABLED: {
+    key: 'IPFS_PIN_CHECK_ENABLED',
+    section: 'Operations',
+    description: 'Enable the scheduled IPFS pinning status check job (issue #896).',
+    example: 'true',
+    required: 'optional',
+    schema: Joi.string().allow('').default('true'),
+  },
+  IPFS_PIN_CHECK_CRON: {
+    key: 'IPFS_PIN_CHECK_CRON',
+    section: 'Operations',
+    description: 'Cron expression for the IPFS pin check job (default: 02:00 daily).',
+    example: '0 2 * * *',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
+  IPFS_PIN_CHECK_ALERT_WEBHOOK_URL: {
+    key: 'IPFS_PIN_CHECK_ALERT_WEBHOOK_URL',
+    section: 'Operations',
+    description: 'Webhook URL for ops alerts when a CID is no longer pinned.',
+    example: '',
+    required: 'optional',
+    secret: true,
+    schema: Joi.string().uri().allow('').default(''),
+  },
+  IPFS_PIN_CHECK_ALERT_WEBHOOK_SECRET: {
+    key: 'IPFS_PIN_CHECK_ALERT_WEBHOOK_SECRET',
+    section: 'Operations',
+    description: 'Shared secret sent with IPFS pin check alert webhooks.',
+    example: '',
+    required: 'optional',
+    secret: true,
+    schema: Joi.string().allow('').default(''),
+  },
   WASM_DRIFT_WEBHOOK_URL: {
     key: 'WASM_DRIFT_WEBHOOK_URL',
     section: 'Operations',
@@ -1228,6 +1361,73 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     required: 'optional',
     schema: Joi.string().allow('').default(''),
   },
+  ADMIN_ALLOWED_CIDRS: {
+    key: 'ADMIN_ALLOWED_CIDRS',
+    section: 'Admin',
+    description:
+      'Optional comma-separated CIDR allowlist for admin endpoints. ' +
+      'Supports IPv4 (e.g. "10.0.0.0/8,192.168.1.0/24") and IPv6. ' +
+      'Empty = all IPs allowed (backward compatible default).',
+    example: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
+  CLAIM_FILED_WEBHOOK_URLS: {
+    key: 'CLAIM_FILED_WEBHOOK_URLS',
+    section: 'Webhooks',
+    description: 'Comma-separated URLs to receive outbound claim.filed webhook deliveries.',
+    example: 'https://example.com/hooks/claim-filed',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
+  VOTE_CAST_WEBHOOK_URLS: {
+    key: 'VOTE_CAST_WEBHOOK_URLS',
+    section: 'Webhooks',
+    description: 'Comma-separated URLs to receive outbound vote.cast webhook deliveries.',
+    example: 'https://example.com/hooks/vote-cast',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
+  TREASURY_ALERT_WEBHOOK_URLS: {
+    key: 'TREASURY_ALERT_WEBHOOK_URLS',
+    section: 'Webhooks',
+    description: 'Comma-separated URLs to receive treasury balance-low alert webhooks.',
+    example: 'https://example.com/hooks/treasury-alert',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
+  MAX_OUTBOUND_WEBHOOK_SIZE_BYTES: {
+    key: 'MAX_OUTBOUND_WEBHOOK_SIZE_BYTES',
+    section: 'Webhooks',
+    description: 'Maximum payload size for outbound webhooks in bytes. Oversized payloads are rejected.',
+    example: '1048576',
+    required: 'optional',
+    schema: Joi.number().integer().min(1024).default(1048576),
+  },
+  WEBHOOK_VERIFICATION_TIMEOUT_MS: {
+    key: 'WEBHOOK_VERIFICATION_TIMEOUT_MS',
+    section: 'Webhooks',
+    description: 'Timeout in milliseconds for webhook verification challenges. After this, the challenge expires.',
+    example: '300000',
+    required: 'optional',
+    schema: Joi.number().integer().min(10_000).default(300_000),
+  },
+  WEBHOOK_MAX_VERIFICATION_ATTEMPTS: {
+    key: 'WEBHOOK_MAX_VERIFICATION_ATTEMPTS',
+    section: 'Webhooks',
+    description: 'Maximum number of attempts to send verification challenge before marking webhook inactive.',
+    example: '3',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(3),
+  },
+  API_BASE_URL: {
+    key: 'API_BASE_URL',
+    section: 'URLs',
+    description: 'Base URL of the API, used in webhook verification links and other features.',
+    example: 'https://api.example.com',
+    required: 'required',
+    schema: Joi.string().uri().required(),
+  },
   PAGINATION_HMAC_SECRET: {
     key: 'PAGINATION_HMAC_SECRET',
     section: 'Auth',
@@ -1252,6 +1452,40 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '0 * * * *',
     required: 'required',
     schema: Joi.string().default('0 * * * *'),
+  },
+  TX_SUBMIT_QUEUE_MAX_DEPTH: {
+    key: 'TX_SUBMIT_QUEUE_MAX_DEPTH',
+    section: 'Queues',
+    description:
+      'Maximum number of pending jobs in the tx-submit queue before new submissions are rejected with 429 backpressure. ' +
+      'Prevents unbounded queue growth and delays for all users.',
+    example: '1000',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(1000),
+  },
+  QUEUE_CONCURRENCY_MAP: {
+    key: 'QUEUE_CONCURRENCY_MAP',
+    section: 'Queues',
+    description:
+      'Per-queue BullMQ worker concurrency levels: comma-separated "queue-name=N" pairs. ' +
+      'Queues not specified use defaults: tx-submit=1 (nonce-safe), claim-events=5, claim-payouts=3. ' +
+      'Example: "tx-submit=1,claim-events=10,claim-payouts=5"',
+    example: 'tx-submit=1,claim-events=5,claim-payouts=3',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
+  },
+  QUEUE_RETRY_MAP: {
+    key: 'QUEUE_RETRY_MAP',
+    section: 'Queues',
+    description:
+      'Per-queue BullMQ retry configuration. Format: semicolon-separated ' +
+      '"queue-name=maxAttempts,backoffType,initialDelayMs" entries. ' +
+      'backoffType must be "exponential" or "fixed". ' +
+      'Queues not specified use documented defaults. ' +
+      'Example: "tx-submit=3,exponential,2000;webhooks=7,fixed,5000"',
+    example: '',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
   },
   JWT_SECRET_NEXT: {
     key: 'JWT_SECRET_NEXT',

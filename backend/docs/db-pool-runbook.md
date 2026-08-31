@@ -72,3 +72,82 @@ Re-run load tests after:
 - Increasing replica count
 - Adding new high-frequency endpoints
 - Migrating to a larger or smaller DB instance class
+
+## Autovacuum configuration for high-churn tables
+
+High-churn tables (frequent INSERT/UPDATE/DELETE) benefit from aggressive autovacuum settings
+to minimize table bloat and maintain performance.
+
+### Recommended settings by table
+
+#### `claims` (high-churn: status transitions, vote updates)
+
+```sql
+ALTER TABLE claims SET (
+  autovacuum_vacuum_scale_factor = 0.02,    -- Vacuum at 2% dead tuples (default 10%)
+  autovacuum_vacuum_cost_delay = 10,        -- Faster vacuum (default 20 ms)
+  autovacuum_analyze_scale_factor = 0.01    -- Analyze at 1% (default 10%)
+);
+```
+
+**Rationale**: Claims receive frequent updates as votes/status/outcome change. Lower thresholds
+prevent bloat from accumulating and keep statistics fresh for the query planner.
+
+#### `votes` (high-churn: inserted/deleted frequently)
+
+```sql
+ALTER TABLE votes SET (
+  autovacuum_vacuum_scale_factor = 0.02,
+  autovacuum_vacuum_cost_delay = 10,
+  autovacuum_analyze_scale_factor = 0.01
+);
+```
+
+**Rationale**: Votes can be created/revoked repeatedly per claim. Aggressive autovacuum
+keeps the table lean and ensures the planner respects the unique constraint efficiently.
+
+#### `indexer_state`, `ledger_cursors` (moderate-churn: updated once per batch)
+
+```sql
+ALTER TABLE indexer_state SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_vacuum_cost_delay = 20
+);
+
+ALTER TABLE ledger_cursors SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_vacuum_cost_delay = 20
+);
+```
+
+**Rationale**: These are updated frequently (every indexer batch) but contain few rows.
+Standard autovacuum is usually sufficient; only increase if bloat monitoring alerts.
+
+### Weekly manual VACUUM ANALYZE
+
+A weekly manual `VACUUM ANALYZE` job runs non-blocking to reclaim unused space
+on high-churn tables and refresh statistics:
+
+```sql
+-- Non-blocking, can run while table is in use
+VACUUM (ANALYZE, SKIP_LOCKED) claims;
+VACUUM (ANALYZE, SKIP_LOCKED) votes;
+VACUUM (ANALYZE, SKIP_LOCKED) raw_events;
+```
+
+This job is scheduled via the maintenance module and executes every Sunday at 02:00 UTC
+(configurable via `VACUUM_SCHEDULE_CRON`).
+
+### Table bloat monitoring
+
+A Prometheus metric `pg_table_bloat_ratio` tracks bloat percentage per table:
+
+```
+pg_table_bloat_ratio{table="claims"} 0.18
+pg_table_bloat_ratio{table="votes"} 0.05
+pg_table_bloat_ratio{table="raw_events"} 0.32
+```
+
+**Alert**: `pg_table_bloat_ratio > 0.30` (30% dead space) fires alert `TableBloatHigh`.
+Investigate long-running transactions or autovacuum delays if bloat persists after
+the weekly VACUUM job.

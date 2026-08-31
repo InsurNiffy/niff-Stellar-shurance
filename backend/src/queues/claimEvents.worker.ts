@@ -18,6 +18,7 @@
 import { Worker, Job } from "bullmq";
 import { getBullMQConnection } from "../redis/client";
 import { ClaimEventJobData } from "./claimEvents.queue";
+import { getQueueConcurrency } from "./queue-config";
 
 export type EventProcessor = (job: Job<ClaimEventJobData>) => Promise<void>;
 
@@ -42,14 +43,16 @@ async function defaultProcessor(job: Job<ClaimEventJobData>): Promise<void> {
  * Returns the Worker instance so callers can await worker.close() on shutdown.
  */
 export function startClaimEventsWorker(
-  processor: EventProcessor = defaultProcessor
+  processor: EventProcessor = defaultProcessor,
+  concurrencyMapStr?: string
 ): Worker<ClaimEventJobData> {
+  const concurrency = getQueueConcurrency("claim-events", concurrencyMapStr);
   const worker = new Worker<ClaimEventJobData>(
     "claim-events",
     processor,
     {
       connection: getBullMQConnection(),
-      concurrency: 5,
+      concurrency,
       // Stalled job settings — jobs not completed within 30 s are requeued
       stalledInterval: 30_000,
       maxStalledCount: 2,

@@ -6,7 +6,7 @@
  */
 import { Injectable, Logger, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IpfsUploadResult, generateGatewayUrls } from '../interfaces/ipfs-provider.interface';
+import { IpfsUploadResult, generateGatewayUrls, IpfsGatewayConfig, IPFS_GATEWAYS } from '../interfaces/ipfs-provider.interface';
 import { IdempotencyService } from './idempotency.service';
 import { FileValidationService } from './file-validation.service';
 import { IpfsProviderChainService } from './ipfs-provider-chain.service';
@@ -56,13 +56,39 @@ export interface ScanResult {
 @Injectable()
 export class IpfsService {
   private readonly logger = new Logger(IpfsService.name);
+  private gateways: IpfsGatewayConfig[];
 
   constructor(
     private readonly configService: ConfigService,
     private readonly idempotencyService: IdempotencyService,
     private readonly fileValidationService: FileValidationService,
     private readonly providerChain: IpfsProviderChainService,
-  ) {}
+  ) {
+    this.gateways = this.parseConfiguredGateways();
+  }
+
+  private parseConfiguredGateways(): IpfsGatewayConfig[] {
+    const raw = this.configService.get<string>('ALLOWED_IPFS_GATEWAYS', '');
+    if (!raw.trim()) {
+      return IPFS_GATEWAYS;
+    }
+
+    const gateways = raw
+      .split(',')
+      .map((url, index) => ({
+        url: url.trim(),
+        isPublic: true,
+        priority: index,
+      }))
+      .filter((g) => g.url);
+
+    if (gateways.length === 0) {
+      return IPFS_GATEWAYS;
+    }
+
+    this.logger.log(`Using ${gateways.length} configured IPFS gateway(s)`);
+    return gateways;
+  }
 
   /**
    * Set the provider chain (called by module during init)
@@ -172,8 +198,8 @@ export class IpfsService {
       throw new ServiceUnavailableException('Failed to upload to IPFS');
     }
 
-    // Generate gateway URLs
-    const gatewayUrls = generateGatewayUrls(uploadResult.cid);
+    // Generate gateway URLs using configured gateways
+    const gatewayUrls = generateGatewayUrls(uploadResult.cid, this.gateways);
 
     // Store result for idempotency
     await this.idempotencyService.storeResult(
@@ -272,6 +298,38 @@ export class IpfsService {
    */
   getProviderHealthStatus() {
     return this.providerChain.getHealthStatus();
+  }
+
+  /**
+   * Fetch content from IPFS with gateway fallback
+   * Tries each gateway in order until one succeeds or all fail
+   */
+  async fetchFromGateway(cid: string): Promise<Buffer> {
+    const gatewayUrls = generateGatewayUrls(cid, this.gateways);
+    const errors: Array<{ url: string; error: string }> = [];
+
+    for (const url of gatewayUrls) {
+      try {
+        this.logger.debug(`Fetching ${cid} from gateway: ${url}`);
+        const { default: axios } = await import('axios');
+        const response = await axios.get<Buffer>(url, {
+          responseType: 'arraybuffer',
+          timeout: 30_000,
+        });
+        this.logger.log(`Successfully fetched ${cid} from ${url}`);
+        return Buffer.from(response.data);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push({ url, error: message });
+        this.logger.warn(`Failed to fetch from ${url}: ${message}`);
+      }
+    }
+
+    const errorSummary = errors.map((e) => `${e.url}: ${e.error}`).join('; ');
+    this.logger.error(`Failed to fetch ${cid} from all gateways: ${errorSummary}`);
+    throw new ServiceUnavailableException(
+      `Failed to fetch IPFS content ${cid}: all gateways unavailable`,
+    );
   }
 
   /**

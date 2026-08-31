@@ -7,16 +7,18 @@
  * pending optimistic entry, or rolls it back on timeout / error.
  *
  * Polling schedule:
- *   - Base interval : 3 s
- *   - Max interval  : 15 s  (cap — keeps UX snappy for the ~15 s window)
+ *   - Base interval : 1 s   (first retry is quick)
+ *   - Backoff       : doubles each unconfirmed attempt (1 s → 2 s → 4 s → …)
+ *   - Max interval  : 30 s  (cap — avoids hammering the API on long waits)
+ *   - Reset         : attempt counter resets to 0 on a successful confirmation
  *   - Timeout       : 60 s  (CONFIRMATION_TIMEOUT_MS) → triggers rollback
  */
 
 import { useEffect, useRef } from 'react';
 import { CONFIRMATION_TIMEOUT_MS } from './types';
 
-const BASE_MS = 3_000;
-const MAX_MS = 15_000;
+const BASE_MS = 1_000;
+const MAX_MS = 30_000;
 
 function backoffMs(attempt: number): number {
   return Math.min(BASE_MS * Math.pow(2, attempt), MAX_MS);

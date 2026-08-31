@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContextService } from '../../tenant/tenant-context.service';
 import { claimTenantWhere } from '../../tenant/tenant-filter.helper';
+import type { ClaimTimelineEntryDto } from '../dto/claim.dto';
 
 export interface ClaimHistoryEntry {
   status: string;
@@ -16,8 +17,14 @@ export interface ClaimHistoryPage {
   nextCursor: string | null;
 }
 
-// Status-change event topic patterns sourced from the event dictionary
-const STATUS_CHANGE_TOPICS = ['claim_pd', 'claim_filed', 'claim_approved', 'claim_rejected'];
+// Legacy status-change event topic patterns (topic1 holds the status directly)
+const LEGACY_TOPICS = ['claim_pd', 'claim_filed', 'claim_approved', 'claim_rejected', 'claim_withdrawn'];
+
+// Contract event patterns where topic1 = namespace, topic2 = event name
+const CONTRACT_CLAIM_NAMESPACE = 'niffyins';
+const CONTRACT_CLAIM_EVENTS = ['clm_filed', 'claim_status_changed', 'clm_final', 'clm_paid'];
+const CONTRACT_POLICY_NAMESPACE = 'niffyinsure';
+const CONTRACT_POLICY_EVENTS = ['claim_withdrawn', 'claim_fully_paid'];
 
 @Injectable()
 export class ClaimHistoryService {
@@ -70,7 +77,7 @@ export class ClaimHistoryService {
               ],
             }
           : {}),
-        OR: STATUS_CHANGE_TOPICS.map((t) => ({ topic1: t })),
+        OR: LEGACY_TOPICS.map((t) => ({ topic1: t })),
       },
       orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
       take: take + 1,
@@ -117,6 +124,86 @@ export class ClaimHistoryService {
 
     return { data, nextCursor };
   }
+
+  /**
+   * Returns a chronological status-transition timeline for a claim,
+   * populated from indexed RawEvent rows.  Unlike getHistory() which
+   * only looks at the filing txHash, this method also finds events
+   * by claim_id in topic3 (the Soroban convention for claim events).
+   * Missing actor / reason are returned as null rather than omitted.
+   */
+  async getTimeline(claimId: number): Promise<ClaimTimelineEntryDto[]> {
+    const tenantId = this.tenantCtx.tenantId;
+
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: claimId }),
+      select: { id: true, txHash: true, createdAtLedger: true, createdAt: true, status: true },
+    });
+    if (!claim) throw new NotFoundException(`Claim ${claimId} not found`);
+
+    // Find events linked to this claim:
+    //   1. Legacy events sharing the same txHash
+    //   2. Contract events where topic3 holds the claim_id
+    const claimIdStr = String(claimId);
+
+    const events = await this.prisma.rawEvent.findMany({
+      where: {
+        OR: [
+          // Legacy: events with same txHash and direct topic1 status values
+          {
+            txHash: claim.txHash ?? undefined,
+            topic1: { in: LEGACY_TOPICS },
+          },
+          // Contract: niffyins namespace events (claim_id in topic3)
+          {
+            topic1: CONTRACT_CLAIM_NAMESPACE,
+            topic2: { in: CONTRACT_CLAIM_EVENTS },
+            topic3: claimIdStr,
+          },
+          // Contract: niffyinsure namespace events (claim_id in topic3)
+          {
+            topic1: CONTRACT_POLICY_NAMESPACE,
+            topic2: { in: CONTRACT_POLICY_EVENTS },
+            topic3: claimIdStr,
+          },
+        ],
+      },
+      orderBy: [{ ledger: 'asc' }, { id: 'asc' }],
+    });
+
+    const data: ClaimTimelineEntryDto[] = events.map((e) => {
+      const raw = e.data as Record<string, unknown>;
+      return {
+        status: mapRawEventToStatus(e.topic1, e.topic2, raw),
+        ledger: e.ledger,
+        timestamp: e.ledgerClosedAt.toISOString(),
+        actor: extractActor(e.topic1, e.topic2, e.topic4, raw),
+        reason: extractReason(e.topic1, e.topic2, raw),
+      };
+    });
+
+    // Fallback: synthesize from the claim row if no raw_events found
+    if (data.length === 0) {
+      data.push({
+        status: 'pending',
+        ledger: claim.createdAtLedger,
+        timestamp: claim.createdAt.toISOString(),
+        actor: null,
+        reason: null,
+      });
+      if (claim.status !== 'PENDING') {
+        data.push({
+          status: claim.status.toLowerCase(),
+          ledger: claim.createdAtLedger,
+          timestamp: claim.createdAt.toISOString(),
+          actor: null,
+          reason: null,
+        });
+      }
+    }
+
+    return data;
+  }
 }
 
 function mapTopicToStatus(topic: string): string {
@@ -133,4 +220,96 @@ function mapTopicToStatus(topic: string): string {
     default:
       return topic.toLowerCase();
   }
+}
+
+/** Map a raw event's topic values to a claim status string. */
+function mapRawEventToStatus(
+  topic1: string | null,
+  topic2: string | null,
+  data: Record<string, unknown>,
+): string {
+  const t1 = topic1 ?? '';
+  const t2 = topic2 ?? '';
+
+  // Legacy: topic1 is the status key directly
+  if (t1 === 'claim_filed') return 'pending';
+  if (t1 === 'claim_approved') return 'approved';
+  if (t1 === 'claim_rejected') return 'rejected';
+  if (t1 === 'claim_pd' || t1 === 'claim_paid') return 'paid';
+  if (t1 === 'claim_withdrawn') return 'withdrawn';
+
+  // Contract events: namespace in topic1, event name in topic2
+  if (t1 === 'niffyins') {
+    if (t2 === 'clm_filed') return 'pending';
+    if (t2 === 'claim_status_changed') {
+      const s = data['new_status'];
+      return typeof s === 'string' ? s.toLowerCase() : 'unknown';
+    }
+    if (t2 === 'clm_final') {
+      const s = data['status'];
+      return typeof s === 'string' ? s.toLowerCase() : 'unknown';
+    }
+    if (t2 === 'clm_paid') return 'paid';
+  }
+  if (t1 === 'niffyinsure') {
+    if (t2 === 'claim_withdrawn') return 'withdrawn';
+    if (t2 === 'claim_fully_paid') return 'paid';
+  }
+
+  return (t2 || t1).toLowerCase();
+}
+
+/** Extract the actor address from event data / topics. */
+function extractActor(
+  topic1: string | null,
+  topic2: string | null,
+  topic4: string | null,
+  data: Record<string, unknown>,
+): string | null {
+  // Admin override enrichment
+  if (typeof data['actor'] === 'string') return data['actor'];
+
+  const t1 = topic1 ?? '';
+  const t2 = topic2 ?? '';
+
+  if (t1 === 'niffyins') {
+    // clm_filed: holder is in topic[3] (topic4 column)
+    if (t2 === 'clm_filed') return topic4;
+    // clm_paid: recipient is in data
+    if (t2 === 'clm_paid') return typeof data['recipient'] === 'string' ? data['recipient'] : null;
+  }
+  if (t1 === 'niffyinsure') {
+    if (t2 === 'claim_withdrawn') return typeof data['claimant'] === 'string' ? data['claimant'] : null;
+    if (t2 === 'claim_fully_paid') return typeof data['recipient'] === 'string' ? data['recipient'] : null;
+  }
+
+  return null;
+}
+
+/** Extract a human-readable reason from event data / type. */
+function extractReason(
+  topic1: string | null,
+  topic2: string | null,
+  data: Record<string, unknown>,
+): string | null {
+  // Admin override enrichment
+  if (typeof data['reason'] === 'string') return data['reason'];
+
+  const t1 = topic1 ?? '';
+  const t2 = topic2 ?? '';
+
+  if (t1 === 'niffyins') {
+    if (t2 === 'clm_final') {
+      const status = data['status'];
+      if (status === 'Approved') return 'Vote majority reached';
+      if (status === 'Rejected') return 'Vote majority rejected';
+    }
+    if (t2 === 'clm_paid') return 'Payout processed';
+  }
+  if (t1 === 'niffyinsure') {
+    if (t2 === 'claim_withdrawn') return 'Claimant withdrawal';
+    if (t2 === 'claim_fully_paid') return 'Fully paid';
+  }
+
+  return null;
 }

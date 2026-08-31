@@ -92,6 +92,9 @@ function makePrismaMock(policy: ReturnType<typeof makePolicy> | null) {
     policy: {
       findFirst: jest.fn().mockResolvedValue(policy),
     },
+    policyRenewal: {
+      create: jest.fn().mockResolvedValue({ id: 'renewal-uuid' }),
+    },
   };
 }
 

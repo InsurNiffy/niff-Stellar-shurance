@@ -450,3 +450,65 @@ fn oracle_types_exist_but_not_usable() {
     // the compiler will fail because the types are gated behind #[cfg].
     assert!(true);
 }
+
+// ── Issue #1157: no-data stub path tests ──────────────────────────────────────
+
+/// In experimental builds, querying a trigger ID that was never submitted
+/// returns TriggerNotFound — the documented "no data available" result.
+#[cfg(feature = "experimental")]
+#[test]
+fn query_trigger_no_data_returns_trigger_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = setup_contract(&env);
+    let result = env.as_contract(&cid, || niffyinsure::oracle::query_trigger(&env, 9999));
+    assert_eq!(
+        result,
+        Err(niffyinsure::validate::OracleError::TriggerNotFound)
+    );
+}
+
+/// validate_trigger on a missing ID also returns TriggerNotFound (no ambiguous default).
+#[cfg(feature = "experimental")]
+#[test]
+fn validate_trigger_no_data_returns_trigger_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = setup_contract(&env);
+    let dummy = Address::generate(&env);
+    let result = env.as_contract(&cid, || {
+        niffyinsure::oracle::validate_trigger(&env, 9999, &dummy)
+    });
+    assert_eq!(
+        result,
+        Err(niffyinsure::validate::OracleError::TriggerNotFound)
+    );
+}
+
+/// execute_trigger on a missing ID also returns TriggerNotFound.
+#[cfg(feature = "experimental")]
+#[test]
+fn execute_trigger_no_data_returns_trigger_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = setup_contract(&env);
+    let dummy = Address::generate(&env);
+    let result = env.as_contract(&cid, || {
+        niffyinsure::oracle::execute_trigger(&env, 9999, &dummy)
+    });
+    assert_eq!(
+        result,
+        Err(niffyinsure::validate::OracleError::TriggerNotFound)
+    );
+}
+
+/// get_trigger (Option) returns None for missing trigger — no panic.
+#[cfg(feature = "experimental")]
+#[test]
+fn get_trigger_no_data_returns_none() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = setup_contract(&env);
+    let result = env.as_contract(&cid, || niffyinsure::oracle::get_trigger(&env, 9999));
+    assert!(result.is_none());
+}

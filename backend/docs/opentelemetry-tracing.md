@@ -38,6 +38,9 @@ Open the Jaeger UI at http://localhost:16686 and select the `niffyinsure-backend
 
 Every incoming request attaches `x-request-id` as a span attribute (`request.id`). Structured log entries include the same `requestId` field, enabling correlation between traces and logs.
 
+For the full frontend → backend → contract-call correlation flow and how to use it when
+investigating a cross-layer issue, see [`docs/correlation-id-guide.md`](../../docs/correlation-id-guide.md).
+
 ## Sensitive Data Policy
 
 - XDR payloads and private keys **must never** appear as span attributes.

@@ -51,6 +51,30 @@
 //   - The `PolicyDeactivated` and `StrikeIncremented` events carry enough
 //     context for an appeal system to reverse their effects off-chain.
 //
+// ── Appeal vs. dispute vs. escalation: three distinct mechanisms ──────────────
+//
+// Full definitions, including the triggering actor and status precondition for
+// each, live in the glossary: `docs/GLOSSARY.md` ("Appeal vs. dispute vs.
+// escalation"). Summary, because these three are easy to conflate by name:
+//
+//   - `open_appeal` (claimant-initiated): requires `claim.status ==
+//     Rejected`. Lets the claimant contest a rejection. Transitions
+//     Rejected → UnderAppeal → (AppealApproved | AppealRejected).
+//   - `dispute_claim` (admin-initiated): requires `claim.status ==
+//     Approved`. Lets the admin freeze payout on an approved claim pending
+//     review. Transitions Approved → Disputed.
+//   - `escalate_claim` (admin-initiated): requires `claim.status ==
+//     Processing`. Shortens a stalled claim's voting deadline. Changes the
+//     schedule only — no status transition, no effect on the outcome.
+//
+// The three can never overlap on the same claim, because each one's entry
+// guard requires a status the other two can't produce: a claim that is
+// `Rejected` cannot be `Approved`, and a claim that is `Approved`/`Disputed`
+// cannot be `Rejected`/`UnderAppeal`, and both are past `Processing`. The
+// statuses partition the claim's lifecycle. See
+// `tests/appeal_dispute_mutual_exclusion.rs` for a test asserting this for the
+// appeal/dispute pair.
+//
 // ── Governance risk documentation ─────────────────────────────────────────────
 //
 // Admin override path: the admin can call `admin_terminate_policy` with
@@ -148,6 +172,22 @@ struct ClaimFiled {
     pub deductible: i128,
     /// SHA-256 content hashes for each evidence entry (same order as submitted).
     pub evidence_hashes: Vec<BytesN<32>>,
+}
+
+/// Emitted when a claim filing fee is collected from the claimant.
+///
+/// Topic layout: ["niffyinsure", "claim_fee_collected", claim_id]
+/// Data: { fee_amount, payer, at_ledger }
+#[contractevent(topics = ["niffyinsure", "claim_fee_collected"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimFeeCollected {
+    #[topic]
+    pub claim_id: u64,
+    /// Fee amount collected (stroops).
+    pub fee_amount: i128,
+    /// Address that paid the fee (the claimant).
+    pub payer: Address,
+    pub at_ledger: u32,
 }
 
 /// Emitted when the claimant withdraws before any vote is cast.
@@ -325,7 +365,34 @@ pub fn file_claim(
     let duration = storage::get_voting_duration_ledgers(env);
     let voting_deadline_ledger = now.checked_add(duration).ok_or(Error::Overflow)?;
 
-    let claim_id = storage::next_claim_id(env);
+    let claim_id = storage::next_claim_id(env)?;
+
+    // ── Claim filing fee ─────────────────────────────────────────────────────
+    //
+    // If a non-zero filing fee is configured, collect it from the claimant
+    // before creating (persisting) the claim. The fee is transferred to the
+    // treasury. If allowance is insufficient, the claim is rejected and
+    // claim_id is NOT consumed (next_claim_id already bumped; this is
+    // acceptable for auditability — gap claim_ids are harmless).
+    let filing_fee = storage::get_claim_filing_fee(env);
+    if filing_fee > 0 {
+        let token_client = soroban_sdk::token::TokenClient::new(env, &policy.asset);
+        let allowance = token_client.allowance(holder, &env.current_contract_address());
+        if allowance < filing_fee {
+            return Err(Error::InsufficientAllowanceForFee);
+        }
+
+        crate::token::collect_premium(env, holder, &policy.asset, filing_fee);
+
+        ClaimFeeCollected {
+            claim_id,
+            fee_amount: filing_fee,
+            payer: holder.clone(),
+            at_ledger: now,
+        }
+        .publish(env);
+    }
+
     let mut status_history: Vec<ClaimStatusHistoryEntry> = Vec::new(env);
     push_status_transition(&mut status_history, ClaimStatus::Processing, now);
     storage::snapshot_claim_voters(env, claim_id);
@@ -443,7 +510,8 @@ pub fn withdraw_claim(env: &Env, claimant: &Address, claim_id: u64) -> Result<()
 
 /// Cast a vote on a pending claim.
 ///
-/// Window check: `now <= claim.voting_deadline_ledger` (inclusive; see `ledger::is_claim_voting_open`).
+/// Claimants may not vote on their own claims, and the window check uses
+/// `now <= claim.voting_deadline_ledger` (inclusive; see `ledger::is_claim_voting_open`).
 /// Returns the updated `ClaimStatus` after tallying.
 pub fn vote_on_claim(
     env: &Env,
@@ -458,6 +526,10 @@ pub fn vote_on_claim(
 
     if claim.status.is_terminal() {
         return Err(Error::ClaimAlreadyTerminal);
+    }
+
+    if voter == &claim.claimant {
+        return Err(Error::SelfVoteNotAllowed);
     }
 
     // Voting window: use per-claim deadline frozen at filing (not current admin config).
@@ -475,6 +547,13 @@ pub fn vote_on_claim(
     let eligible = snapshot.iter().any(|v| v == *voter);
     if !eligible {
         return Err(Error::NotEligibleVoter);
+    }
+
+    // Issue #783: enforce voter cap — reject if already at max unique voters.
+    let cast_count = claim.approve_votes + claim.reject_votes;
+    let max_voters = storage::get_max_voters_per_claim(env);
+    if cast_count >= max_voters && storage::get_vote(env, claim_id, voter).is_none() {
+        return Err(Error::VoterCapReached);
     }
 
     let resolved_target = storage::resolve_vote_delegation_target(env, voter, now)?;
@@ -521,14 +600,17 @@ pub fn vote_on_claim(
         let rejected = res == ClaimStatus::Rejected;
         claim.status = res;
         if rejected {
-            claim.appeal_open_deadline_ledger =
-                now.saturating_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS);
+            claim.appeal_open_deadline_ledger = now
+                .checked_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS)
+                .ok_or(Error::Overflow)?;
         }
     }
 
     if claim.status != status_before {
         if claim.status == ClaimStatus::Approved && claim.payout_deadline_ledger == 0 {
-            claim.payout_deadline_ledger = now.saturating_add(ledger::PAYOUT_TIMEOUT_LEDGERS);
+            claim.payout_deadline_ledger = now
+                .checked_add(ledger::PAYOUT_TIMEOUT_LEDGERS)
+                .ok_or(Error::Overflow)?;
         }
         push_status_transition(&mut claim.status_history, claim.status.clone(), now);
         events::emit_claim_status_changed(
@@ -608,21 +690,27 @@ fn finalize_claim_inner(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> 
             claim.status = ClaimStatus::Approved;
         } else {
             claim.status = ClaimStatus::Rejected;
-            claim.appeal_open_deadline_ledger =
-                now.saturating_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS);
+            claim.appeal_open_deadline_ledger = now
+                .checked_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS)
+                .ok_or(Error::Overflow)?;
         }
     } else {
         // Below minimum participation — no quorum (insurer-favored default).
         claim.status = ClaimStatus::Rejected;
-        claim.appeal_open_deadline_ledger = now.saturating_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS);
+        claim.appeal_open_deadline_ledger = now
+            .checked_add(ledger::APPEAL_OPEN_WINDOW_LEDGERS)
+            .ok_or(Error::Overflow)?;
     }
 
     if claim.status != status_before {
         if claim.status == ClaimStatus::Approved && claim.payout_deadline_ledger == 0 {
-            claim.payout_deadline_ledger = now.saturating_add(ledger::PAYOUT_TIMEOUT_LEDGERS);
+            claim.payout_deadline_ledger = now
+                .checked_add(ledger::PAYOUT_TIMEOUT_LEDGERS)
+                .ok_or(Error::Overflow)?;
             // Set dispute deadline after approval
-            claim.dispute_deadline_ledger =
-                now.saturating_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS);
+            claim.dispute_deadline_ledger = now
+                .checked_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS)
+                .ok_or(Error::Overflow)?;
         }
         push_status_transition(&mut claim.status_history, claim.status.clone(), now);
         events::emit_claim_status_changed(
@@ -1092,6 +1180,9 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
 
 /// Admin-only: dispute an approved claim within the dispute window.
 /// Freezes payout and sets status to Disputed for review.
+///
+/// Not to be confused with `open_appeal` (claimant, on `Rejected`) or
+/// `escalate_claim` (admin, on `Processing`) — see `docs/GLOSSARY.md`.
 pub fn dispute_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
@@ -1557,9 +1648,15 @@ pub struct AppealVoteCast {
 
 /// Claimant-only: open an appeal on a rejected claim.
 ///
+/// Not to be confused with `dispute_claim` (admin, on `Approved`) or
+/// `escalate_claim` (admin, on `Processing`) — see `docs/GLOSSARY.md`.
+///
 /// Preconditions:
 ///   - `claim.status == Rejected`
-///   - `now <= claim.appeal_open_deadline_ledger` (within appeal window)
+///   - `now <= claim.appeal_open_deadline_ledger` (within appeal window).
+///     The deadline ledger itself is INCLUSIVE: calling at
+///     `now == appeal_open_deadline_ledger` succeeds; calling at
+///     `now == appeal_open_deadline_ledger + 1` fails with `AppealWindowClosed`.
 ///   - `claim.appeals_count < MAX_APPEALS_PER_CLAIM` (only one appeal allowed)
 ///
 /// Transitions: `Rejected → UnderAppeal`
@@ -1739,7 +1836,7 @@ pub fn vote_on_appeal(
         } else {
             ClaimStatus::AppealRejected
         };
-        finalize_appeal_outcome(env, &mut claim, outcome, now);
+        finalize_appeal_outcome(env, &mut claim, outcome, now)?;
     }
 
     let status = claim.status.clone();
@@ -1751,6 +1848,19 @@ pub fn vote_on_appeal(
 ///
 /// Window check: `now > claim.appeal_deadline_ledger`.
 /// Uses participation quorum; if quorum not met, appeal is rejected (insurer-favored default).
+///
+/// **Pre-deadline behavior:** if called while `now <= claim.appeal_deadline_ledger`
+/// (voting still open), this call is **not** a no-op — it returns
+/// `Err(Error::VotingWindowStillOpen)` unconditionally, regardless of whether
+/// quorum has already been reached. The claim's status and vote tallies are left
+/// untouched. Quorum reached mid-vote resolves the appeal immediately from within
+/// `vote_on_appeal` instead (see that function); `finalize_appeal` is only ever the
+/// path taken once the deadline has passed. See `finalize_appeal_before_deadline_errors_with_quorum_unmet`
+/// in `tests/appeal.rs` for coverage.
+///
+/// **Caller:** this function takes no caller/`Address` argument and performs no
+/// auth check — any account may invoke it once the deadline has passed. See
+/// `finalize_appeal_succeeds_for_arbitrary_caller_after_deadline` in `tests/appeal.rs`.
 pub fn finalize_appeal(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
     storage::assert_claims_not_paused(env);
 
@@ -1783,7 +1893,7 @@ pub fn finalize_appeal(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
         ClaimStatus::AppealRejected
     };
 
-    finalize_appeal_outcome(env, &mut claim, outcome, now);
+    finalize_appeal_outcome(env, &mut claim, outcome, now)?;
 
     let status = claim.status.clone();
     storage::set_claim(env, &claim);
@@ -1794,19 +1904,38 @@ pub fn finalize_appeal(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> {
 ///
 /// Sets `status`, pushes history entry, closes the open-claim slot when terminal,
 /// sets `payout_deadline_ledger` on AppealApproved, and emits `AppealResolved`.
+///
+/// ## Event field list for indexers (AppealApproved / AppealRejected transitions)
+///
+/// Both terminal appeal outcomes emit exactly two events, in this order:
+///
+/// 1. `ClaimStatusChangedData` (topics: `["niffyins", "claim_status_changed", claim_id]`)
+///    - `claim_id: u64`, `version: u32`, `old_status: ClaimStatus` (always `UnderAppeal`),
+///      `new_status: ClaimStatus` (`AppealApproved` or `AppealRejected`), `at_ledger: u32`
+/// 2. `AppealResolved` (topics: `["niffyinsure", "appeal_resolved", claim_id]`)
+///    - `claim_id: u64`, `policy_id: u32`, `claimant: Address`, `outcome: ClaimStatus`,
+///      `approve_votes: u32`, `reject_votes: u32`, `at_ledger: u32`
+///
+/// Together these carry claim id, old/new status, ledger, policy id, claimant, and the
+/// final vote tally — everything an indexer needs to record the transition without an
+/// extra `get_claim` read.
 fn finalize_appeal_outcome(
     env: &Env,
     claim: &mut crate::types::Claim,
     outcome: ClaimStatus,
     now: u32,
-) {
+) -> Result<(), Error> {
     let old_status = claim.status.clone();
     claim.status = outcome.clone();
     push_status_transition(&mut claim.status_history, outcome.clone(), now);
 
     if outcome == ClaimStatus::AppealApproved && claim.payout_deadline_ledger == 0 {
-        claim.payout_deadline_ledger = now.saturating_add(ledger::PAYOUT_TIMEOUT_LEDGERS);
-        claim.dispute_deadline_ledger = now.saturating_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS);
+        claim.payout_deadline_ledger = now
+            .checked_add(ledger::PAYOUT_TIMEOUT_LEDGERS)
+            .ok_or(Error::Overflow)?;
+        claim.dispute_deadline_ledger = now
+            .checked_add(ledger::DEFAULT_DISPUTE_WINDOW_LEDGERS)
+            .ok_or(Error::Overflow)?;
     }
 
     // Close the open-claim slot on terminal appeal outcomes.
@@ -1824,4 +1953,67 @@ fn finalize_appeal_outcome(
         at_ledger: now,
     }
     .publish(env);
+
+    Ok(())
+}
+
+// ── Issue #841: Claim escalation entrypoint ───────────────────────────────────
+
+/// Emitted when admin escalates a stalled claim to a shorter voting deadline.
+///
+/// Topic layout: ["niffyinsure", "claim_escalated", claim_id]
+#[contractevent(topics = ["niffyinsure", "claim_escalated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimEscalated {
+    #[topic]
+    pub claim_id: u64,
+    pub old_deadline_ledger: u32,
+    pub new_deadline_ledger: u32,
+    pub at_ledger: u32,
+}
+
+/// Admin-only: reduce the voting deadline of a stalled `Processing` claim.
+///
+/// This is *escalation*: it changes the voting schedule only. It does not
+/// revisit a decision — that is `open_appeal` (claimant, on `Rejected`) or
+/// `dispute_claim` (admin, on `Approved`). See `docs/GLOSSARY.md`.
+///
+/// Invariants enforced:
+/// - Claim must be in `Processing` status.
+/// - `new_deadline_ledger` must be strictly earlier than the current deadline.
+/// - `new_deadline_ledger` must be strictly in the future (`> now`).
+///
+/// Auth: caller must be the contract admin (enforced at the lib.rs entrypoint).
+pub fn escalate_claim(env: &Env, claim_id: u64, new_deadline_ledger: u32) -> Result<(), Error> {
+    let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
+
+    if claim.status != ClaimStatus::Processing {
+        return Err(Error::ClaimNotProcessing);
+    }
+
+    let now = env.ledger().sequence();
+
+    // New deadline must be in the future.
+    if new_deadline_ledger <= now {
+        return Err(Error::EscalationDeadlineNotFuture);
+    }
+
+    // New deadline must be strictly earlier than the current deadline.
+    if new_deadline_ledger >= claim.voting_deadline_ledger {
+        return Err(Error::EscalationDeadlineNotEarlier);
+    }
+
+    let old_deadline = claim.voting_deadline_ledger;
+    claim.voting_deadline_ledger = new_deadline_ledger;
+    storage::set_claim(env, &claim);
+
+    ClaimEscalated {
+        claim_id,
+        old_deadline_ledger: old_deadline,
+        new_deadline_ledger,
+        at_ledger: now,
+    }
+    .publish(env);
+
+    Ok(())
 }

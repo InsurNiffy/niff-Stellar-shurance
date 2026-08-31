@@ -3,7 +3,22 @@ import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import jwt from 'jsonwebtoken';
 
-type StaffRole = 'admin' | 'support_readonly';
+/**
+ * Staff role hierarchy (lowest → highest privilege):
+ *   viewer < admin < superadmin
+ *
+ * `support_readonly` is kept as a backwards-compatible alias for `viewer` so
+ * existing JWTs issued before this migration continue to work.
+ */
+export type StaffRole = 'superadmin' | 'admin' | 'viewer' | 'support_readonly';
+
+/** Ordered list used by the guard to compare minimum-required role. */
+export const STAFF_ROLE_RANK: Record<StaffRole, number> = {
+  viewer: 0,
+  support_readonly: 0, // alias for viewer
+  admin: 1,
+  superadmin: 2,
+};
 
 export type AuthIdentity =
   | { kind: 'wallet'; walletAddress: string }
@@ -54,10 +69,11 @@ export class AuthIdentityService {
       return { kind: 'wallet', walletAddress: payload.walletAddress };
     }
 
+    const validRoles: StaffRole[] = ['superadmin', 'admin', 'viewer', 'support_readonly'];
     if (
       typeof payload.sub === 'string' &&
       typeof payload.email === 'string' &&
-      (payload.role === 'admin' || payload.role === 'support_readonly')
+      validRoles.includes(payload.role as StaffRole)
     ) {
       const rawScopes = Array.isArray(payload.scopes)
         ? payload.scopes
@@ -68,7 +84,7 @@ export class AuthIdentityService {
         kind: 'staff',
         staffId: payload.sub,
         email: payload.email,
-        role: payload.role,
+        role: payload.role as StaffRole,
         scopes: rawScopes.filter((scope): scope is string => typeof scope === 'string'),
       };
     }

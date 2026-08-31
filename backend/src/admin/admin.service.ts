@@ -3,7 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { Queue } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
-import { ClaimStatus, Prisma } from '@prisma/client';
+import { getQueueRetryConfig } from '../queues/queue-config';
+import { ClaimSeverity, ClaimStatus, Prisma } from '@prisma/client';
 
 export interface BackfillJobInfo {
   jobId: string;
@@ -22,19 +23,25 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly featureFlagsService: FeatureFlagsService,
   ) {
-    const defaultJobOptions = {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2_000 },
-      removeOnComplete: { count: 50 },
-      removeOnFail: { count: 100 },
-    };
+    const reindexRetry = getQueueRetryConfig('reindex');
+    const backfillRetry = getQueueRetryConfig('backfill');
     this.reindexQueue = new Queue('reindex', {
       connection: getBullMQConnection(),
-      defaultJobOptions,
+      defaultJobOptions: {
+        attempts: reindexRetry.maxAttempts,
+        backoff: reindexRetry.backoff,
+        removeOnComplete: { count: 50 },
+        removeOnFail: { count: 100 },
+      },
     });
     this.backfillQueue = new Queue('backfill', {
       connection: getBullMQConnection(),
-      defaultJobOptions,
+      defaultJobOptions: {
+        attempts: backfillRetry.maxAttempts,
+        backoff: backfillRetry.backoff,
+        removeOnComplete: { count: 50 },
+        removeOnFail: { count: 100 },
+      },
     });
   }
 
@@ -122,6 +129,7 @@ export class AdminService {
   async searchClaims(options: {
     q?: string;
     status?: string;
+    severity?: string;
     claimant?: string;
     policyId?: string;
     dateFrom?: string;
@@ -149,6 +157,11 @@ export class AdminService {
     // Status filter
     if (options.status) {
       where.status = options.status as ClaimStatus;
+    }
+
+    // Severity filter
+    if (options.severity) {
+      where.severity = options.severity.toUpperCase() as ClaimSeverity;
     }
 
     // Claimant (creator) filter
@@ -233,6 +246,30 @@ export class AdminService {
 
   async getFeatureFlags() {
     return this.prisma.featureFlag.findMany({ orderBy: { key: 'asc' } });
+  }
+
+  /** Apply an array of {key, enabled} updates atomically in a single DB transaction.
+   *  All keys are validated against the allowlist before the transaction begins. */
+  async bulkSetFeatureFlags(
+    updates: { key: string; enabled: boolean }[],
+    actor: string,
+  ): Promise<{ key: string; enabled: boolean }[]> {
+    for (const { key } of updates) {
+      this.featureFlagsService.assertAllowlisted(key);
+    }
+
+    const results = await this.prisma.$transaction(
+      updates.map(({ key, enabled }) =>
+        this.prisma.featureFlag.upsert({
+          where: { key },
+          create: { key, enabled, updatedBy: actor },
+          update: { enabled, updatedBy: actor },
+        }),
+      ),
+    );
+
+    await this.featureFlagsService.refreshFlags();
+    return results.map((r) => ({ key: r.key, enabled: r.enabled }));
   }
 
   async exportPoliciesCSV(options: {

@@ -1,0 +1,20 @@
+[extend]
+# Extend the default gitleaks config
+useDefault = true
+
+[allowlist]
+description = "Global allow-list for false positives"
+paths = [
+  # Test fixtures and example env files are expected to contain placeholder values
+  '''(^|/)\.env\.example$''',
+  '''(^|/)\.env\.test$''',
+  '''test/.*''',
+  '''tests/.*''',
+  '''__tests__/.*''',
+  '''.*\.test\.(ts|js)$''',
+  '''.*\.spec\.(ts|js)$''',
+]
+regexes = [
+  # Stellar public keys are not secrets — they are safe to commit
+  '''G[A-Z2-7]{55}''',
+]

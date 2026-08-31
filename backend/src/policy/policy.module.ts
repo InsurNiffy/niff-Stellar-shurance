@@ -9,11 +9,12 @@ import { RenewalReminderService } from "./renewal-reminder.service";
 import { RpcModule } from "../rpc/rpc.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { TenantModule } from "../tenant/tenant.module";
+import { GeoBlockGuard } from "./geo-block.guard";
 
 @Module({
   imports: [ScheduleModule.forRoot(), RpcModule, NotificationsModule, TenantModule],
   controllers: [PolicyController, RenewalController],
-  providers: [PolicyService, PolicyReadService, RenewalService, RenewalReminderService],
+  providers: [PolicyService, PolicyReadService, RenewalService, RenewalReminderService, GeoBlockGuard],
   exports: [PolicyService, PolicyReadService, RenewalService],
 })
 export class PolicyModule {}

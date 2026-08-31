@@ -3,7 +3,9 @@
 import { EmptyState } from '@/components/ui/empty-state';
 import { SkeletonRow, SkeletonCard } from '@/components/ui/skeleton';
 
-export function PolicyListSkeleton({ rows = 5, layout = 'row' }: { rows?: number; layout?: 'row' | 'card' }) {
+const BATCH_PAGE_SIZE = 20;
+
+export function PolicyListSkeleton({ rows = BATCH_PAGE_SIZE, layout = 'row' }: { rows?: number; layout?: 'row' | 'card' }) {
   if (layout === 'card') {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">

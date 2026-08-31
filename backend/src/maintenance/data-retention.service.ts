@@ -4,11 +4,13 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * Permanently removes materialized indexer rows that were soft-deleted longer
- * ago than DATA_RETENTION_DAYS. Idempotent and safe under concurrent ingestion:
- * only rows with non-null `deletedAt <= cutoff` are affected; live rows stay.
+ * Removes stale materialized and indexer rows beyond their retention windows.
  *
- * Does not touch `raw_events` (append-only / reindex).
+ * Materialized rows (votes/claims/policies): hard-deleted when `deletedAt <= cutoff`
+ * controlled by DATA_RETENTION_DAYS (default 730).
+ *
+ * Indexer rows (RawEvent + LedgerCursor): pruned by INDEXER_RETENTION_DAYS (default 90)
+ * using `ledgerClosedAt` / `updatedAt` respectively (issue #897).
  */
 @Injectable()
 export class DataRetentionService {
@@ -27,6 +29,15 @@ export class DataRetentionService {
     if (summary.policies + summary.claims + summary.votes > 0) {
       this.logger.log(
         `Data retention purge: policies=${summary.policies} claims=${summary.claims} votes=${summary.votes} (cutoff=${cutoff.toISOString()})`,
+      );
+    }
+
+    const indexerDays = this.config.get<number>('INDEXER_RETENTION_DAYS', 90);
+    const indexerCutoff = this.computeCutoff(indexerDays);
+    const indexerSummary = await this.pruneIndexerRowsBefore(indexerCutoff);
+    if (indexerSummary.rawEvents + indexerSummary.ledgerCursors > 0) {
+      this.logger.log(
+        `Indexer retention purge: rawEvents=${indexerSummary.rawEvents} ledgerCursors=${indexerSummary.ledgerCursors} (cutoff=${indexerCutoff.toISOString()})`,
       );
     }
   }
@@ -57,5 +68,28 @@ export class DataRetentionService {
       });
       return { votes: vr.count, claims: cr.count, policies: pr.count };
     });
+  }
+
+  /**
+   * Delete old indexer rows beyond the retention window (issue #897).
+   *
+   * RawEvent rows are pruned by `ledgerClosedAt` — events far enough in the
+   * past can be replayed from chain if needed, so removal keeps the DB lean.
+   *
+   * LedgerCursor rows track per-network progress and have one row per network.
+   * Cursors whose `updatedAt` is older than the retention window belong to
+   * retired / inactive networks and are safe to remove.
+   */
+  async pruneIndexerRowsBefore(cutoff: Date): Promise<{
+    rawEvents: number;
+    ledgerCursors: number;
+  }> {
+    const re = await this.prisma.rawEvent.deleteMany({
+      where: { ledgerClosedAt: { lte: cutoff } },
+    });
+    const lc = await this.prisma.ledgerCursor.deleteMany({
+      where: { updatedAt: { lte: cutoff } },
+    });
+    return { rawEvents: re.count, ledgerCursors: lc.count };
   }
 }

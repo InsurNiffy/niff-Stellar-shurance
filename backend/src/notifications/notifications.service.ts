@@ -6,8 +6,9 @@
  * PII minimisation: only claim_id, policy_id, outcome in templates.
  * Default: email opt-in, Discord/Telegram opt-out.
  */
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
 import * as nodemailer from 'nodemailer';
 import type {
   ClaimFinalizedEvent,
@@ -49,6 +50,7 @@ export class NotificationsService {
     private readonly configService: ConfigService,
     @Inject(NOTIFICATION_PREFERENCES_REPOSITORY)
     private readonly preferencesRepository: NotificationPreferencesRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   private getTransport(): nodemailer.Transporter {
@@ -280,6 +282,58 @@ export class NotificationsService {
       this.logger.error(`Policy expiry push failed for policy ${ctx.policyId}: ${err}`);
       return 'failed';
     }
+  }
+
+  /** Persist a notification record so the frontend can ACK it on render. */
+  async createNotificationRecord(params: {
+    userId: string;
+    type: string;
+    payload: Record<string, unknown>;
+    ttlSeconds?: number;
+  }): Promise<string> {
+    const expiresAt = params.ttlSeconds
+      ? new Date(Date.now() + params.ttlSeconds * 1000)
+      : null;
+    const record = await this.prisma.notification.create({
+      data: {
+        userId: params.userId,
+        type: params.type,
+        // Cast needed: Prisma Json field accepts InputJsonValue, Record<string,unknown> needs coercion
+        payload: params.payload as import('@prisma/client').Prisma.InputJsonValue,
+        ...(expiresAt ? { expiresAt } : {}),
+      },
+    });
+    return record.id;
+  }
+
+  /** Mark a notification as delivered. Called by the frontend on render. */
+  async acknowledgeNotification(id: string, userId: string): Promise<void> {
+    const notification = await this.prisma.notification.findUnique({ where: { id } });
+    if (!notification) {
+      throw new NotFoundException(`Notification ${id} not found`);
+    }
+    if (notification.userId !== userId) {
+      throw new NotFoundException(`Notification ${id} not found`);
+    }
+    if (notification.acknowledgedAt) {
+      return; // idempotent — already acknowledged
+    }
+    await this.prisma.notification.update({
+      where: { id },
+      data: { acknowledgedAt: new Date() },
+    });
+  }
+
+  /** Returns unacknowledged notifications whose TTL has expired (eligible for re-send). */
+  async getStaleNotifications(limit = 100) {
+    return this.prisma.notification.findMany({
+      where: {
+        acknowledgedAt: null,
+        expiresAt: { lt: new Date() },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
   }
 
   private resolveNotificationPreferences(

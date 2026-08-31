@@ -123,7 +123,14 @@ pub enum CalcError {
 ```rust
 pub fn get_version(env: Env) -> u32
 ```
-Returns the current multiplier table version (capability flag for version negotiation).
+Returns the current multiplier table version (capability flag for pricing config).
+
+```rust
+pub fn abi_version(env: Env) -> u32
+```
+Returns the stable ABI pin (`premium_calculator::ABI_VERSION`). Integrators should
+pin against this value — it changes only when `CalcInput` / `CalcResult` / entrypoint
+shape breaks compatibility. Independent of multiplier-table `get_version()`.
 
 ```rust
 pub fn version(env: Env) -> String
@@ -196,18 +203,41 @@ pub enum CalcCoverageType { Basic, Standard, Premium }
 // Set calculator address (admin-only)
 pub fn set_calculator(env: Env, calculator: Address)
 
-// Clear calculator address (revert to local engine)
+// Set calculator address + expected ABI version atomically (0 disables the pin)
+pub fn set_calculator_with_version(env: Env, calculator: Address, expected_version: u32)
+
+// Clear calculator address (revert to local engine) and clear expected ABI pin
 pub fn clear_calculator(env: Env)
 
 // Read current calculator address
 pub fn get_calculator(env: Env) -> Option<Address>
+
+// Expected ABI pin (None = check disabled)
+pub fn get_expected_calc_version(env: Env) -> Option<u32>
+
+// ABI version from the last successful external compute (None if never succeeded)
+pub fn get_last_calc_abi_version(env: Env) -> Option<u32>
 ```
 
 ### Storage Key
 
 ```rust
 DataKey::CalcAddress  // Instance storage, admin-controlled
+// Plus instance symbols: "calc_exp_ver", "calc_last_abi"
 ```
+
+### ABI mismatch detection
+
+1. **Automatic:** When `get_expected_calc_version()` is `Some(v)`, every external
+   `compute` asserts `calculator.abi_version() == v` first. Mismatch →
+   `Error::CalculatorVersionMismatch` (no silent success).
+2. **Manual (post-upgrade):** Compare
+   `niffyinsure.get_last_calc_abi_version()` with `calculator.abi_version()`.
+   If they differ after an upgrade, update the pin via
+   `set_calculator_with_version` (or clear and re-bind).
+
+Normal operation with a matching pin is unchanged: successful computes still
+return quotes and refresh `get_last_calc_abi_version()`.
 
 ## Integration Points
 
@@ -298,10 +328,12 @@ Future breaking changes require:
 ### Calculator Upgrade Procedure
 
 1. Deploy new calculator contract
-2. Verify `compute()` returns expected values (testnet)
-3. Admin calls `set_calculator(new_address)`
-4. Monitor error rates for 24h
-5. If issues: `clear_calculator()` to revert to local engine
+2. Verify `abi_version()` matches the pin you intend to use (testnet)
+3. Verify `compute()` returns expected values (testnet)
+4. Admin calls `set_calculator_with_version(new_address, expected_abi)`
+5. Confirm `get_last_calc_abi_version()` updates after a successful bind/quote path
+6. Monitor error rates for 24h (watch for `CalculatorVersionMismatch`)
+7. If issues: `clear_calculator()` to revert to local engine
 
 ### Emergency Response
 
@@ -327,5 +359,6 @@ stellar contract invoke \
 
 - Policy contract: `contracts/niffyinsure/src/calculator.rs`
 - Calculator contract: `contracts/premium_calculator/src/lib.rs`
-- Integration tests: `contracts/niffyinsure/tests/cross_contract.rs`
+- Calculator error catalog: `contracts/premium_calculator/docs/ERROR_CATALOG.md`
+- Integration tests: `contracts/niffyinsure/tests/cross_contract.rs`, `calc_abi_version.rs`
 - Soroban SDK: https://docs.rs/soroban-sdk/25.3.1

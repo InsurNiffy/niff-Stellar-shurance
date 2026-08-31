@@ -12,6 +12,13 @@ export class CommentRepository {
     });
   }
 
+  findAll(claimId: number) {
+    return this.prisma.claimComment.findMany({
+      where: { claimId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   create(claimId: number, authorAddress: string, body: string) {
     return this.prisma.claimComment.create({
       data: { claimId, authorAddress, body },

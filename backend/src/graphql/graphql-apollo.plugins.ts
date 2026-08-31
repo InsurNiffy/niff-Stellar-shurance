@@ -5,12 +5,17 @@ import { MetricsService } from '../metrics/metrics.service';
 import { GraphqlOperationGuardService } from './graphql-operation-guard.service';
 import type { GraphqlContext } from './graphql.context';
 
+// Injected via createGraphqlSecurityPlugin for server-side error logging
+let _logger: AppLoggerService | undefined;
+
 export function createGraphqlSecurityPlugin(
   guard: GraphqlOperationGuardService,
   metrics: MetricsService,
   logger: AppLoggerService,
   slowOperationMs: number,
 ): ApolloServerPlugin<GraphqlContext> {
+  _logger = logger;
+
   return {
     async requestDidStart(requestContext) {
       const startedAt = Date.now();
@@ -19,10 +24,12 @@ export function createGraphqlSecurityPlugin(
 
       return {
         async didResolveOperation(context) {
+          const overrideMaxComplexity = requestContext.contextValue.req?.persistedQueryMaxComplexity;
           guard.assertWithinLimits(
             context.document,
             context.request.variables,
             context.schema,
+            overrideMaxComplexity,
           );
         },
         async willSendResponse(context) {
@@ -54,6 +61,16 @@ export function createGraphqlSecurityPlugin(
   };
 }
 
+/**
+ * Format GraphQL errors for client response.
+ *
+ * Internal errors (INTERNAL_SERVER_ERROR) are masked with a generic message
+ * to prevent information disclosure. Full error details are preserved in server
+ * logs (via logInternalError) for debugging.
+ *
+ * Expected errors (validation, auth, business logic) are returned as-is to
+ * provide clear feedback to API consumers.
+ */
 export function formatGraphqlError(
   formattedError: GraphQLFormattedError,
   error: unknown,
@@ -118,6 +135,11 @@ export function formatGraphqlError(
     };
   }
 
+  // Internal server error: log the full error server-side, return masked response to client
+  if (_logger && error) {
+    logInternalError(_logger, error, requestId);
+  }
+
   return {
     message: 'Internal server error',
     extensions: {
@@ -125,6 +147,32 @@ export function formatGraphqlError(
       ...(requestId ? { requestId } : {}),
     },
   };
+}
+
+/**
+ * Log the full internal error details server-side for debugging.
+ * This is called only for INTERNAL_SERVER_ERROR responses to preserve
+ * full context (stack traces, internal details) in logs while masking
+ * the client response.
+ */
+function logInternalError(
+  logger: AppLoggerService,
+  error: unknown,
+  requestId?: string,
+): void {
+  try {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+
+    logger.structured('error', 'graphql_internal_error', {
+      requestId,
+      message,
+      stack,
+      errorType: error?.constructor?.name ?? 'unknown',
+    });
+  } catch {
+    // Prevent logging errors from crashing the response
+  }
 }
 
 function mapStatusCodeToGraphqlCode(statusCode?: number): string {

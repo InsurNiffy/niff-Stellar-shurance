@@ -5,6 +5,7 @@ import { Request, Response } from 'express';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminPoliciesService } from './admin-policies.service';
+import { AdminClaimsExportService } from './admin-claims-export.service';
 import { AuditService } from './audit.service';
 import { PrivacyService } from '../maintenance/privacy.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
@@ -14,6 +15,21 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SolvencyMonitoringService } from '../maintenance/solvency-monitoring.service';
 import { AdminTenantsService } from './admin-tenants.service';
 import { AdminStatsService } from './admin-stats.service';
+import { SorobanService } from '../rpc/soroban.service';
+import { AdminAnalyticsService } from './admin-analytics.service';
+import { TokenBlacklistService } from '../auth/token-blacklist.service';
+import { SupportService } from '../support/support.service';
+import { CommentRepository } from '../claims/comments/comment.repository';
+import { TenantConfigAuditService } from '../tenant/tenant-config-audit.service';
+
+const mockSorobanService = {
+  simulateGetEvidenceLimits: jest.fn(),
+  invokeAdminSetEvidenceLimits: jest.fn(),
+  buildBatchRegisterVotersTransaction: jest.fn(),
+  buildRemoveVoterTransaction: jest.fn(),
+  simulateGetQuorumBps: jest.fn(),
+  buildSetQuorumBpsTransaction: jest.fn(),
+};
 
 const mockAdminService = {
   enqueueReindex: jest.fn(),
@@ -21,6 +37,7 @@ const mockAdminService = {
   getBackfillJob: jest.fn(),
   setFeatureFlag: jest.fn(),
   getFeatureFlags: jest.fn(),
+  bulkSetFeatureFlags: jest.fn(),
 };
 const mockAdminPoliciesService = {
   listPolicies: jest.fn(),
@@ -44,8 +61,36 @@ const mockQueueMonitorService = {
 const mockAdminStatsService = {
   getStats: jest.fn(),
 };
+const mockAdminAnalyticsService = {
+  getRenewalAnalytics: jest.fn(),
+  getSupportAnalytics: jest.fn(),
+};
 const mockAdminTenantsService = {
   listTenants: jest.fn(),
+};
+const mockPrismaService = {
+  holderProfile: {
+    findMany: jest.fn(),
+  },
+  registeredVoter: { findMany: jest.fn() },
+  claim: { findMany: jest.fn() },
+};
+const mockAdminClaimsExportService = {
+  streamCsv: jest.fn(),
+};
+const mockTokenBlacklistService = {
+  isBlacklisted: jest.fn(),
+  blacklist: jest.fn(),
+};
+const mockSupportService = {
+  listTickets: jest.fn(),
+  getTicket: jest.fn(),
+};
+const mockCommentRepository = {
+  findByClaimId: jest.fn(),
+};
+const mockTenantConfigAuditService = {
+  getHistory: jest.fn(),
 };
 
 const adminReq = (role = 'admin', scopes: string[] = ['admin:claims:override']) =>
@@ -87,7 +132,15 @@ describe('AdminController', () => {
           useValue: mockSolvencyMonitoringService,
         },
         { provide: AdminStatsService, useValue: mockAdminStatsService },
+        { provide: AdminAnalyticsService, useValue: mockAdminAnalyticsService },
         { provide: AdminTenantsService, useValue: mockAdminTenantsService },
+        { provide: require('../prisma/prisma.service').PrismaService, useValue: mockPrismaService },
+        { provide: SorobanService, useValue: mockSorobanService },
+        { provide: AdminClaimsExportService, useValue: mockAdminClaimsExportService },
+        { provide: TokenBlacklistService, useValue: mockTokenBlacklistService },
+        { provide: SupportService, useValue: mockSupportService },
+        { provide: CommentRepository, useValue: mockCommentRepository },
+        { provide: TenantConfigAuditService, useValue: mockTenantConfigAuditService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -314,6 +367,32 @@ describe('AdminController', () => {
     });
   });
 
+  // ── POST /admin/feature-flags/bulk ──────────────────────────────────────
+
+  describe('POST /admin/feature-flags/bulk', () => {
+    it('applies updates atomically and writes a single audit row', async () => {
+      const updates = [
+        { key: 'claims_enabled', enabled: false },
+        { key: 'voting_enabled', enabled: true },
+      ];
+      mockAdminService.bulkSetFeatureFlags.mockResolvedValue(updates);
+
+      const result = await controller.bulkSetFeatureFlags(
+        { updates },
+        adminReq(),
+      );
+
+      expect(result).toEqual({ updated: updates });
+      expect(mockAdminService.bulkSetFeatureFlags).toHaveBeenCalledWith(updates, 'GADMIN');
+      expect(mockAuditService.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'feature_flag_bulk_update',
+          payload: expect.objectContaining({ count: 2 }),
+        }),
+      );
+    });
+  });
+
   // ── POST /admin/queues/:queue/jobs/:jobId/retry ──────────────────────────
 
   describe('POST /admin/queues/:queue/jobs/:jobId/retry', () => {
@@ -334,13 +413,17 @@ describe('AdminController', () => {
   // ── Role guard — unauthorized access ────────────────────────────────────
 
   describe('Role guard — non-admin access denied', () => {
-    // AdminRoleGuard requires Reflector + AuthIdentityService — test via mock
+    const makeReflector = (minRole = 'admin') =>
+      ({
+        get: jest.fn().mockReturnValue(false),
+        getAllAndOverride: jest.fn().mockReturnValue(minRole),
+      }) as unknown as import('@nestjs/core').Reflector;
+
     const makeGuard = () => {
-      const mockReflector = { get: jest.fn().mockReturnValue(false) } as unknown as import('@nestjs/core').Reflector;
       const mockAuthIdentity = {
         resolveRequestIdentity: jest.fn().mockResolvedValue(null),
       } as unknown as import('../auth/auth-identity.service').AuthIdentityService;
-      return new AdminRoleGuard(mockReflector, mockAuthIdentity);
+      return new AdminRoleGuard(makeReflector(), mockAuthIdentity);
     };
 
     it('throws ForbiddenException when no user present', async () => {
@@ -350,21 +433,19 @@ describe('AdminController', () => {
     });
 
     it('throws ForbiddenException for non-admin identity', async () => {
-      const mockReflector = { get: jest.fn().mockReturnValue(false) } as unknown as import('@nestjs/core').Reflector;
       const mockAuthIdentity = {
-        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'support_readonly' }),
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'viewer', scopes: [] }),
       } as unknown as import('../auth/auth-identity.service').AuthIdentityService;
-      const guard = new AdminRoleGuard(mockReflector, mockAuthIdentity);
-      const ctx = toExecutionContext('support_readonly');
+      const guard = new AdminRoleGuard(makeReflector('admin'), mockAuthIdentity);
+      const ctx = toExecutionContext('viewer');
       await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
     });
 
     it('allows admin role through', async () => {
-      const mockReflector = { get: jest.fn().mockReturnValue(false) } as unknown as import('@nestjs/core').Reflector;
       const mockAuthIdentity = {
-        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'admin' }),
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'admin', scopes: [] }),
       } as unknown as import('../auth/auth-identity.service').AuthIdentityService;
-      const guard = new AdminRoleGuard(mockReflector, mockAuthIdentity);
+      const guard = new AdminRoleGuard(makeReflector('admin'), mockAuthIdentity);
       const ctx = toExecutionContext('admin');
       await expect(guard.canActivate(ctx)).resolves.toBe(true);
     });
@@ -401,7 +482,15 @@ describe('Admin Role Guard Enforcement', () => {
           useValue: mockSolvencyMonitoringService,
         },
         { provide: AdminStatsService, useValue: mockAdminStatsService },
+        { provide: AdminAnalyticsService, useValue: mockAdminAnalyticsService },
         { provide: AdminTenantsService, useValue: mockAdminTenantsService },
+        { provide: require('../prisma/prisma.service').PrismaService, useValue: mockPrismaService },
+        { provide: SorobanService, useValue: mockSorobanService },
+        { provide: AdminClaimsExportService, useValue: mockAdminClaimsExportService },
+        { provide: TokenBlacklistService, useValue: mockTokenBlacklistService },
+        { provide: SupportService, useValue: mockSupportService },
+        { provide: CommentRepository, useValue: mockCommentRepository },
+        { provide: TenantConfigAuditService, useValue: mockTenantConfigAuditService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -439,10 +528,84 @@ describe('Admin Role Guard Enforcement', () => {
   });
 
   describe('Admin Role Required', () => {
-    it('guard rejects non-admin role (unit test)', async () => {
-      const mockReflector = { get: jest.fn().mockReturnValue(false) };
+    const makeGuardCtx = () => ({
+      getHandler: () => ({}),
+      getClass: () => ({}),
+      getType: () => 'http',
+      switchToHttp: () => ({ getRequest: () => ({ ip: '127.0.0.1' }) }),
+      getArgByIndex: () => undefined,
+      // getAllAndOverride mock handled by reflector below
+    });
+
+    it('viewer is rejected on default (admin-level) endpoint', async () => {
+      const mockReflector = {
+        get: jest.fn().mockReturnValue(false),
+        getAllAndOverride: jest.fn().mockReturnValue('admin'),
+      };
       const mockAuthIdentity = {
-        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'support_readonly' }),
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'viewer', scopes: [] }),
+      };
+      const guard = new AdminRoleGuard(mockReflector as any, mockAuthIdentity as any);
+      await expect(guard.canActivate(makeGuardCtx() as any)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('viewer is allowed on viewer-level endpoint', async () => {
+      const mockReflector = {
+        get: jest.fn().mockReturnValue(false),
+        getAllAndOverride: jest.fn().mockReturnValue('viewer'),
+      };
+      const mockAuthIdentity = {
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'viewer', scopes: [] }),
+      };
+      const guard = new AdminRoleGuard(mockReflector as any, mockAuthIdentity as any);
+      await expect(guard.canActivate(makeGuardCtx() as any)).resolves.toBe(true);
+    });
+
+    it('admin is rejected on superadmin-level endpoint', async () => {
+      const mockReflector = {
+        get: jest.fn().mockReturnValue(false),
+        getAllAndOverride: jest.fn().mockReturnValue('superadmin'),
+      };
+      const mockAuthIdentity = {
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'admin', scopes: [] }),
+      };
+      const guard = new AdminRoleGuard(mockReflector as any, mockAuthIdentity as any);
+      await expect(guard.canActivate(makeGuardCtx() as any)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('superadmin passes all levels', async () => {
+      for (const minRole of ['viewer', 'admin', 'superadmin']) {
+        const mockReflector = {
+          get: jest.fn().mockReturnValue(false),
+          getAllAndOverride: jest.fn().mockReturnValue(minRole),
+        };
+        const mockAuthIdentity = {
+          resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'superadmin', scopes: [] }),
+        };
+        const guard = new AdminRoleGuard(mockReflector as any, mockAuthIdentity as any);
+        await expect(guard.canActivate(makeGuardCtx() as any)).resolves.toBe(true);
+      }
+    });
+
+    it('support_readonly is treated as viewer (backwards compat)', async () => {
+      const mockReflector = {
+        get: jest.fn().mockReturnValue(false),
+        getAllAndOverride: jest.fn().mockReturnValue('viewer'),
+      };
+      const mockAuthIdentity = {
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'support_readonly', scopes: [] }),
+      };
+      const guard = new AdminRoleGuard(mockReflector as any, mockAuthIdentity as any);
+      await expect(guard.canActivate(makeGuardCtx() as any)).resolves.toBe(true);
+    });
+
+    it('guard rejects non-admin role (unit test)', async () => {
+      const mockReflector = {
+        get: jest.fn().mockReturnValue(false),
+        getAllAndOverride: jest.fn().mockReturnValue('admin'),
+      };
+      const mockAuthIdentity = {
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'viewer' }),
       };
       const guard = new AdminRoleGuard(mockReflector as any, mockAuthIdentity as any);
       const ctx = {
@@ -454,9 +617,12 @@ describe('Admin Role Guard Enforcement', () => {
     });
 
     it('should reject staff users without admin role (guard unit test)', async () => {
-      const mockReflector = { get: jest.fn().mockReturnValue(false) };
+      const mockReflector = {
+        get: jest.fn().mockReturnValue(false),
+        getAllAndOverride: jest.fn().mockReturnValue('admin'),
+      };
       const mockAuthIdentity = {
-        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'staff' }),
+        resolveRequestIdentity: jest.fn().mockResolvedValue({ kind: 'staff', staffId: 's1', email: 'a@b.com', role: 'viewer' }),
       };
       const guard = new AdminRoleGuard(mockReflector as any, mockAuthIdentity as any);
       const ctx = {
@@ -490,6 +656,39 @@ describe('Admin Role Guard Enforcement', () => {
 
       await expect(controller.getAdminPolicies('false'))
         .resolves.toBeDefined();
+    });
+  });
+
+  // ── GET /admin/users ─────────────────────────────────────────────────────
+
+  describe('GET /admin/users', () => {
+    const profiles = [
+      { walletAddress: 'GA1', displayName: 'Alice', email: null, locale: 'en', createdAt: new Date(), lastSeenAt: new Date() },
+      { walletAddress: 'GA2', displayName: null,    email: null, locale: 'en', createdAt: new Date(), lastSeenAt: null },
+    ];
+
+    it('returns all profiles ordered by lastSeenAt', async () => {
+      mockPrismaService.holderProfile.findMany.mockResolvedValue(profiles);
+      const result = await controller.listUsers();
+      expect(result).toEqual(profiles);
+      expect(mockPrismaService.holderProfile.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: [{ lastSeenAt: 'desc' }, { walletAddress: 'asc' }] }),
+      );
+    });
+
+    it('filters by dormantDays when provided', async () => {
+      mockPrismaService.holderProfile.findMany.mockResolvedValue([profiles[1]]);
+      const result = await controller.listUsers('30');
+      expect(result).toEqual([profiles[1]]);
+      const call = mockPrismaService.holderProfile.findMany.mock.calls[0][0];
+      expect(call.where).toHaveProperty('OR');
+    });
+
+    it('respects limit cap of 500', async () => {
+      mockPrismaService.holderProfile.findMany.mockResolvedValue([]);
+      await controller.listUsers(undefined, '1000');
+      const call = mockPrismaService.holderProfile.findMany.mock.calls[0][0];
+      expect(call.take).toBe(500);
     });
   });
 });

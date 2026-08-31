@@ -19,4 +19,6 @@ export const EVIDENCE_UPLOAD_RATE_LIMIT_WINDOW_SECONDS_DEFAULT = 3600;
 export interface EvidenceUploadResponseDto {
   cid: string;
   gatewayUrl: string;
+  fileSizeBytes?: number;
+  mimeType?: string;
 }

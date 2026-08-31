@@ -15,6 +15,9 @@ import { tryNormalizeAddress } from '../common/utils/normalize-address';
 import { QuoteSimulationCacheService } from '../quote/quote-simulation-cache.service';
 import { ClaimSummaryCacheService } from '../claims/services/claim-summary-cache.service';
 import { VotePubSubService } from '../graphql/vote-pubsub.service';
+import { AdminAnalyticsService } from '../admin/admin-analytics.service';
+import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
+import { AllowedAssetsCacheService } from '../assets/allowed-assets-cache.service';
 
 type IndexerTx = Prisma.TransactionClient;
 type SorobanEvent = SorobanRpc.Api.EventResponse;
@@ -99,6 +102,9 @@ export class IndexerService {
     @Optional() private readonly quoteSimulationCache?: QuoteSimulationCacheService,
     @Optional() private readonly claimSummaryCache?: ClaimSummaryCacheService,
     @Optional() private readonly votePubSub?: VotePubSubService,
+    @Optional() private readonly outboundWebhook?: OutboundWebhookService,
+    @Optional() private readonly adminAnalytics?: AdminAnalyticsService,
+    @Optional() private readonly allowedAssetsCache?: AllowedAssetsCacheService,
   ) {
     this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
@@ -154,10 +160,12 @@ export class IndexerService {
     }
 
     this.metrics?.recordIndexerLag({ network, lag: gap });
+    this.metrics?.recordIndexerLedgerGap({ network, gap: latestLedger - lastProcessed });
 
     if (lastProcessed >= latestLedger) {
       this.metrics?.recordIndexerLag({ network, lag: 0 });
       return { processed: 0, lag: 0 };
+      this.metrics?.recordIndexerLedgerGap({ network, gap: 0 });
     }
 
     const startLedger = lastProcessed + 1;
@@ -183,6 +191,15 @@ export class IndexerService {
     const maxLedger = Math.max(...events.map((e: SorobanEvent) => e.ledger));
     const lag = latestLedger - maxLedger;
     this.metrics?.recordIndexerLag({ network, lag });
+
+    const lastEvent = events.reduce((a: SorobanEvent, b: SorobanEvent) =>
+      a.ledger >= b.ledger ? a : b,
+    );
+    this.metrics?.recordLastProcessedLedgerAge({
+      network,
+      ledgerClosedAt: new Date(lastEvent.ledgerClosedAt),
+    });
+
     return { processed: processedCount, lag };
   }
 
@@ -340,7 +357,7 @@ export class IndexerService {
       if (mainTopic === 'PolicyInitiated' || (mainTopic === 'policy' && subTopic === 'initiated')) {
         await this.handlePolicyInitiated(tx, dataNative, event);
       } else if (mainTopic === 'policy' && subTopic === 'renewed') {
-        await this.handlePolicyRenewed(tx, dataNative);
+        await this.handlePolicyRenewed(tx, dataNative, event);
       } else if (
         (mainTopic === 'claim' && subTopic === 'filed') ||
         (mainTopic === 'niffyinsure' && subTopic === 'claim_filed')
@@ -355,6 +372,25 @@ export class IndexerService {
         await this.handleClaimProcessed(tx, dataNative, event);
       } else if (mainTopic === 'niffyins' && subTopic === 'tbl_upd') {
         await this.handlePremiumTableUpdated();
+      } else if (mainTopic === 'asset' && subTopic === 'added') {
+        await this.handleAssetAdded(tx, dataNative, event);
+      } else if (mainTopic === 'asset' && subTopic === 'removed') {
+        await this.handleAssetRemoved(tx, dataNative, event);
+      } else if (
+        (mainTopic === 'appeal' && subTopic === 'filed') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_filed')
+      ) {
+        await this.handleAppealFiled(tx, dataNative, event);
+      } else if (
+        (mainTopic === 'appeal' && subTopic === 'approved') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_approved')
+      ) {
+        await this.handleAppealResolved(tx, dataNative, event, 'APPROVED');
+      } else if (
+        (mainTopic === 'appeal' && subTopic === 'rejected') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'appeal_rejected')
+      ) {
+        await this.handleAppealResolved(tx, dataNative, event, 'REJECTED');
       }
 
       await this.advanceCursorInTx(tx, network, event.ledger);
@@ -400,9 +436,10 @@ export class IndexerService {
         updatedAt: new Date(),
       },
     });
+    this.adminAnalytics?.invalidatePolicyAnalyticsCache().catch(() => undefined);
   }
 
-  private async handlePolicyRenewed(tx: IndexerTx, data: EventPayload) {
+  private async handlePolicyRenewed(tx: IndexerTx, data: EventPayload, _event: SorobanEvent) {
     const holder = tryNormalizeAddress(getStringValue(data.holder)) ?? getStringValue(data.holder);
     const id = `${holder}:${getNumberValue(data.policy_id)}`;
     await tx.policy.update({
@@ -412,6 +449,7 @@ export class IndexerService {
         updatedAt: new Date(),
       },
     });
+    this.adminAnalytics?.invalidatePolicyAnalyticsCache().catch(() => undefined);
   }
 
   /**
@@ -454,6 +492,18 @@ export class IndexerService {
       ledger: event.ledger,
     });
     await this.claimSummaryCache?.invalidateClaim(claimId);
+    await this.outboundWebhook?.deliverClaimFiled(
+      {
+        claimId,
+        policyId: policyDbId,
+        creatorAddress: getStringValue(data.claimant),
+        amount: getStringValue(data.amount),
+        status: 'PENDING',
+        txHash: event.txHash,
+        ledger: event.ledger,
+      },
+      `claim_filed:${event.txHash}`,
+    );
   }
 
   private async handleVoteCast(
@@ -519,6 +569,18 @@ export class IndexerService {
       noVotes: getNumberValue(data.reject_votes),
       totalVotes: getNumberValue(data.approve_votes) + getNumberValue(data.reject_votes),
     });
+    await this.outboundWebhook?.deliverVoteCast(
+      {
+        claimId,
+        voter,
+        vote: option,
+        approveVotes: getNumberValue(data.approve_votes),
+        rejectVotes: getNumberValue(data.reject_votes),
+        txHash: event.txHash,
+        ledger: event.ledger,
+      },
+      `vote_cast:${event.txHash}:${claimId}:${voter}`,
+    );
   }
 
   private async handleClaimProcessed(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
@@ -550,5 +612,103 @@ export class IndexerService {
   private async handlePremiumTableUpdated(): Promise<void> {
     await this.quoteSimulationCache?.invalidateAll();
     this.logger.log('Quote simulation cache invalidated after tbl_upd event');
+  }
+
+  private async handleAssetAdded(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
+    const contractId = getStringValue(data.contract_id);
+    const symbol = data.symbol != null ? getStringValue(data.symbol) : null;
+    const decimals = data.decimals != null ? getNumberValue(data.decimals) : 7;
+
+    await tx.allowedAsset.upsert({
+      where: { contractId },
+      create: {
+        contractId,
+        symbol,
+        decimals,
+        isAllowed: true,
+        addedAtLedger: event.ledger,
+      },
+      update: {
+        isAllowed: true,
+        symbol,
+        decimals,
+      },
+    });
+
+    await this.allowedAssetsCache?.invalidateAll();
+  }
+
+  private async handleAssetRemoved(tx: IndexerTx, data: EventPayload, _event: SorobanEvent) {
+    const contractId = getStringValue(data.contract_id);
+
+    await tx.allowedAsset.update({
+      where: { contractId },
+      data: { isAllowed: false },
+    });
+
+    await this.allowedAssetsCache?.invalidateAll();
+  }
+
+  /**
+   * On-chain `AppealFiled` (topics: ['appeal', 'filed']) — a claimant has
+   * opened an appeal on a finalized claim. Updates the DB status to UNDER_APPEAL.
+   */
+  private async handleAppealFiled(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
+    const claimId = getNumberValue(data.claim_id);
+
+    await tx.claim.updateMany({
+      where: { id: claimId, deletedAt: null },
+      data: {
+        status: 'UNDER_APPEAL',
+        updatedAtLedger: event.ledger,
+      },
+    });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'UNDER_APPEAL',
+      updatedAt: new Date(event.ledgerClosedAt).toISOString(),
+      ledger: event.ledger,
+    });
+    await this.claimSummaryCache?.invalidateClaim(claimId);
+  }
+
+  /**
+   * On-chain `AppealApproved` or `AppealRejected` — the appeal has been
+   * resolved. Updates the DB status and records appeal-outcome metrics.
+   *
+   * @param outcome - 'APPROVED' or 'REJECTED'
+   */
+  private async handleAppealResolved(
+    tx: IndexerTx,
+    data: EventPayload,
+    event: SorobanEvent,
+    outcome: 'APPROVED' | 'REJECTED',
+  ) {
+    const claimId = getNumberValue(data.claim_id);
+
+    await tx.claim.updateMany({
+      where: { id: claimId, deletedAt: null },
+      data: {
+        status: outcome,
+        isFinalized: true,
+        updatedAtLedger: event.ledger,
+      },
+    });
+
+    // Record appeal resolution metrics (task #1328)
+    if (outcome === 'APPROVED') {
+      this.metrics?.recordAppealApproved();
+    } else {
+      this.metrics?.recordAppealRejected();
+    }
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: outcome,
+      updatedAt: new Date(event.ledgerClosedAt).toISOString(),
+      ledger: event.ledger,
+    });
+    await this.claimSummaryCache?.invalidateClaim(claimId);
   }
 }

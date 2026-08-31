@@ -216,6 +216,24 @@ export class SanitizedEvidenceDto {
   @IsString()
   @Matches(/^https?:\/\/.+/i)
   cachedUrl?: string;
+
+  @ApiPropertyOptional({ description: 'IPFS Content Identifier (CID)' })
+  @Expose()
+  @IsOptional()
+  @IsString()
+  cid?: string | null;
+
+  @ApiPropertyOptional({ description: 'File size in bytes' })
+  @Expose()
+  @IsOptional()
+  @IsNumber()
+  fileSizeBytes?: number | null;
+
+  @ApiPropertyOptional({ description: 'MIME type of the evidence file' })
+  @Expose()
+  @IsOptional()
+  @IsString()
+  mimeType?: string | null;
 }
 
 export class ConsistencyMetadataDto {
@@ -341,6 +359,32 @@ export class ClaimStatusHistoryEntryDto {
   @Expose()
   @IsString()
   timestamp!: string;
+}
+
+export class ClaimTimelineEntryDto {
+  @ApiProperty({ description: 'Claim status at this point' })
+  @Expose()
+  @IsString()
+  status!: string;
+
+  @ApiProperty({ description: 'Stellar ledger number' })
+  @Expose()
+  @IsInt()
+  @Min(0)
+  ledger!: number;
+
+  @ApiProperty({ description: 'ISO-8601 UTC timestamp' })
+  @Expose()
+  @IsString()
+  timestamp!: string;
+
+  @ApiProperty({ description: 'Actor wallet address who triggered the transition', nullable: true })
+  @Expose()
+  actor!: string | null;
+
+  @ApiProperty({ description: 'Reason for the transition', nullable: true })
+  @Expose()
+  reason!: string | null;
 }
 
 export class ClaimDetailResponseDto extends ClaimListItemDto {

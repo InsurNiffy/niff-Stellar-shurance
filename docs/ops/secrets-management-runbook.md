@@ -6,6 +6,10 @@
 
 ---
 
+> Retiring a vendor entirely (not just rotating its credential)? Use the
+> [Vendor Offboarding Checklist](./vendor-offboarding-checklist.md) to make sure
+> credentials, webhooks, and configuration are fully cleaned up.
+
 ## Policy
 
 - Store production secrets in a managed backend such as HashiCorp Vault, AWS SSM Parameter Store / Secrets Manager, or Kubernetes Secrets.

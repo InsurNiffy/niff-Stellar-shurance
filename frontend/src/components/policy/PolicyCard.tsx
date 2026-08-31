@@ -1,9 +1,11 @@
 'use client';
 
 import React from 'react';
+import { useLocale } from 'next-intl';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { formatFixed2 } from '@/lib/format-number';
 
 export type PolicyStatus = 'active' | 'expiring' | 'expired';
 export type PolicyType = 'Auto' | 'Health' | 'Property';
@@ -43,12 +45,9 @@ const STATUS_CONFIG: Record<
 /**
  * Format stroops (7 decimals) to human-readable XLM amount.
  */
-function formatAmount(stroops: string, decimals = 7): string {
+function formatAmount(stroops: string, locale: string, decimals = 7): string {
   const num = Number(stroops) / Math.pow(10, decimals);
-  return num.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return formatFixed2(num, locale);
 }
 
 /**
@@ -88,6 +87,7 @@ export function PolicyCard({
   onClick,
   className,
 }: PolicyCardProps) {
+  const locale = useLocale();
   const statusConfig = STATUS_CONFIG[status];
   const ledgersRemaining = currentLedger
     ? Math.max(0, expiryLedger - currentLedger)
@@ -141,7 +141,7 @@ export function PolicyCard({
           <div className="flex justify-between items-baseline">
             <dt className="text-xs text-gray-500">Coverage</dt>
             <dd className="text-sm font-medium text-gray-900 tabular-nums">
-              {formatAmount(coverageAmount)} {asset}
+              {formatAmount(coverageAmount, locale)} {asset}
             </dd>
           </div>
 

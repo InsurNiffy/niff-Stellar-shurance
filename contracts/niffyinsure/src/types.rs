@@ -3,6 +3,13 @@ use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Env, Map,
 // ── Field size limits ─────────────────────────────────────────────────────────
 pub const DETAILS_MAX_LEN: u32 = 256;
 pub const IMAGE_URL_MAX_LEN: u32 = 128;
+/// Per-URL byte limit for evidence URLs submitted with a claim.
+///
+/// Prevents oversized ledger entries by capping each evidence URL at 2048 bytes.
+/// This is separate from [`IMAGE_URL_MAX_LEN`] which acts as a tighter bound for
+/// image-specific URLs; evidence URLs may point to larger off-chain resources
+/// (e.g., detailed IPFS documents) while still being bounded against abuse.
+pub const MAX_EVIDENCE_URL_BYTES: u32 = 2048;
 /// Default evidence attachment limit when admin config is unset.
 pub const IMAGE_URLS_MAX: u32 = 5;
 /// Maximum byte length of a single evidence URL accepted by `file_claim`.
@@ -87,6 +94,9 @@ pub const PROTOCOL_FEE_BPS_MAX: u32 = 1_000;
 pub const MIN_SOLVENCY_RATIO_BPS_MIN: u32 = 0;
 pub const MIN_SOLVENCY_RATIO_BPS_MAX: u32 = 100_000;
 
+/// Hard cap on `page_size` for `get_inactive_policies`.
+pub const INACTIVE_POLICIES_PAGE_SIZE_MAX: u32 = 20;
+
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -155,60 +165,75 @@ pub type CoverageType = CoverageTier;
 ///
 /// Terminal states (no further transitions): Paid, Rejected (after appeal window
 /// closes), AppealApproved (→ Paid only), AppealRejected, Withdrawn.
+///
+/// # Forward compatibility
+///
+/// Discriminant values are explicit and **stable**. The XDR encoding of a
+/// `ClaimStatus` value depends on its discriminant position; if variants were
+/// added or removed without explicit values the encoding of existing persisted
+/// data would shift, corrupting all stored claims.
+///
+/// Rules for adding new variants:
+/// 1. Always append at the **end** of this enum — never insert in the middle.
+/// 2. Assign the next sequential explicit discriminant (current max = 11).
+/// 3. Update `is_terminal()` if the new variant is terminal.
+/// 4. Add a decode test in the indexer (`events.schema.ts` / `events.test.ts`).
+/// 5. Do **not** renumber existing variants for any reason.
 #[contracttype]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ClaimStatus {
-    Processing,
-    Pending,
-    Approved,
-    PayoutTimeout,
-    Paid,
-    Rejected,
+    Processing = 0,
+    Pending = 1,
+    Approved = 2,
+    PayoutTimeout = 3,
+    Paid = 4,
+    Rejected = 5,
     /// Claimant has opened an appeal; fresh vote round in progress.
-    UnderAppeal,
+    UnderAppeal = 6,
     /// Appeal vote resolved in claimant's favour; awaits admin payout.
-    AppealApproved,
+    AppealApproved = 7,
     /// Appeal vote rejected; claim is permanently closed.
-    AppealRejected,
+    AppealRejected = 8,
     /// Claimant withdrew before voting began; record kept for audit; no payout.
-    Withdrawn,
+    Withdrawn = 9,
     /// Admin disputed the claim after approval; payout is frozen pending review.
-    Disputed,
-    /// RESERVED — appeal in progress; not yet implemented.
+    Disputed = 10,
+    /// RESERVED — superseded by `UnderAppeal`. Never constructed. Kept, not removed.
     ///
-    /// This variant is declared to **reserve the discriminant** in the on-chain
-    /// ABI and prevent future contract upgrades from introducing a breaking enum
-    /// change.  No existing entrypoint constructs or transitions to this status;
-    /// it is purely a forward-compatibility placeholder.
+    /// # Decision (recorded)
     ///
-    /// Default builds compile without any appeal logic executing — this variant
-    /// exists in the type system but is unreachable through any live code path
-    /// until the full appeal flow is implemented and audited.
+    /// The appeal flow was implemented using **`UnderAppeal` (discriminant 6)**,
+    /// not this variant. `Appealed` predates that implementation: it was reserved
+    /// while the appeal design was still open, and by the time `open_appeal` /
+    /// `vote_on_appeal` / `finalize_appeal` shipped, `UnderAppeal` had already been
+    /// picked as the live in-flight status. Removing `Appealed` now would be a
+    /// breaking ABI change (discriminants are positional in XDR — see the
+    /// forward-compatibility note above), for a variant that costs nothing to
+    /// leave in place. Decision: **keep it reserved, do not remove it, do not
+    /// repurpose it.** Do not construct it in any entrypoint; use `UnderAppeal`
+    /// for "appeal in progress" everywhere.
     ///
-    /// # Intended appeal flow (future implementation)
+    /// This variant is declared only to **reserve the discriminant** in the
+    /// on-chain ABI so a future variant can't accidentally collide with it.
+    /// Default builds compile without ever constructing this variant — it exists
+    /// in the type system but is unreachable through any live code path.
+    ///
+    /// # Relationship to `UnderAppeal`
+    ///
+    /// Read `Appealed` in this file as historical/reserved and `UnderAppeal` as
+    /// canonical. The real appeal lifecycle is:
     ///
     /// ```text
-    /// Rejected → Appealed        (claimant calls open_appeal within APPEAL_OPEN_WINDOW_LEDGERS)
-    ///                             appeal vote runs for APPEAL_VOTE_WINDOW_LEDGERS
-    /// Appealed → AppealApproved  (majority approve or deadline plurality)
-    /// Appealed → AppealRejected  (majority reject or deadline plurality)
+    /// Rejected     → UnderAppeal      (claimant calls open_appeal within APPEAL_OPEN_WINDOW_LEDGERS)
+    ///                                  appeal vote runs for APPEAL_VOTE_WINDOW_LEDGERS
+    /// UnderAppeal  → AppealApproved   (majority approve or deadline plurality)
+    /// UnderAppeal  → AppealRejected   (majority reject or deadline plurality)
     /// ```
     ///
-    /// # Auto-deactivation interaction
-    ///
-    /// When `on_reject` fires and the policy strike count reaches
-    /// `STRIKE_DEACTIVATION_THRESHOLD`, auto-deactivation MUST be deferred
-    /// while the claim is `Appealed`.  Implement by checking
-    /// `env.ledger().sequence() > appeal_open_deadline_ledger` before writing
-    /// `is_active = false` to the policy.
-    ///
-    /// # is_terminal() contract
-    ///
-    /// `Appealed` is intentionally **not** a terminal state — the claim is
-    /// still in flight.  `is_terminal()` returns `false` for this variant so
-    /// that voting and finalization guards correctly reject further transitions
-    /// until the appeal round resolves.
-    Appealed,
+    /// `is_terminal()` returns `false` for `UnderAppeal` (not for `Appealed`,
+    /// which is never reached) so voting/finalization guards correctly reject
+    /// further transitions until the appeal round resolves.
+    Appealed = 11,
 }
 
 impl ClaimStatus {
@@ -443,16 +468,22 @@ pub struct InitiatePolicyOptions {
     pub metadata_uri: String,
     /// Optional region code validated against the admin-managed region registry.
     pub region_code: Option<String>,
+    /// SHA-256 hash of the insurance terms document in effect at bind time.
+    /// Must be non-zero (all-zero digest is rejected as uninitialized).
+    pub terms_hash: BytesN<32>,
 }
 
 impl InitiatePolicyOptions {
     pub fn test_defaults(env: &Env) -> Self {
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[0] = 1; // non-zero sentinel for tests
         Self {
             beneficiary: None,
             deductible: None,
             expected_nonce: None,
             metadata_uri: String::from_str(env, "ipfs://test-policy"),
             region_code: None,
+            terms_hash: BytesN::from_array(env, &hash_bytes),
         }
     }
 }
@@ -658,6 +689,19 @@ pub struct Policy {
     /// Off-chain URI to the policy governing document.
     /// Must be non-empty at policy creation. Admin can update via `update_policy_metadata_uri`.
     pub metadata_uri: String,
+    /// SHA-256 hash of the insurance terms document in effect at bind time.
+    ///
+    /// Commits the policy to an exact version of the coverage conditions and exclusions.
+    /// Stored at `initiate_policy` time and immutable thereafter — no entrypoint modifies it.
+    /// Must be non-zero (all-zero hash is rejected as an uninitialized value sentinel).
+    ///
+    /// Off-chain verification: download the terms document at `metadata_uri` and compare its
+    /// SHA-256 digest against this field to confirm the on-chain commitment matches.
+    pub terms_hash: BytesN<32>,
+    /// Decimal precision of the bound asset, queried from the token contract at bind time.
+    /// Stored so payout math can be decimal-aware without a cross-contract call at payout.
+    /// 0 = unknown / not queried (legacy policies).
+    pub token_decimals: u32,
 }
 
 /// Return value of [`crate::policy::renew_policy`].
@@ -759,6 +803,19 @@ pub struct PremiumQuote {
     pub line_items: Option<Vec<PremiumQuoteLineItem>>,
     pub valid_until_ledger: u32,
     pub config_version: u32,
+}
+
+/// Human-readable identity information returned by `get_contract_metadata`.
+///
+/// All fields are compile-time constants; no storage reads occur on the call path.
+/// Safe to call via simulation without authentication.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractMetadata {
+    pub name: String,
+    pub version: String,
+    /// Short hint identifying the target Stellar network (non-binding, for tooling convenience).
+    pub network_passphrase_hint: String,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -976,6 +1033,24 @@ pub struct DelegationRecord {
     pub expiry_ledger: u32,
     /// Permissions granted to the operator.
     pub permissions: DelegationPermissions,
+}
+
+/// Discrete permission scope exposed by `list_active_delegated_scopes` (Issue #1149).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DelegatedScopeKind {
+    SetFraudScore,
+    SetAssetConfig,
+    SetReinsurance,
+}
+
+/// One active delegated scope for an operator address.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveDelegatedScope {
+    pub scope: DelegatedScopeKind,
+    pub grantor: Address,
+    pub expiry_ledger: u32,
 }
 
 // ── Issue #581: Reinsurance pool events ──────────────────────────────────────

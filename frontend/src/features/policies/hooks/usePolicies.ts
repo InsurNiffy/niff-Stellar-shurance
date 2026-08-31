@@ -13,18 +13,32 @@ interface State {
   pageIndex: number;              // 0-based current page index
   loading: boolean;
   error: string | null;
+  /** Epoch ms of the last successful fetch; null until first success. */
+  lastSyncedAt: number | null;
+  /** Bumped to force a re-fetch of the current page. */
+  refreshNonce: number;
 }
 
 type Action =
   | { type: 'FETCH_START' }
-  | { type: 'FETCH_SUCCESS'; pageIndex: number; data: PolicyDto[]; next_cursor: string | null; total: number }
+  | { type: 'FETCH_SUCCESS'; pageIndex: number; data: PolicyDto[]; next_cursor: string | null; total: number; syncedAt: number }
   | { type: 'FETCH_ERROR'; error: string }
   | { type: 'SET_PAGE'; pageIndex: number }
   | { type: 'INVALIDATE_PAGE'; pageIndex: number }
+  | { type: 'REFRESH' }
   | { type: 'RESET' };
 
 function init(): State {
-  return { pages: [], cursors: [null], total: 0, pageIndex: 0, loading: true, error: null };
+  return {
+    pages: [],
+    cursors: [null],
+    total: 0,
+    pageIndex: 0,
+    loading: true,
+    error: null,
+    lastSyncedAt: null,
+    refreshNonce: 0,
+  };
 }
 
 function reducer(state: State, action: Action): State {
@@ -36,7 +50,14 @@ function reducer(state: State, action: Action): State {
       pages[action.pageIndex] = action.data;
       const cursors = [...state.cursors];
       cursors[action.pageIndex + 1] = action.next_cursor;
-      return { ...state, pages, cursors, total: action.total, loading: false };
+      return {
+        ...state,
+        pages,
+        cursors,
+        total: action.total,
+        loading: false,
+        lastSyncedAt: action.syncedAt,
+      };
     }
     case 'FETCH_ERROR':
       return { ...state, loading: false, error: action.error };
@@ -45,7 +66,12 @@ function reducer(state: State, action: Action): State {
     case 'INVALIDATE_PAGE': {
       const pages = [...state.pages];
       delete pages[action.pageIndex];
-      return { ...state, pages };
+      return { ...state, pages, refreshNonce: state.refreshNonce + 1 };
+    }
+    case 'REFRESH': {
+      const pages = [...state.pages];
+      delete pages[state.pageIndex];
+      return { ...state, pages, refreshNonce: state.refreshNonce + 1 };
     }
     case 'RESET':
       return init();
@@ -62,8 +88,12 @@ export interface UsePoliciesReturn {
   hasPrevPage: boolean;
   loading: boolean;
   error: string | null;
+  /** Epoch ms of last successful sync, or null before first success. */
+  lastSyncedAt: number | null;
   goToPage: (index: number) => void;
   retry: () => void;
+  /** Force-refresh the current page (clears cache and re-fetches). */
+  refresh: () => void;
 }
 
 export function usePolicies(
@@ -108,6 +138,7 @@ export function usePolicies(
           data: result.data,
           next_cursor: result.next_cursor,
           total: result.total,
+          syncedAt: Date.now(),
         });
       })
       .catch((err: unknown) => {
@@ -117,18 +148,22 @@ export function usePolicies(
       });
 
     return () => controller.abort();
-    // state.pages is intentionally omitted — we only re-run when pageIndex changes
+    // state.pages is intentionally omitted — we re-run via pageIndex / refreshNonce
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holder, network, status, sort, state.pageIndex]);
+  }, [holder, network, status, sort, state.pageIndex, state.refreshNonce]);
 
   const goToPage = useCallback((index: number) => {
     dispatch({ type: 'SET_PAGE', pageIndex: index });
   }, []);
 
-  // Retry: invalidate the current page's cache entry so the effect re-fetches it
+  // Retry / refresh: invalidate the current page and bump refreshNonce so the effect re-fetches
   const retry = useCallback(() => {
     dispatch({ type: 'INVALIDATE_PAGE', pageIndex: state.pageIndex });
   }, [state.pageIndex]);
+
+  const refresh = useCallback(() => {
+    dispatch({ type: 'REFRESH' });
+  }, []);
 
   const totalPages = Math.max(1, Math.ceil(state.total / PAGE_SIZE));
   const rawPolicies = state.pages[state.pageIndex] ?? [];
@@ -142,8 +177,10 @@ export function usePolicies(
     hasPrevPage: state.pageIndex > 0,
     loading: state.loading,
     error: state.error,
+    lastSyncedAt: state.lastSyncedAt,
     goToPage,
     retry,
+    refresh,
   };
 }
 

@@ -57,6 +57,53 @@ Generic `{statusCode, message}` (no violations – security: no hints).
 ## API
 See `/docs`.
 
+### Response Envelope
+
+All successful and error responses follow a standard envelope format: `{ data, meta, errors }`.
+
+**Successful response:**
+```json
+{
+  "data": { /* response payload */ },
+  "meta": { /* pagination or metadata */ },
+  "errors": null
+}
+```
+
+**Paginated response:**
+```json
+{
+  "data": [
+    { /* items */ }
+  ],
+  "meta": {
+    "total": 42,
+    "cursor": "next_cursor_value"
+  },
+  "errors": null
+}
+```
+
+**Error response:**
+```json
+{
+  "data": null,
+  "meta": {
+    "statusCode": 400,
+    "timestamp": "2024-...",
+    "path": "/api/v1/...",
+    "requestId": "uuid"
+  },
+  "errors": [
+    {
+      "code": "VALIDATION_ERROR",
+      "message": "One or more validation errors occurred.",
+      "i18nKey": "error.validation"
+    }
+  ]
+}
+```
+
 ### Versioning
 
 REST routes are versioned with a URI prefix: **`/api/v1/...`** (NestJS URI versioning, default version `1`).

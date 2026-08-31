@@ -1,7 +1,14 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
+import { AsyncLocalStorage } from 'async_hooks';
 import { MetricsService } from '../metrics/metrics.service';
+
+type SoftDeleteExtensionArgs = {
+  model: string;
+  args: { where?: Record<string, unknown> } & Record<string, unknown>;
+  query: (args: Record<string, unknown>) => Promise<unknown>;
+};
 
 /**
  * PrismaService — wraps PrismaClient with explicit connection pool settings.
@@ -37,6 +44,10 @@ export class PrismaService
   private readonly poolMax: number;
   /** Count of queries currently in-flight — used to approximate active pool connections. */
   private activeQueries = 0;
+  /** Models with soft-delete via deletedAt field. */
+  private readonly softDeleteModels = new Set(['Claim', 'Vote', 'Policy', 'ClaimComment']);
+  /** Async context for tracking soft-delete bypass state per request. */
+  private readonly softDeleteContext = new AsyncLocalStorage<{ bypassSoftDelete?: boolean }>();
 
   constructor(
     private readonly config: ConfigService,
@@ -60,6 +71,43 @@ export class PrismaService
         config.get<string>('NODE_ENV') === 'development'
           ? ['query', 'warn', 'error']
           : ['warn', 'error'],
+    });
+
+    // Apply soft-delete extension: auto-filter deleted rows from findMany/findFirst/findUnique
+    const softDeleteModels = this.softDeleteModels;
+    const softDeleteContext = this.softDeleteContext;
+    (this as PrismaClient).$extends({
+      query: {
+        $allModels: {
+          async findMany({ model, args, query }: SoftDeleteExtensionArgs) {
+            if (softDeleteModels.has(model)) {
+              const store = softDeleteContext.getStore();
+              if (!store?.bypassSoftDelete) {
+                args.where = { ...args.where, deletedAt: null };
+              }
+            }
+            return query(args);
+          },
+          async findFirst({ model, args, query }: SoftDeleteExtensionArgs) {
+            if (softDeleteModels.has(model)) {
+              const store = softDeleteContext.getStore();
+              if (!store?.bypassSoftDelete) {
+                args.where = { ...args.where, deletedAt: null };
+              }
+            }
+            return query(args);
+          },
+          async findUnique({ model, args, query }: SoftDeleteExtensionArgs) {
+            if (softDeleteModels.has(model)) {
+              const store = softDeleteContext.getStore();
+              if (!store?.bypassSoftDelete) {
+                args.where = { ...args.where, deletedAt: null };
+              }
+            }
+            return query(args);
+          },
+        },
+      },
     });
 
     this.slowQueryThresholdMs = slowQueryThresholdMs;
@@ -89,8 +137,13 @@ export class PrismaService
     this.metrics.recordDbPool({ active, idle, waiting });
   }
 
+  /** Run a callback with soft-delete filtering bypassed. For admin-only queries. */
+  async withSoftDeleteBypass<T>(fn: () => Promise<T>): Promise<T> {
+    return this.softDeleteContext.run({ bypassSoftDelete: true }, fn);
+  }
+
   async onModuleInit() {
-    await this.$connect();
+    await this.connectWithBackoff();
     // Slow-query monitoring via Prisma query events (Prisma 6 compatible).
     // $use middleware was removed in Prisma 6; use $on('query') instead.
     (this as unknown as { $on: (event: string, cb: (e: { duration: number; query: string; model?: string }) => void) => void })
@@ -116,5 +169,31 @@ export class PrismaService
 
   async onModuleDestroy() {
     await this.$disconnect();
+  }
+
+  /** Retry $connect() with exponential backoff to survive DB cold starts (issue #894). */
+  private async connectWithBackoff(): Promise<void> {
+    const maxAttempts = this.config.get<number>('DB_CONNECT_MAX_ATTEMPTS', 5);
+    const initialDelayMs = this.config.get<number>('DB_CONNECT_INITIAL_DELAY_MS', 500);
+    const maxDelayMs = this.config.get<number>('DB_CONNECT_MAX_DELAY_MS', 30_000);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.$connect();
+        if (attempt > 1) {
+          this.logger.log(`DB connected on attempt ${attempt}`);
+        }
+        return;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt === maxAttempts) {
+          this.logger.error(`DB connection failed after ${maxAttempts} attempts: ${msg}`);
+          throw err;
+        }
+        const delay = Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs);
+        this.logger.warn(`DB connection attempt ${attempt}/${maxAttempts} failed — retrying in ${delay}ms: ${msg}`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
 }

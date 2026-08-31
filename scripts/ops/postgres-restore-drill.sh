@@ -30,6 +30,8 @@ require_cmd "sha256sum"
 restore_environment="${RESTORE_ENVIRONMENT:-production}"
 output_dir="${DRILL_OUTPUT_DIR:-drill-evidence}"
 max_row_count_delta="${RESTORE_MAX_ROW_COUNT_DELTA:-0}"
+# Target RTO per docs/ops/disaster-recovery-runbook.md ("<= 2 hours to restore latest dump to a fresh instance").
+rto_target_minutes="${RESTORE_RTO_TARGET_MINUTES:-120}"
 prefix="${BACKUP_PREFIX#/}"
 prefix="${prefix%/}"
 requested_object_key="${BACKUP_OBJECT_KEY:-}"
@@ -158,9 +160,24 @@ fi
 
 completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+started_epoch="$(date -u -d "${started_at}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${started_at}" +%s)"
+completed_epoch="$(date -u -d "${completed_at}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "${completed_at}" +%s)"
+measured_rto_seconds=$(( completed_epoch - started_epoch ))
+measured_rto_minutes=$(( (measured_rto_seconds + 59) / 60 ))
+
+rto_status="within_target"
+if (( measured_rto_minutes > rto_target_minutes )); then
+  rto_status="exceeds_target"
+  echo "warning: measured RTO ${measured_rto_minutes}m exceeds target ${rto_target_minutes}m" >&2
+fi
+
 jq -n \
   --arg startedAt "${started_at}" \
   --arg completedAt "${completed_at}" \
+  --argjson measuredRtoSeconds "${measured_rto_seconds}" \
+  --argjson measuredRtoMinutes "${measured_rto_minutes}" \
+  --argjson rtoTargetMinutes "${rto_target_minutes}" \
+  --arg rtoStatus "${rto_status}" \
   --arg bucket "${BACKUP_BUCKET}" \
   --arg objectKey "${requested_object_key}" \
   --arg metadataKey "${metadata_key}" \
@@ -175,6 +192,10 @@ jq -n \
   '{
     startedAt: $startedAt,
     completedAt: $completedAt,
+    measuredRtoSeconds: $measuredRtoSeconds,
+    measuredRtoMinutes: $measuredRtoMinutes,
+    rtoTargetMinutes: $rtoTargetMinutes,
+    rtoStatus: $rtoStatus,
     backupBucket: $bucket,
     backupObjectKey: $objectKey,
     metadataObjectKey: $metadataKey,
@@ -197,6 +218,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "- Backup object: \`s3://${BACKUP_BUCKET}/${requested_object_key}\`"
     echo "- Restore started: \`${started_at}\`"
     echo "- Restore completed: \`${completed_at}\`"
+    echo "- Measured RTO: \`${measured_rto_minutes}m\` (target: \`${rto_target_minutes}m\`, status: \`${rto_status}\`)"
     echo "- Public tables restored: \`${public_table_count}\`"
     echo "- Policies: \`${policy_count}\`"
     echo "- Claims: \`${claim_count}\`"

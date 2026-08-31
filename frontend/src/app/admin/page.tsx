@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download, Loader2, RefreshCw, ShieldAlert, Tag } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Download, Loader2, RefreshCw, ShieldAlert, Tag } from 'lucide-react'
 import Link from 'next/link'
 
 import { Button } from '@/components/ui/button'
@@ -16,7 +16,14 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/lib/hooks/useAuth'
-import { adminApi, type AuditEntry, type FeatureFlag, type SolvencySnapshot } from '@/lib/api/admin'
+import {
+  adminApi,
+  type AuditEntry,
+  type FeatureFlag,
+  type SolvencySnapshot,
+  type EvidenceLimits,
+  type KeeperActionResult,
+} from '@/lib/api/admin'
 import { getConfig } from '@/config/env'
 import { getPrimaryContractVersion } from '@/lib/network-manifest'
 
@@ -132,6 +139,7 @@ export default function AdminPage() {
         <SolvencyWidget jwt={jwt} />
         <ReindexWidget jwt={jwt} />
       </div>
+      <EvidenceLimitsWidget jwt={jwt} />
       <FeatureFlagsWidget jwt={jwt} />
       <AuditLogWidget jwt={jwt} />
     </main>
@@ -467,6 +475,126 @@ function AuditLogWidget({ jwt }: { jwt: string }) {
             Load more
           </Button>
         )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── #929 Evidence Limits widget ────────────────────────────────────────────
+
+function EvidenceLimitsWidget({ jwt }: { jwt: string }) {
+  const [limits, setLimits] = useState<EvidenceLimits | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [minInput, setMinInput] = useState('')
+  const [maxInput, setMaxInput] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState<KeeperActionResult | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  useEffect(() => {
+    adminApi.getEvidenceLimits(jwt)
+      .then((l) => {
+        setLimits(l)
+        setMinInput(String(l.minEvidenceCount))
+        setMaxInput(String(l.maxEvidenceCount))
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load'))
+      .finally(() => setLoading(false))
+  }, [jwt])
+
+  const minVal = parseInt(minInput, 10)
+  const maxVal = parseInt(maxInput, 10)
+  const minValid = Number.isFinite(minVal) && minVal >= 0
+  const maxValid = Number.isFinite(maxVal) && maxVal > 0
+  const orderValid = minValid && maxValid && minVal <= maxVal
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!orderValid) return
+    setSubmitting(true)
+    setSubmitError(null)
+    setResult(null)
+    try {
+      const r = await adminApi.setEvidenceLimits(jwt, minVal, maxVal)
+      setResult(r)
+      setLimits({ minEvidenceCount: minVal, maxEvidenceCount: maxVal })
+    } catch (err: unknown) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Evidence Limits</CardTitle>
+        <CardDescription>
+          Set the minimum and maximum number of evidence items required per claim.
+          Inline validation prevents submitting min &gt; max.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Loading" />}
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+        {limits && (
+          <dl className="space-y-2 text-sm">
+            <Row label="Current min" value={String(limits.minEvidenceCount)} />
+            <Row label="Current max" value={String(limits.maxEvidenceCount)} />
+          </dl>
+        )}
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="flex gap-4 items-end">
+            <div className="space-y-1">
+              <label htmlFor="evidence-min" className="text-sm font-medium">Min</label>
+              <Input
+                id="evidence-min"
+                type="number"
+                min={0}
+                value={minInput}
+                onChange={(e) => { setMinInput(e.target.value); setResult(null) }}
+                aria-invalid={minInput !== '' && !minValid}
+                className="h-8 w-20 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="evidence-max" className="text-sm font-medium">Max</label>
+              <Input
+                id="evidence-max"
+                type="number"
+                min={1}
+                value={maxInput}
+                onChange={(e) => { setMaxInput(e.target.value); setResult(null) }}
+                aria-invalid={maxInput !== '' && !maxValid}
+                className="h-8 w-20 text-sm"
+              />
+            </div>
+          </div>
+          {minValid && maxValid && !orderValid && (
+            <p className="text-xs text-destructive flex items-center gap-1" role="alert">
+              <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              Min must not exceed max
+            </p>
+          )}
+          {submitError && <p className="text-xs text-destructive" role="alert">{submitError}</p>}
+          {result && (
+            <p className="text-xs text-green-700 flex items-center gap-1" role="status">
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Updated — tx {result.txHash.slice(0, 12)}…
+            </p>
+          )}
+          <Button
+            type="submit"
+            size="sm"
+            disabled={submitting || !orderValid}
+            aria-busy={submitting}
+          >
+            {submitting
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />Updating…</>
+              : 'Update limits'}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   )

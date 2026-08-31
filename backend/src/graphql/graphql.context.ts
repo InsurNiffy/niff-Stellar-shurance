@@ -5,6 +5,8 @@ export type GraphqlRequest = Request & {
   requestId?: string;
   tenantId?: string | null;
   authIdentity?: AuthIdentity | null;
+  /** Set by PersistedQueryMiddleware when the hash has a per-operation complexity budget. */
+  persistedQueryMaxComplexity?: number;
 };
 
 export interface GraphqlContext {

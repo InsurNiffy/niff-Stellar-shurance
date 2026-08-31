@@ -19,6 +19,7 @@ mod common;
 
 use niffyinsure::{
     types::{ClaimStatus, VoteOption, VOTE_WINDOW_LEDGERS},
+    validate::Error as ValidateError,
     NiffyInsureClient,
 };
 use soroban_sdk::{
@@ -77,6 +78,26 @@ fn non_voter_rejected_before_storage_write() {
     assert!(client
         .try_vote_on_claim(&outsider, &cid, &VoteOption::Approve)
         .is_err());
+}
+
+#[test]
+fn self_vote_rejected_and_third_party_vote_succeeds() {
+    let (env, client, _, _) = setup();
+    let holder = Address::generate(&env);
+    let voter = Address::generate(&env);
+    seed(&client, &holder, 1_000_000, 10_000);
+    seed(&client, &voter, 1_000_000, 10_000);
+    let cid = file(&client, &holder, 100_000, &env);
+
+    let self_vote = client.try_vote_on_claim(&holder, &cid, &VoteOption::Approve);
+    assert!(matches!(
+        self_vote,
+        Err(Ok(ValidateError::SelfVoteNotAllowed))
+    ));
+
+    client.vote_on_claim(&voter, &cid, &VoteOption::Approve);
+    let claim = client.get_claim(&cid);
+    assert_eq!(claim.approve_votes, 1);
 }
 
 #[test]

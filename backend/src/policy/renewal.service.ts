@@ -147,6 +147,19 @@ export class RenewalService {
       });
     }
 
+    // Persist renewal record for analytics before emitting the event.
+    await this.prisma.policyRenewal.create({
+      data: {
+        policyCompositeId: policy.id,
+        holderAddress: dto.holder,
+        policyType: policy.policyType,
+        region: policy.region,
+        previousEndLedger: policy.endLedger,
+        newEndLedger,
+        premiumPaidStroops: txResult.premiumStroops,
+      },
+    });
+
     // Emit PolicyRenewed exactly once — after successful XDR assembly.
     const event: PolicyRenewedEvent = {
       policyCompositeId: policy.id,

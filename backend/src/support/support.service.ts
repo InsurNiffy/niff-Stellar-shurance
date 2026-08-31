@@ -7,6 +7,7 @@ import { CaptchaService } from './captcha.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto';
 import { CreateFaqItemDto, UpdateFaqItemDto, ReorderFaqItemsDto } from './dto/faq.dto';
+import { SupportTicketAutocloseService } from '../maintenance/support-ticket-autoclose.service';
 
 @Injectable()
 export class SupportService {
@@ -16,6 +17,7 @@ export class SupportService {
     private readonly prisma: PrismaService,
     private readonly captcha: CaptchaService,
     private readonly config: ConfigService,
+    private readonly autocloseService?: SupportTicketAutocloseService,
   ) {}
 
   async submitTicket(dto: CreateTicketDto, remoteIp?: string) {
@@ -39,17 +41,43 @@ export class SupportService {
     return this.mapToResponse(ticket);
   }
 
+  async addCustomerReply(ticketId: string, message: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket) {
+      throw new BadRequestException(`Ticket ${ticketId} not found`);
+    }
+
+    const reply = await this.prisma.supportTicketReply.create({
+      data: {
+        ticketId,
+        message,
+        author: 'customer',
+      },
+    });
+
+    // Reopen ticket if it was closed due to inactivity
+    if (this.autocloseService) {
+      await this.autocloseService.reopenIfReply(ticketId);
+    }
+
+    this.logger.log(`Customer reply added to ticket ${ticketId}`);
+    return reply;
+  }
+
   async updateTicketStatus(ticketId: string, dto: UpdateTicketStatusDto, actor: string, ipAddress?: string) {
     const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) {
       throw new BadRequestException(`Ticket ${ticketId} not found`);
     }
 
+    const now = new Date();
     const updated = await this.prisma.supportTicket.update({
       where: { id: ticketId },
       data: {
         status: dto.status,
-        updatedAt: new Date(),
+        updatedAt: now,
+        // Record first staff response timestamp once, never overwrite.
+        ...(ticket.firstRespondedAt == null ? { firstRespondedAt: now } : {}),
       },
     });
 
@@ -72,6 +100,36 @@ export class SupportService {
     return this.mapToResponse(updated);
   }
 
+  async assignTicket(ticketId: string, assignee: string | null, actor: string, ipAddress?: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket) {
+      throw new BadRequestException(`Ticket ${ticketId} not found`);
+    }
+
+    const prevAssignee = ticket.assignedTo;
+    const updated = await this.prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: { assignedTo: assignee, updatedAt: new Date() },
+    });
+
+    await this.prisma.adminAuditLog.create({
+      data: {
+        actor,
+        action: 'support_ticket_assigned',
+        payload: {
+          ticketId,
+          from: prevAssignee,
+          to: assignee,
+          timestamp: new Date().toISOString(),
+        },
+        ipAddress,
+      },
+    });
+
+    this.logger.log(`Support ticket ${ticketId} assigned to ${assignee ?? 'unassigned'}`);
+    return this.mapToResponse(updated);
+  }
+
   async getTicket(ticketId: string) {
     const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) {
@@ -80,14 +138,16 @@ export class SupportService {
     return this.mapToResponse(ticket);
   }
 
-  async listTickets(limit = 50, offset = 0) {
+  async listTickets(limit = 50, offset = 0, assignedTo?: string | null) {
+    const where = assignedTo !== undefined ? { assignedTo: assignedTo || undefined } : {};
     const [tickets, total] = await Promise.all([
       this.prisma.supportTicket.findMany({
+        where,
         take: limit,
         skip: offset,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.supportTicket.count(),
+      this.prisma.supportTicket.count({ where }),
     ]);
 
     return {
@@ -185,6 +245,41 @@ export class SupportService {
       .digest('hex');
   }
 
+  async getFirstResponseStats(slaHours = 24) {
+    const slaDeadline = new Date(Date.now() - slaHours * 60 * 60 * 1000);
+
+    const [allResponded, slaBreached] = await Promise.all([
+      this.prisma.supportTicket.findMany({
+        where: { firstRespondedAt: { not: null } },
+        select: { createdAt: true, firstRespondedAt: true },
+      }),
+      this.prisma.supportTicket.count({
+        where: {
+          firstRespondedAt: null,
+          status: 'OPEN',
+          createdAt: { lt: slaDeadline },
+        },
+      }),
+    ]);
+
+    const totalResponded = allResponded.length;
+    const avgFirstResponseMs =
+      totalResponded > 0
+        ? allResponded.reduce((sum, t) => {
+            const ms = t.firstRespondedAt!.getTime() - t.createdAt.getTime();
+            return sum + ms;
+          }, 0) / totalResponded
+        : null;
+
+    return {
+      totalResponded,
+      avgFirstResponseMs,
+      avgFirstResponseHours: avgFirstResponseMs != null ? avgFirstResponseMs / (1000 * 60 * 60) : null,
+      slaBreachedCount: slaBreached,
+      slaHours,
+    };
+  }
+
   private mapToResponse(ticket: SupportTicket) {
     return {
       id: ticket.id,
@@ -192,7 +287,9 @@ export class SupportService {
       subject: ticket.subject,
       message: ticket.message,
       status: ticket.status,
+      assignedTo: ticket.assignedTo ?? null,
       ipHash: ticket.ipHash ?? '',
+      firstRespondedAt: ticket.firstRespondedAt ?? null,
       createdAt: ticket.createdAt,
       updatedAt: ticket.updatedAt,
     };

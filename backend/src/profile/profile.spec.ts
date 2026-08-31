@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ProfileController } from './profile.controller';
 import { ProfileService } from './profile.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -112,7 +113,10 @@ describe('ProfileController', () => {
 // ── ProfileService unit tests ─────────────────────────────────────────────────
 
 describe('ProfileService', () => {
-  const mockPrisma = { holderProfile: { upsert: jest.fn() } };
+  const mockPrisma = {
+    holderProfile: { upsert: jest.fn(), findUnique: jest.fn() },
+    profileAuditLog: { create: jest.fn() },
+  };
   let service: ProfileService;
 
   beforeEach(() => {
@@ -135,6 +139,7 @@ describe('ProfileService', () => {
 
   describe('update', () => {
     it('only includes defined fields in update payload', async () => {
+      mockPrisma.holderProfile.findUnique.mockResolvedValue(defaultProfile);
       mockPrisma.holderProfile.upsert.mockResolvedValue({ ...defaultProfile, displayName: 'Bob' });
       await service.update(WALLET, { displayName: 'Bob' });
       const { update } = mockPrisma.holderProfile.upsert.mock.calls[0][0];
@@ -149,6 +154,7 @@ describe('ProfileService', () => {
         locale: 'fr',
         notificationPreferences: { renewalReminders: true },
       };
+      mockPrisma.holderProfile.findUnique.mockResolvedValue(defaultProfile);
       mockPrisma.holderProfile.upsert.mockResolvedValue({ ...defaultProfile, ...dto });
       await service.update(WALLET, dto);
       const { update } = mockPrisma.holderProfile.upsert.mock.calls[0][0];
@@ -172,6 +178,52 @@ describe('ProfileService', () => {
       );
       const emailMeta = metas.find((m) => m.propertyName === 'email');
       expect(emailMeta).toBeDefined();
+    });
+
+    it('writes audit log entry only for fields that actually changed', async () => {
+      const existing = { ...defaultProfile, displayName: 'Alice', email: 'alice@example.com' };
+      mockPrisma.holderProfile.findUnique.mockResolvedValue(existing);
+      mockPrisma.holderProfile.upsert.mockResolvedValue({
+        ...existing,
+        displayName: 'Bob',
+      });
+      mockPrisma.profileAuditLog.create.mockResolvedValue({});
+
+      await service.update(WALLET, { displayName: 'Bob' });
+
+      expect(mockPrisma.profileAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.profileAuditLog.create).toHaveBeenCalledWith({
+        data: {
+          walletAddress: WALLET,
+          fieldName: 'displayName',
+          oldValue: 'Alice',
+          newValue: 'Bob',
+          actor: WALLET,
+        },
+      });
+    });
+
+    it('produces no audit entries when submitting identical values', async () => {
+      const existing = { ...defaultProfile, displayName: 'Alice' };
+      mockPrisma.holderProfile.findUnique.mockResolvedValue(existing);
+      mockPrisma.holderProfile.upsert.mockResolvedValue(existing);
+      mockPrisma.profileAuditLog.create.mockResolvedValue({});
+
+      await service.update(WALLET, { displayName: 'Alice' });
+
+      expect(mockPrisma.profileAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('handles duplicate wallet address conflict with 409 error', async () => {
+      const prismaError = new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed on the fields: (`wallet_address`)',
+        { code: 'P2002', clientVersion: '6.19.3' },
+      );
+
+      mockPrisma.holderProfile.findUnique.mockResolvedValue(defaultProfile);
+      mockPrisma.holderProfile.upsert.mockRejectedValue(prismaError);
+
+      await expect(service.update(WALLET, { displayName: 'Bob' })).rejects.toThrow(ConflictException);
     });
   });
 });

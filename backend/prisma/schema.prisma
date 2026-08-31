@@ -18,7 +18,8 @@ model Claim {
   asset             String?
   description       String?
   imageUrls         String[]  @default([])
-  status            ClaimStatus @default(PENDING)
+  status            ClaimStatus   @default(PENDING)
+  severity          ClaimSeverity?
   isFinalized       Boolean   @default(false)
   approveVotes      Int       @default(0)
   rejectVotes       Int       @default(0)
@@ -35,12 +36,20 @@ model Claim {
   /// Set when the row is logically removed (admin/compliance). Null = active.
   deletedAt         DateTime? @map("deleted_at")
 
+  // ── Appeal fields ────────────────────────────────────────────────────────
+  /// Number of appeals opened for this claim. Used for idempotency checks.
+  appealsCount      Int       @default(0) @map("appeals_count")
+  /// The tx hash of the most recent appeal submission. Used to detect duplicate submissions.
+  appealTxHash      String?   @map("appeal_tx_hash")
+
   // Relations
   policy            Policy    @relation(fields: [policyId], references: [id])
   votes             Vote[]
   comments          ClaimComment[]
+  evidenceMetadata  EvidenceMetadata?
 
   @@index([status])
+  @@index([severity])
   @@index([deletedAt])
   @@index([createdAt])
   @@index([policyId])
@@ -177,6 +186,14 @@ enum ClaimStatus {
   APPROVED
   PAID
   REJECTED
+  UNDER_APPEAL
+}
+
+enum ClaimSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
 }
 
 enum VoteType {
@@ -198,6 +215,25 @@ model AdminAuditLog {
   @@index([action])
   @@index([createdAt])
   @@map("admin_audit_logs")
+}
+
+/// Immutable audit trail for tenant configuration changes.
+/// Tracks who changed which tenant config key and when, including old/new values for forensics.
+/// Rows must never be updated or deleted — append-only.
+model TenantConfigAuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String   /// tenant identifier or 'default' for global config
+  actor     String   /// wallet address or email of the user who made the change
+  key       String   /// configuration key name (e.g. "solvency_buffer_threshold")
+  oldValue  String?  /// previous value (JSON-serialized, null if key was newly added)
+  newValue  String   /// new value (JSON-serialized)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([key])
+  @@index([actor])
+  @@map("tenant_config_audit_logs")
 }
 
 /// Runtime feature flags toggled by admin operators.
@@ -268,19 +304,43 @@ model AllowedAsset {
 
 /// Support ticket submitted via the /support contact form.
 model SupportTicket {
-  id        String   @id @default(uuid())
-  email     String
-  subject   String
-  message   String
+  id               String       @id @default(uuid())
+  email            String
+  subject          String
+  message          String
   /// One-way hash of submitter IP for spam detection (no raw IP stored).
-  ipHash    String?
-  status    TicketStatus @default(OPEN)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  ipHash           String?
+  status           TicketStatus @default(OPEN)
+  /// Staff member assigned to handle this ticket (null = unassigned).
+  assignedTo       String?      @map("assigned_to")
+  /// Set once when the first staff status update is recorded.
+  firstRespondedAt DateTime?    @map("first_responded_at")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  replies          SupportTicketReply[]
 
   @@index([status])
+  @@index([assignedTo])
   @@index([createdAt])
+  @@index([firstRespondedAt])
   @@map("support_tickets")
+}
+
+/// Customer or staff reply to a support ticket.
+model SupportTicketReply {
+  id        String   @id @default(uuid())
+  ticketId  String   @map("ticket_id")
+  message   String
+  /// 'customer' or 'staff'
+  author    String
+  createdAt DateTime @default(now())
+
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([createdAt])
+  @@map("support_ticket_replies")
 }
 
 /// Privacy-safe FAQ expansion counters.
@@ -327,6 +387,40 @@ enum TicketStatus {
   CLOSED
 }
 
+/// Persistent notification record. Frontend ACKs on render; unacknowledged records
+/// past expiresAt are eligible for re-delivery by the notification job.
+model Notification {
+  id             String    @id @default(uuid())
+  userId         String
+  type           String
+  payload        Json
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  expiresAt      DateTime? @map("expires_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, acknowledgedAt])
+  @@index([expiresAt, acknowledgedAt])
+  @@map("notifications")
+}
+
+/// Records each policy renewal for analytics. Written by RenewalService on XDR assembly.
+model PolicyRenewal {
+  id                 String   @id @default(uuid())
+  policyCompositeId  String   @map("policy_composite_id")
+  holderAddress      String   @map("holder_address")
+  policyType         String   @map("policy_type")
+  region             String
+  previousEndLedger  Int      @map("previous_end_ledger")
+  newEndLedger       Int      @map("new_end_ledger")
+  premiumPaidStroops String   @map("premium_paid_stroops")
+  renewedAt          DateTime @default(now()) @map("renewed_at")
+
+  @@index([policyCompositeId])
+  @@index([policyType, region])
+  @@index([renewedAt])
+  @@map("policy_renewals")
+}
+
 /// Off-chain comment on a claim. Soft-deleted via deletedAt.
 model ClaimComment {
   id            String    @id @default(cuid())
@@ -343,6 +437,22 @@ model ClaimComment {
   @@map("claim_comments")
 }
 
+model EvidenceMetadata {
+  id              Int       @id @default(autoincrement())
+  claimId         Int       @map("claim_id")
+  cid             String?   /// IPFS Content Identifier
+  url             String?   /// Gateway URL
+  fileSizeBytes   Int?      @map("file_size_bytes")
+  mimeType        String?   @map("mime_type")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  claim           Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId])
+  @@index([claimId])
+  @@map("evidence_metadata")
+}
+
 /// Tracks voters registered on-chain via admin governance actions.
 model RegisteredVoter {
   walletAddress  String   @id @map("wallet_address")
@@ -355,7 +465,7 @@ model RegisteredVoter {
 
 /// Off-chain profile for a wallet holder. Created on first authenticated GET /profile.
 model HolderProfile {
-  walletAddress         String   @id @map("wallet_address")
+  walletAddress         String   @id @unique @map("wallet_address")
   displayName           String?  @map("display_name")
   /// Stored as-is; anonymized by the privacy service on request.
   email                 String?
@@ -363,6 +473,83 @@ model HolderProfile {
   notificationPreferences Json?  @default("{}") @map("notification_preferences")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
+  lastSeenAt            DateTime? @map("last_seen_at")
 
+  @@index([lastSeenAt])
   @@map("holder_profiles")
+}
+
+/// Off-chain user-generated posts. Supports soft-delete via deletedAt.
+model Post {
+  id            Int        @id @default(autoincrement())
+  title         String     @db.VarChar(200)
+  body          String     @db.VarChar(10000)
+  status        PostStatus @default(DRAFT)
+  authorAddress String     @map("author_address")
+  publishAt     DateTime?  @map("publish_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  deletedAt     DateTime?  @map("deleted_at")
+
+  @@index([status])
+  @@index([authorAddress])
+  @@index([deletedAt])
+  @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
+  @@index([publishAt])
+  @@map("posts")
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Tracks ramp transaction records received via webhooks for reconciliation.
+model RampTransaction {
+  id                String   @id @default(uuid())
+  purchaseId        String   @unique /// Ramp provider's purchase ID
+  status            String   /// COMPLETE, FAILED, REFUNDED
+  receiverAddress   String   @map("receiver_address")
+  cryptoAmount      String   @map("crypto_amount")
+  cryptoCurrency    String   @map("crypto_currency")
+  fiatValue         Decimal  @map("fiat_value")
+  fiatCurrency      String   @map("fiat_currency")
+  finalTxHash       String?  @map("final_tx_hash")
+  lastSyncedAt      DateTime @map("last_synced_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([receiverAddress])
+  @@index([lastSyncedAt])
+  @@map("ramp_transactions")
+}
+
+/// Tracks last-known health status of the ramp provider.
+model RampProviderHealth {
+  id                String   @id @default(uuid())
+  status            String   /// up, degraded, down
+  lastCheckedAt     DateTime @map("last_checked_at")
+  errorMessage      String?  @map("error_message")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("ramp_provider_health")
+}
+
+/// Immutable audit log for profile field-level changes.
+model ProfileAuditLog {
+  id                String   @id @default(uuid())
+  walletAddress     String   @map("wallet_address")
+  fieldName         String   @map("field_name")
+  oldValue          String?  @map("old_value")
+  newValue          String?  @map("new_value")
+  actor             String   /// wallet address or system identifier
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([walletAddress])
+  @@index([fieldName])
+  @@index([createdAt])
+  @@map("profile_audit_logs")
 }

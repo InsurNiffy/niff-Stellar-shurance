@@ -238,3 +238,36 @@ describe('PersistedQueryMiddleware — development mode (GRAPHQL_PERSISTED_QUERI
     expect(next).toHaveBeenCalled();
   });
 });
+
+describe('PersistedQueryMiddleware — per-operation complexity budgets', () => {
+  const KNOWN_HASH = 'aabbcc112233';
+  const KNOWN_QUERY = 'query HeavyReport { reports { id } }';
+
+  function makeConfig(hash: string) {
+    return {
+      get: jest.fn((key: string, defaultValue?: unknown) => {
+        if (key === 'GRAPHQL_PERSISTED_QUERIES_ONLY') return true;
+        if (key === 'GRAPHQL_PERSISTED_QUERIES_ENABLED') return true;
+        if (key === 'GRAPHQL_PERSISTED_QUERY_ALLOWLIST') return hash;
+        if (key === 'GRAPHQL_PERSISTED_QUERY_TTL_SECONDS') return 60;
+        return defaultValue;
+      }),
+    };
+  }
+
+  it('passes through an allowlisted hash and calls next', async () => {
+    const redis = { get: jest.fn().mockResolvedValue(KNOWN_QUERY), set: jest.fn() };
+    const config = makeConfig(KNOWN_HASH);
+    const middleware = new PersistedQueryMiddleware(redis as never, config as never);
+
+    const req = {
+      body: { extensions: { persistedQuery: { version: 1, sha256Hash: KNOWN_HASH } } },
+    };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+
+    await middleware.use(req as never, res as never, next);
+
+    expect(next).toHaveBeenCalled();
+  });
+});

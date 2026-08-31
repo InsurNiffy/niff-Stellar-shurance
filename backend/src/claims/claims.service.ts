@@ -3,16 +3,19 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { SorobanService } from '../rpc/soroban.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PrismaReplicaService } from '../prisma/prisma-replica.service';
 import { RedisService } from '../cache/redis.service';
 import { TenantContextService } from '../tenant/tenant-context.service';
 import { claimTenantWhere, assertTenantOwnership } from '../tenant/tenant-filter.helper';
 import { ReconciliationService } from '../indexer/reconciliation.service';
 import { ClaimAggregationService } from './services/claim-aggregation.service';
 import { ClaimSummaryCacheService } from './services/claim-summary-cache.service';
+import { MetricsService } from '../metrics/metrics.service';
 import {
   ClaimDetailResponseDto,
   ClaimsListResponseDto,
 } from './dto/claim.dto';
+import { ClaimVoterDto } from './dto/claim-voter.dto';
 import {
   buildKeysetWhere,
   buildNextCursor,
@@ -34,6 +37,7 @@ export class ClaimsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly prismaReplica: PrismaReplicaService,
     private readonly redis: RedisService,
     private readonly claimViewMapper: ClaimViewMapper,
     private readonly config: ConfigService,
@@ -42,9 +46,15 @@ export class ClaimsService {
     private readonly reconciliation: ReconciliationService,
     private readonly aggregation: ClaimAggregationService,
     private readonly claimSummaryCache: ClaimSummaryCacheService,
+    private readonly metrics: MetricsService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
+  }
+
+  /** Get the appropriate client for reads — replica if enabled, otherwise primary. */
+  private getReadClient() {
+    return this.prismaReplica.isEnabled() ? this.prismaReplica : this.prisma;
   }
 
   async listClaims(params: ListClaimsParams): Promise<ClaimsListResponseDto> {
@@ -66,16 +76,18 @@ export class ClaimsService {
         ...(keysetWhere ?? {}),
       });
 
+      const readClient = this.getReadClient();
       const [claims, total] = await Promise.all([
-        this.prisma.claim.findMany({
+        readClient.claim.findMany({
           where,
           include: {
             votes: { where: { deletedAt: null }, select: { vote: true } },
+            evidenceMetadata: true,
           },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: limit,
         }),
-        this.prisma.claim.count({ where: claimTenantWhere(tenantId, statusFilter) }),
+        readClient.claim.count({ where: claimTenantWhere(tenantId, statusFilter) }),
       ]);
 
       return {
@@ -106,7 +118,8 @@ export class ClaimsService {
     const tenantId = this.tenantCtx.tenantId;
     const lastLedger = await this.getLastLedger();
 
-    const votedClaimIds = await this.prisma.vote.findMany({
+    const readClient = this.getReadClient();
+    const votedClaimIds = await readClient.vote.findMany({
       where: { voterAddress: walletAddress.toLowerCase(), deletedAt: null },
       select: { claimId: true },
     });
@@ -119,11 +132,12 @@ export class ClaimsService {
     });
 
     const [allOpen, page] = await Promise.all([
-      this.prisma.claim.count({ where: baseWhere }),
-      this.prisma.claim.findMany({
+      readClient.claim.count({ where: baseWhere }),
+      readClient.claim.findMany({
         where: { ...baseWhere, ...(keysetWhere ?? {}) },
         include: {
           votes: { where: { deletedAt: null }, select: { vote: true } },
+          evidenceMetadata: true,
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
@@ -163,13 +177,15 @@ export class ClaimsService {
     }
 
     const lastLedger = await this.getLastLedger();
-    const claim = await this.prisma.claim.findFirst({
+    const readClient = this.getReadClient();
+    const claim = await readClient.claim.findFirst({
       where: claimTenantWhere(tenantId, { id }),
       include: {
         votes: {
           where: { deletedAt: null },
           select: { vote: true },
         },
+        evidenceMetadata: true,
       },
     });
 
@@ -199,6 +215,33 @@ export class ClaimsService {
     return this.enrichWithUserVote(response, walletAddress);
   }
 
+  async getClaimVoters(claimId: number): Promise<ClaimVoterDto[]> {
+    const readClient = this.getReadClient();
+    const [registeredVoters, votes] = await Promise.all([
+      readClient.registeredVoter.findMany(),
+      readClient.vote.findMany({
+        where: { claimId, deletedAt: null },
+        select: { voterAddress: true, vote: true },
+      }),
+    ]);
+
+    const voteMap = new Map<string, 'APPROVE' | 'REJECT'>();
+    for (const v of votes) {
+      voteMap.set(v.voterAddress.toLowerCase(), v.vote);
+    }
+
+    return registeredVoters.map((voter) => {
+      const normalized = voter.walletAddress.toLowerCase();
+      const dbVote = voteMap.get(normalized);
+      return {
+        walletAddress: voter.walletAddress,
+        displayName: voter.displayName ?? undefined,
+        voted: !!dbVote,
+        vote: dbVote === 'APPROVE' ? 'yes' : dbVote === 'REJECT' ? 'no' : undefined,
+      };
+    });
+  }
+
   async getClaimsByPolicyIds(
     policyIds: readonly string[],
     limitPerPolicy: number,
@@ -214,7 +257,8 @@ export class ClaimsService {
     }
 
     const lastLedger = await this.getLastLedger();
-    const claims = await this.prisma.claim.findMany({
+    const readClient = this.getReadClient();
+    const claims = await readClient.claim.findMany({
       where: claimTenantWhere(tenantId, {
         policyId: { in: uniquePolicyIds },
       }),
@@ -223,6 +267,7 @@ export class ClaimsService {
           where: { deletedAt: null },
           select: { vote: true },
         },
+        evidenceMetadata: true,
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
@@ -304,6 +349,45 @@ export class ClaimsService {
   }
 
   /**
+   * Store evidence metadata for a claim
+   */
+  async storeEvidenceMetadata(
+    claimId: number,
+    metadata: { cid?: string; url?: string; fileSizeBytes?: number; mimeType?: string }
+  ): Promise<void> {
+    const tenantId = this.tenantCtx.tenantId;
+
+    // Verify claim exists and belongs to tenant
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: claimId }),
+      select: { id: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${claimId} not found`);
+    }
+
+    await this.prisma.evidenceMetadata.upsert({
+      where: { claimId },
+      create: {
+        claimId,
+        cid: metadata.cid,
+        url: metadata.url,
+        fileSizeBytes: metadata.fileSizeBytes,
+        mimeType: metadata.mimeType,
+      },
+      update: {
+        cid: metadata.cid,
+        url: metadata.url,
+        fileSizeBytes: metadata.fileSizeBytes,
+        mimeType: metadata.mimeType,
+      },
+    });
+
+    await this.invalidateCache(claimId);
+  }
+
+  /**
    * Build an unsigned file_claim transaction
    */
   async buildTransaction(args: {
@@ -326,6 +410,90 @@ export class ClaimsService {
     await this.invalidateCache();
     
     return result;
+  }
+
+  // ── Appeal submission ─────────────────────────────────────────────────────
+
+  /**
+   * Build an unsigned file_appeal transaction for a rejected claim.
+   */
+  async buildAppealTransaction(args: {
+    claimant: string;
+    claimId: number;
+    reason: string;
+  }) {
+    return this.soroban.buildAppealTransaction(args);
+  }
+
+  /**
+   * Submit a signed appeal transaction with idempotency protection.
+   *
+   * Idempotency guard (task #1329):
+   *   If `txHash` was already recorded as `appealTxHash` on this claim, the DB
+   *   row already reflects the appeal — return the stored result without
+   *   re-incrementing `appealsCount` or recording another metric.
+   *
+   * @param claimId  - Numeric claim ID being appealed.
+   * @param transactionXdr - Base64-encoded signed Soroban transaction envelope.
+   * @param txHash   - SHA-256 hex of the signed XDR (client-supplied, used as idempotency key).
+   */
+  async submitAppealTransaction(
+    claimId: number,
+    transactionXdr: string,
+    txHash: string,
+  ) {
+    const tenantId = this.tenantCtx.tenantId;
+
+    // Verify the claim exists and belongs to the correct tenant
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: claimId }),
+      select: { id: true, status: true, appealTxHash: true, appealsCount: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${claimId} not found`);
+    }
+
+    // ── Idempotency guard ────────────────────────────────────────────────────
+    // If the same signed transaction was already submitted, return without
+    // double-counting. This handles the client-retry-after-timeout scenario.
+    if (claim.appealTxHash === txHash) {
+      this.logger.log(
+        `Appeal idempotency hit for claim=${claimId} txHash=${txHash} — returning cached result`,
+      );
+      return {
+        cached: true,
+        txHash,
+        claimId,
+        status: claim.status,
+        appealsCount: claim.appealsCount,
+      };
+    }
+
+    // Submit the signed transaction to the network
+    const result = await this.soroban.submitTransaction(transactionXdr);
+
+    // Persist appeal tracking fields and set claim status to UNDER_APPEAL.
+    // The indexer will later decode the appeal_approved / appeal_rejected event
+    // and move the claim to APPROVED or REJECTED.
+    await this.prisma.claim.update({
+      where: { id: claimId },
+      data: {
+        status: 'UNDER_APPEAL',
+        appealsCount: { increment: 1 },
+        appealTxHash: txHash,
+      },
+    });
+
+    // Increment appeal metrics (task #1328)
+    this.metrics.recordAppealOpened();
+
+    // Invalidate relevant caches
+    await this.invalidateCache(claimId);
+
+    this.logger.log(`Appeal submitted for claim=${claimId} txHash=${txHash}`);
+
+    return { cached: false, txHash, claimId, ...result };
   }
 
   // ── Claim status polling & SSE ───────────────────────────────────────────

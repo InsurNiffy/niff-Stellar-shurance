@@ -1,14 +1,41 @@
-import { Controller, Get, Post, Body, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, HttpCode, HttpStatus, UseGuards, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { PolicyService } from './policy.service';
+import { PolicyReadService } from './policy-read.service';
 import { BuildTransactionDto } from './dto/build-transaction.dto';
+import { SearchPoliciesDto } from './dto/search-policies.dto';
 import { WalletRateLimitGuard } from '../rate-limit/wallet-rate-limit.guard';
+import { GeoBlockGuard } from './geo-block.guard';
 
 @ApiTags('Policy')
 @Controller('policy')
 export class PolicyController {
-  constructor(private readonly policyService: PolicyService) {}
+  constructor(
+    private readonly policyService: PolicyService,
+    private readonly policyReadService: PolicyReadService,
+  ) {}
+
+  /**
+   * GET /api/policy/search
+   *
+   * Flexible policy search with cursor pagination and tenant isolation.
+   * Filters: holder (ILIKE), type (exact), region (exact), active (boolean).
+   */
+  @Get('search')
+  @ApiOperation({ summary: 'Search policies by holder, type, region, and active status' })
+  @ApiResponse({ status: 200, description: 'Paginated policy search results' })
+  @ApiResponse({ status: 400, description: 'Invalid query parameters or cursor' })
+  async searchPolicies(@Query() query: SearchPoliciesDto) {
+    return this.policyReadService.searchPolicies({
+      holder: query.holder,
+      type: query.type,
+      region: query.region,
+      active: query.active,
+      after: query.after,
+      first: query.first,
+    });
+  }
 
   /**
    * GET /api/policy/regions
@@ -39,11 +66,12 @@ export class PolicyController {
   @Post('build-transaction')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @UseGuards(WalletRateLimitGuard)
+  @UseGuards(WalletRateLimitGuard, GeoBlockGuard)
   @ApiOperation({ summary: 'Build unsigned initiate_policy transaction' })
   @ApiResponse({ status: 200, description: 'Unsigned transaction XDR + fee estimates' })
   @ApiResponse({ status: 400, description: 'Validation / account / simulation error' })
   @ApiResponse({ status: 429, description: 'Rate limited — protects RPC quotas' })
+  @ApiResponse({ status: 451, description: 'Blocked jurisdiction (BLOCKED_COUNTRIES)' })
   @ApiResponse({ status: 503, description: 'Contract not deployed or RPC unavailable' })
   async buildTransaction(@Body() dto: BuildTransactionDto) {
     return this.policyService.buildTransaction(dto);

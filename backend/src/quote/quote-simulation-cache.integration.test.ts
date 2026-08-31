@@ -8,6 +8,7 @@ import { QuoteSimulationCacheService } from './quote-simulation-cache.service';
 import { SorobanService } from '../rpc/soroban.service';
 import { RedisService } from '../cache/redis.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { MetricsCardinalityGuard } from '../metrics/cardinality-guard.service';
 import {
   CoverageTierEnum,
   PolicyTypeEnum,
@@ -86,6 +87,7 @@ async function createQuoteTestModule(
       QuoteSimulationCacheService,
       { provide: RedisService, useValue: redis },
       MetricsService,
+      MetricsCardinalityGuard,
       {
         provide: SorobanService,
         useValue: {

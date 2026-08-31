@@ -6,6 +6,9 @@ import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
 import { RedisService } from '../cache/redis.service';
 
+/** Allowlist entry: either a raw query string or an object carrying the query plus an optional per-operation complexity budget. */
+export type AllowlistEntry = string | { query: string; maxComplexity?: number };
+
 type PersistedQueryRequest = Request & {
   body?: {
     query?: string;
@@ -16,6 +19,8 @@ type PersistedQueryRequest = Request & {
       };
     };
   };
+  /** Populated when the matched allowlist entry carries a per-operation budget. */
+  persistedQueryMaxComplexity?: number;
 };
 
 @Injectable()
@@ -26,6 +31,8 @@ export class PersistedQueryMiddleware implements NestMiddleware {
   private readonly persistedQueriesOnly: boolean;
   private readonly allowlistHashes: Set<string>;
   private readonly allowlistBodies: Map<string, string>;
+  /** Per-operation complexity budgets keyed by hash. Absent means use global limit. */
+  private readonly allowlistBudgets: Map<string, number>;
   private readonly ttlSeconds: number;
 
   constructor(
@@ -45,7 +52,9 @@ export class PersistedQueryMiddleware implements NestMiddleware {
     );
     this.ttlSeconds = config.get<number>('GRAPHQL_PERSISTED_QUERY_TTL_SECONDS', 86_400);
 
-    this.allowlistBodies = PersistedQueryMiddleware.loadAllowlistFile(config);
+    const { bodies, budgets } = PersistedQueryMiddleware.loadAllowlistFile(config);
+    this.allowlistBodies = bodies;
+    this.allowlistBudgets = budgets;
 
     const envHashes = (config.get<string>('GRAPHQL_PERSISTED_QUERY_ALLOWLIST', '') ?? '')
       .split(',')
@@ -87,6 +96,13 @@ export class PersistedQueryMiddleware implements NestMiddleware {
     if (!this.allowlistHashes.has(hash)) {
       this.writeError(res, 'PersistedQueryNotFound', 'PERSISTED_QUERY_NOT_FOUND');
       return;
+    }
+
+    // Attach per-operation complexity budget before continuing so the Apollo
+    // plugin can read it from the request and override the global limit.
+    const budget = this.allowlistBudgets.get(hash);
+    if (budget !== undefined) {
+      req.persistedQueryMaxComplexity = budget;
     }
 
     return this.processApq(req, res, next, hash, query, true);
@@ -148,33 +164,44 @@ export class PersistedQueryMiddleware implements NestMiddleware {
     });
   }
 
-  private static loadAllowlistFile(_config: ConfigService): Map<string, string> {
+  private static loadAllowlistFile(_config: ConfigService): {
+    bodies: Map<string, string>;
+    budgets: Map<string, number>;
+  } {
     const bodies = new Map<string, string>();
+    const budgets = new Map<string, number>();
     const filePath = join(process.cwd(), 'src/graphql/persisted-query-allowlist.json');
 
     let raw: string;
     try {
       raw = readFileSync(filePath, 'utf-8');
     } catch {
-      // File not present; treat as empty allowlist.
-      return bodies;
+      return { bodies, budgets };
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return bodies;
+      return { bodies, budgets };
     }
 
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      for (const [hash, body] of Object.entries(parsed as Record<string, unknown>)) {
-        if (typeof body === 'string') {
-          bodies.set(hash, body);
+      for (const [hash, entry] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof entry === 'string') {
+          bodies.set(hash, entry);
+        } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          const obj = entry as Record<string, unknown>;
+          if (typeof obj.query === 'string') {
+            bodies.set(hash, obj.query);
+            if (typeof obj.maxComplexity === 'number' && obj.maxComplexity > 0) {
+              budgets.set(hash, obj.maxComplexity);
+            }
+          }
         }
       }
     }
 
-    return bodies;
+    return { bodies, budgets };
   }
 }

@@ -26,8 +26,8 @@ import {
   setClaimNotificationsEnabled,
 } from "./NotificationPermissionBanner";
 import { PaginationControls } from "./PaginationControls";
-import { SkeletonRow } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ClaimsListSkeleton } from "@/features/claims/components/ClaimsSkeleton";
 import type { ClaimFilters, TallyUpdate } from "./types";
 
 
@@ -186,14 +186,7 @@ export function ClaimsBoard() {
 
       {/* Main content area */}
       <section aria-label="Claims list" aria-live="polite" aria-atomic="false">
-        {loading && (
-          <div role="status" aria-label="Loading claims" className="flex flex-col gap-2">
-            <span className="sr-only">Loading claims…</span>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <SkeletonRow key={i} />
-            ))}
-          </div>
-        )}
+        {loading && <ClaimsListSkeleton />}
 
         {!loading && error && (
           <div

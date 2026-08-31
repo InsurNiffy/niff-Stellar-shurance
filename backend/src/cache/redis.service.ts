@@ -1,9 +1,7 @@
 import { Injectable, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
-
-
-
+import { buildRedisConfig } from '../redis/config';
 
 
 @Injectable()
@@ -12,8 +10,14 @@ export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
 
   constructor(private readonly configService: ConfigService) {
-    const redisUrl = this.configService.get<string>('REDIS_URL', 'redis://localhost:6379');
-    this.client = new Redis(redisUrl, {
+    const cfg = buildRedisConfig();
+    this.client = new Redis({
+      host: cfg.host,
+      port: cfg.port,
+      password: cfg.password,
+      tls: cfg.tls ? {} : undefined,
+      db: cfg.db,
+      keyPrefix: cfg.keyPrefix,
       lazyConnect: true,
       retryStrategy: (times) => {
         if (times > 3) {
@@ -103,5 +107,66 @@ export class RedisService implements OnModuleDestroy {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Acquire a single-flight lock for cache-miss recomputation.
+   * Sets lock key with TTL to prevent indefinite locks on crash.
+   * Returns true if lock was acquired, false if already held.
+   */
+  async acquireLock(key: string, ttlSeconds: number = 30): Promise<boolean> {
+    try {
+      const lockKey = `lock:${key}`;
+      const result = await this.client.set(
+        lockKey,
+        '1',
+        'EX',
+        ttlSeconds,
+        'NX',
+      );
+      return result === 'OK';
+    } catch (error) {
+      this.logger.warn(`Lock acquisition failed for ${key}: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Release a single-flight lock.
+   */
+  async releaseLock(key: string): Promise<void> {
+    try {
+      await this.client.del(`lock:${key}`);
+    } catch (error) {
+      this.logger.warn(`Lock release failed for ${key}: ${error}`);
+    }
+  }
+
+  /**
+   * Wait for a lock to be released, polling with backoff.
+   * Returns true if lock was released, false on timeout.
+   */
+  async waitForLock(
+    key: string,
+    maxWaitMs: number = 5000,
+    pollIntervalMs: number = 50,
+  ): Promise<boolean> {
+    const startTime = Date.now();
+    const lockKey = `lock:${key}`;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const exists = await this.client.exists(lockKey);
+        if (exists === 0) {
+          return true;
+        }
+      } catch (error) {
+        this.logger.warn(`Lock wait check failed for ${key}: ${error}`);
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    return false;
   }
 }

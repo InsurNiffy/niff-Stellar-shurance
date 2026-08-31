@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { GovernanceCooldownIndicator } from '@/components/admin/GovernanceCooldownIndicator'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { adminApi } from '@/lib/api/admin'
 
@@ -63,7 +64,10 @@ export default function GovernancePage() {
         </div>
         <Link href="/admin" className="text-sm text-primary underline underline-offset-2">Back to dashboard</Link>
       </div>
-      <QuorumSettings jwt={jwt} />
+      <div className="space-y-6">
+        <CooldownStatus jwt={jwt} />
+        <QuorumSettings jwt={jwt} />
+      </div>
     </main>
   )
 }
@@ -80,7 +84,7 @@ function QuorumSettings({ jwt }: { jwt: string }) {
 
   useEffect(() => {
     adminApi.getQuorum(jwt)
-      .then((r) => {
+      .then((r: { quorum_bps: number }) => {
         setCurrentBps(r.quorum_bps)
         setInputBps(String(r.quorum_bps))
       })
@@ -215,5 +219,45 @@ function QuorumSettings({ jwt }: { jwt: string }) {
         </Dialog>
       </CardContent>
     </Card>
+  )
+}
+
+interface PendingAdminAction {
+  currentLedger: number
+  expiryLedger: number
+  actionType: string
+}
+
+function CooldownStatus({ jwt }: { jwt: string }) {
+  const [pending, _setPending] = useState<PendingAdminAction | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchCooldownStatus = async () => {
+      try {
+        setLoading(true)
+        // TODO: Replace with actual API call to GET /admin/governance/pending-action
+        // const response = await adminApi.getPendingAdminAction(jwt)
+        // if (response?.expiryLedger) setPending(response)
+      } catch (e: unknown) {
+        console.error('Failed to fetch cooldown status:', e instanceof Error ? e.message : 'Unknown error')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void fetchCooldownStatus()
+  }, [jwt])
+
+  if (loading || !pending) {
+    return null
+  }
+
+  return (
+    <GovernanceCooldownIndicator
+      currentLedger={pending.currentLedger}
+      expiryLedger={pending.expiryLedger}
+      proposedAction={pending.actionType}
+    />
   )
 }

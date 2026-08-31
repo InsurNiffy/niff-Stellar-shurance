@@ -39,3 +39,21 @@ fn admin_can_set_runtime_and_stub_address_without_transfers() {
     client.gov_set_token_runtime_enabled(&admin, &false);
     assert!(!client.gov_token_runtime_enabled());
 }
+
+#[test]
+fn activation_event_emitted_on_flag_toggle() {
+    use soroban_sdk::testutils::Events;
+    let (env, contract_id, admin, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+
+    env.events().all(); // clear prior events
+    client.gov_set_token_runtime_enabled(&admin, &true);
+
+    let events = env.events().all();
+    let _ = contract_id; // used to scope the contract
+    let events_debug = soroban_sdk::testutils::arbitrary::std::format!("{:?}", events);
+    assert!(
+        events_debug.contains("gov_token_activation"),
+        "GovernanceTokenActivation event must be emitted on flag toggle"
+    );
+}

@@ -16,6 +16,9 @@ import IORedis from 'ioredis-mock';
 const metricsMock = {
   dlqDepth: { set: jest.fn() },
   dlqJobFailed: { inc: jest.fn() },
+  recordJobRetry: jest.fn(),
+  recordQueueDepth: jest.fn(),
+  recordJobProcessingDuration: jest.fn(),
 };
 
 // We test with a real in-process Queue/Worker backed by ioredis-mock

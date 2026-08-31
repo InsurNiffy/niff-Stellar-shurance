@@ -11,6 +11,10 @@ use types::{
     SCALE,
 };
 
+/// Stable ABI identifier for cross-contract integrators (e.g. `niffyinsure`).
+/// Bump only when `CalcInput` / `CalcResult` / entrypoint shape breaks compatibility.
+pub const ABI_VERSION: u32 = 1;
+
 #[contract]
 pub struct PremiumCalculator;
 
@@ -52,8 +56,18 @@ impl PremiumCalculator {
     }
 
     /// Returns the current multiplier table version (capability flag).
+    /// Returns `0` when the contract is not yet initialized (no panic).
     pub fn get_version(env: Env) -> u32 {
-        storage::get_table(&env).map(|t| t.version).unwrap_or(0)
+        match storage::get_table(&env) {
+            Some(t) => t.version,
+            None => 0,
+        }
+    }
+
+    /// Stable ABI pin for integrators. Independent of multiplier-table `get_version`.
+    /// Read-only: no storage access, no auth required.
+    pub fn abi_version(_env: Env) -> u32 {
+        ABI_VERSION
     }
 
     /// Returns the semver version string stamped at build time from `Cargo.toml`.
@@ -176,7 +190,28 @@ fn checked_sub(a: i128, b: i128) -> Result<i128, CalcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{testutils::Address as _, Address, Env, Map};
+    use types::{AgeBand, CoverageTier, RegionTier};
+
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(PremiumCalculator, ());
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        (env, contract_id, admin)
+    }
+
+    fn sample_input(_env: &Env) -> CalcInput {
+        CalcInput {
+            region: RegionTier::Medium,
+            age_band: AgeBand::Adult,
+            coverage: CoverageTier::Standard,
+            safety_score: 50,
+            base_amount: 1_000_000,
+        }
+    }
 
     #[test]
     fn version_returns_nonempty_semver_string() {
@@ -185,31 +220,165 @@ mod tests {
         let client = PremiumCalculatorClient::new(&env, &contract_id);
 
         let v = client.version();
-        // Compare soroban_sdk::String against the expected semver string
         let expected = soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"));
         assert_eq!(v, expected, "version() must match Cargo.toml");
     }
 
     #[test]
     fn version_requires_no_auth_and_no_init() {
-        // Contract is not initialised — version() must succeed regardless.
         let env = Env::default();
         let contract_id = env.register(PremiumCalculator, ());
         let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let _ = client.version(); // must not panic
+        let _ = client.version();
     }
 
     #[test]
     fn version_is_idempotent() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register(PremiumCalculator, ());
+        let (env, contract_id, _) = setup();
         let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
         let v1 = client.version();
         let v2 = client.version();
         assert_eq!(v1, v2);
+    }
+
+    #[test]
+    fn abi_version_is_stable_constant() {
+        let env = Env::default();
+        let contract_id = env.register(PremiumCalculator, ());
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        assert_eq!(client.abi_version(), ABI_VERSION);
+        assert_eq!(client.abi_version(), 1);
+    }
+
+    #[test]
+    fn get_version_returns_zero_when_uninitialized_no_panic() {
+        let env = Env::default();
+        let contract_id = env.register(PremiumCalculator, ());
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        assert_eq!(client.get_version(), 0);
+    }
+
+    #[test]
+    fn compute_not_initialized_returns_typed_error() {
+        let env = Env::default();
+        let contract_id = env.register(PremiumCalculator, ());
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let err = client
+            .try_compute(&sample_input(&env))
+            .err()
+            .unwrap()
+            .unwrap();
+        assert_eq!(err, CalcError::NotInitialized);
+    }
+
+    #[test]
+    fn already_initialized_returns_typed_error() {
+        let (env, contract_id, admin) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let err = client.try_initialize(&admin).err().unwrap().unwrap();
+        assert_eq!(err, CalcError::AlreadyInitialized);
+    }
+
+    #[test]
+    fn invalid_base_amount_returns_typed_error() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let mut input = sample_input(&env);
+        input.base_amount = 0;
+        let err = client.try_compute(&input).err().unwrap().unwrap();
+        assert_eq!(err, CalcError::InvalidBaseAmount);
+    }
+
+    #[test]
+    fn safety_score_out_of_range_returns_typed_error() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let mut input = sample_input(&env);
+        input.safety_score = 101;
+        let err = client.try_compute(&input).err().unwrap().unwrap();
+        assert_eq!(err, CalcError::SafetyScoreOutOfRange);
+    }
+
+    #[test]
+    fn paused_compute_returns_typed_error() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        client.set_paused(&true);
+        let err = client
+            .try_compute(&sample_input(&env))
+            .err()
+            .unwrap()
+            .unwrap();
+        assert_eq!(err, CalcError::Paused);
+    }
+
+    #[test]
+    fn update_table_invalid_config_version_returns_typed_error() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let mut table = storage::default_table(&env);
+        table.version = 1;
+        let err = client.try_update_table(&table).err().unwrap().unwrap();
+        assert_eq!(err, CalcError::InvalidConfigVersion);
+    }
+
+    #[test]
+    fn update_table_missing_region_returns_typed_error() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let mut table = storage::default_table(&env);
+        table.version = 2;
+        table.region = Map::new(&env);
+        let err = client.try_update_table(&table).err().unwrap().unwrap();
+        assert_eq!(err, CalcError::MissingRegionMultiplier);
+    }
+
+    #[test]
+    fn update_table_region_out_of_bounds_returns_typed_error() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let mut table = storage::default_table(&env);
+        table.version = 2;
+        table.region.set(RegionTier::Low, MIN_MULTIPLIER - 1);
+        let err = client.try_update_table(&table).err().unwrap().unwrap();
+        assert_eq!(err, CalcError::RegionMultiplierOutOfBounds);
+    }
+
+    #[test]
+    fn update_table_safety_discount_out_of_bounds_returns_typed_error() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let mut table = storage::default_table(&env);
+        table.version = 2;
+        table.safety_discount = MAX_SAFETY_DISCOUNT + 1;
+        let err = client.try_update_table(&table).err().unwrap().unwrap();
+        assert_eq!(err, CalcError::SafetyDiscountOutOfBounds);
+    }
+
+    #[test]
+    fn compute_happy_path_returns_premium() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let result = client.compute(&sample_input(&env));
+        assert!(result.premium > 0);
+        assert_eq!(result.config_version, 1);
+    }
+
+    #[test]
+    fn mul_ratio_divide_by_zero_returns_typed_error() {
+        let err = mul_ratio(100, 1, 0).unwrap_err();
+        assert_eq!(err, CalcError::DivideByZero);
+    }
+
+    #[test]
+    fn mul_ratio_negative_returns_typed_error() {
+        let err = mul_ratio(-1, 1, SCALE).unwrap_err();
+        assert_eq!(err, CalcError::NegativePremiumNotSupported);
+    }
+
+    #[test]
+    fn mul_ratio_overflow_returns_typed_error() {
+        let err = mul_ratio(i128::MAX, 2, 1).unwrap_err();
+        assert_eq!(err, CalcError::Overflow);
     }
 }

@@ -18,8 +18,62 @@ export const openapiSpec = {
   tags: [
     { name: "Policies", description: "Policy lifecycle and listing" },
     { name: "Claims", description: "Claim filing, listing, and voting" },
+    { name: "Posts", description: "User-generated posts (CRUD)" },
   ],
   paths: {
+    "/claims/{id}/timeline": {
+      get: {
+        summary: "Get claim status-transition timeline",
+        operationId: "getClaimTimeline",
+        tags: ["Claims"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "Claim numeric identifier.",
+            schema: { type: "integer", minimum: 1, example: 42 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Chronological list of status transitions",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: { $ref: "#/components/schemas/ClaimTimelineEntryDto" },
+                },
+                example: [
+                  {
+                    status: "pending",
+                    ledger: 1000,
+                    timestamp: "2026-01-01T00:00:00.000Z",
+                    actor: "GABC1111111111111111111111111111111111111111111111111111",
+                    reason: null,
+                  },
+                  {
+                    status: "approved",
+                    ledger: 1200,
+                    timestamp: "2026-01-02T00:00:00.000Z",
+                    actor: null,
+                    reason: "Vote majority reached",
+                  },
+                  {
+                    status: "paid",
+                    ledger: 1300,
+                    timestamp: "2026-01-03T00:00:00.000Z",
+                    actor: null,
+                    reason: "Payout processed",
+                  },
+                ],
+              },
+            },
+          },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
     "/claims": {
       get: {
         summary: "List claims",
@@ -46,6 +100,149 @@ export const openapiSpec = {
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "429": { $ref: "#/components/responses/RateLimited" },
+        },
+      },
+    },
+    "/posts": {
+      get: {
+        summary: "List posts",
+        operationId: "listPosts",
+        tags: ["Posts"],
+        parameters: [
+          { $ref: "#/components/parameters/after" },
+          { $ref: "#/components/parameters/limit" },
+          {
+            name: "status",
+            in: "query",
+            description: "Filter by post status.",
+            schema: { type: "string", enum: ["draft", "published", "archived"] },
+          },
+          {
+            name: "authorAddress",
+            in: "query",
+            description: "Filter by author Stellar address.",
+            schema: { type: "string", example: "GABC1111111111111111111111111111111111111111111111111111" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Paginated post list",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PostsListDto" },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "429": { $ref: "#/components/responses/RateLimited" },
+        },
+      },
+      post: {
+        summary: "Create a post",
+        operationId: "createPost",
+        tags: ["Posts"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/CreatePostDto" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Post created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PostDto" },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { description: "Unauthorized" },
+          "429": { $ref: "#/components/responses/RateLimited" },
+        },
+      },
+    },
+    "/posts/{id}": {
+      get: {
+        summary: "Get a single post",
+        operationId: "getPost",
+        tags: ["Posts"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "Post numeric identifier.",
+            schema: { type: "integer", minimum: 1, example: 1 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Post detail",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PostDto" },
+              },
+            },
+          },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+      patch: {
+        summary: "Update a post (partial)",
+        operationId: "updatePost",
+        tags: ["Posts"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "integer", minimum: 1 },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/UpdatePostDto" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Post updated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PostDto" },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { description: "Unauthorized" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+      delete: {
+        summary: "Soft-delete a post",
+        operationId: "deletePost",
+        tags: ["Posts"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "integer", minimum: 1 },
+          },
+        ],
+        responses: {
+          "204": { description: "Post deleted" },
+          "401": { description: "Unauthorized" },
+          "404": { $ref: "#/components/responses/NotFound" },
         },
       },
     },
@@ -369,6 +566,81 @@ export const openapiSpec = {
         properties: {
           data: { type: "array", items: { $ref: "#/components/schemas/PolicyDto" } },
           pagination: { $ref: "#/components/schemas/CursorPageDto" },
+        },
+      },
+      PostDto: {
+        type: "object",
+        required: ["id", "title", "body", "status", "authorAddress", "createdAt", "updatedAt"],
+        properties: {
+          id: { type: "integer", example: 1 },
+          title: { type: "string", maxLength: 200, example: "My first post" },
+          body: { type: "string", maxLength: 10000, example: "This is the post content." },
+          status: { type: "string", enum: ["draft", "published", "archived"], example: "published" },
+          authorAddress: { type: "string", example: "GABC1111111111111111111111111111111111111111111111111111" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      PostsListDto: {
+        type: "object",
+        required: ["data", "pagination"],
+        properties: {
+          data: { type: "array", items: { $ref: "#/components/schemas/PostDto" } },
+          pagination: { $ref: "#/components/schemas/CursorPageDto" },
+        },
+      },
+      CreatePostDto: {
+        type: "object",
+        required: ["title", "body", "authorAddress"],
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 200, example: "My post title" },
+          body: { type: "string", minLength: 1, maxLength: 10000, example: "Post body content." },
+          status: { type: "string", enum: ["draft", "published", "archived"], default: "draft" },
+          authorAddress: { type: "string", example: "GABC1111111111111111111111111111111111111111111111111111" },
+        },
+      },
+      UpdatePostDto: {
+        type: "object",
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 200 },
+          body: { type: "string", minLength: 1, maxLength: 10000 },
+          status: { type: "string", enum: ["draft", "published", "archived"] },
+        },
+      },
+      ClaimTimelineEntryDto: {
+        type: "object",
+        required: ["status", "ledger", "timestamp", "actor", "reason"],
+        properties: {
+          status: {
+            type: "string",
+            description: "Claim status at this point",
+            enum: ["pending", "approved", "paid", "rejected", "withdrawn"],
+            example: "pending",
+          },
+          ledger: {
+            type: "integer",
+            description: "Stellar ledger number",
+            minimum: 0,
+            example: 1000,
+          },
+          timestamp: {
+            type: "string",
+            format: "date-time",
+            description: "ISO-8601 UTC timestamp",
+            example: "2026-01-01T00:00:00.000Z",
+          },
+          actor: {
+            type: "string",
+            nullable: true,
+            description: "Actor wallet address who triggered the transition",
+            example: "GABC1111111111111111111111111111111111111111111111111111",
+          },
+          reason: {
+            type: "string",
+            nullable: true,
+            description: "Reason for the transition",
+            example: "Vote majority reached",
+          },
         },
       },
       ApiError: {

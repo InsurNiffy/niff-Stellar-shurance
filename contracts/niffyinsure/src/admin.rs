@@ -63,6 +63,14 @@ pub enum AdminError {
     InvalidMaxWeightCap = 120,
     /// Cooldown ledgers value is out of allowed bounds.
     CooldownLedgersOutOfBounds = 121,
+    /// Governance cooldown is currently active.
+    GovernanceCooldownActive = 122,
+    /// Governance cooldown value is out of allowed bounds.
+    GovernanceCooldownOutOfBounds = 123,
+    /// Sweep would exceed the per-ledger withdrawal cap.
+    SweepLedgerLimitExceeded = 124,
+    /// Max sweep per ledger value is out of allowed bounds.
+    MaxSweepPerLedgerOutOfBounds = 125,
 }
 
 /// Payload for a treasury-rotation proposal.
@@ -287,6 +295,65 @@ pub fn require_admin(env: &Env) -> Address {
     admin
 }
 
+// ── Scoped role helpers (Issue #1161) ─────────────────────────────────────────
+//
+// Three roles reduce the blast radius of any single compromised key:
+//
+//   PauseAdmin    — may pause/unpause the contract.
+//   TreasuryAdmin — may drain, sweep, and rotate the treasury address.
+//   ParamAdmin    — may change governance parameters (evidence counts, cooldowns …).
+//
+// Backwards compatibility: when a role is not configured, the main Admin address
+// satisfies the check so existing single-admin deployments work unchanged.
+
+/// Errors specific to the role-separation feature.
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
+#[repr(u32)]
+pub enum RoleError {
+    /// Caller is not authorized for this role.
+    Unauthorized = 200,
+}
+
+/// Require either the dedicated pause-admin or the main admin.
+/// Returns the authorised address.
+pub fn require_pause_admin(env: &Env) -> Address {
+    let role = storage::get_pause_admin(env).unwrap_or_else(|| {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&storage::DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
+    });
+    role.require_auth();
+    role
+}
+
+/// Require either the dedicated treasury-admin or the main admin.
+/// Returns the authorised address.
+pub fn require_treasury_admin(env: &Env) -> Address {
+    let role = storage::get_treasury_admin(env).unwrap_or_else(|| {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&storage::DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
+    });
+    role.require_auth();
+    role
+}
+
+/// Require either the dedicated param-admin or the main admin.
+/// Returns the authorised address.
+pub fn require_param_admin(env: &Env) -> Address {
+    let role = storage::get_param_admin(env).unwrap_or_else(|| {
+        env.storage()
+            .instance()
+            .get::<_, Address>(&storage::DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, RoleError::Unauthorized))
+    });
+    role.require_auth();
+    role
+}
+
 /// Propose a high-risk admin action (treasury rotation or sweep). Current admin authorizes.
 pub fn propose_admin_action(env: &Env, action: AdminAction) {
     let proposer = require_admin(env);
@@ -397,9 +464,23 @@ pub fn cancel_admin_action(env: &Env) {
 }
 
 /// Propose a new admin (step 1 of two-step rotation). Current admin must authorize.
+/// Sets a time-locked expiry based on the configured admin action window.
 pub fn propose_admin(env: &Env, new_admin: Address) {
     let current = require_admin(env);
+    // Zero-address guard: the zero address cannot authorize the accept_admin call.
+    if new_admin
+        == Address::from_string(&soroban_sdk::String::from_str(
+            env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ))
+    {
+        panic_with_error!(env, AdminError::InvalidAddress);
+    }
+    let window = storage::get_admin_action_window_ledgers(env);
+    let now = env.ledger().sequence();
+    let expiry = now.saturating_add(window);
     storage::set_pending_admin(env, &new_admin);
+    storage::set_pending_admin_expiry(env, expiry);
     AdminProposed {
         old_admin: current.clone(),
         new_admin,
@@ -410,9 +491,17 @@ pub fn propose_admin(env: &Env, new_admin: Address) {
 
 /// Accept a pending admin proposal. The *pending* admin must authorize.
 /// `pending` is read from storage — cannot be spoofed via parameter.
+/// Proposal must be accepted before the expiry ledger (time lock).
 pub fn accept_admin(env: &Env) {
     let pending = storage::get_pending_admin(env)
         .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdmin));
+    let expiry = storage::get_pending_admin_expiry(env)
+        .unwrap_or_else(|| panic_with_error!(env, AdminError::NoPendingAdmin));
+    let now = env.ledger().sequence();
+    if now > expiry {
+        storage::clear_pending_admin(env);
+        panic_with_error!(env, AdminError::AdminActionExpired);
+    }
     pending.require_auth();
     let old_admin = storage::get_admin(env);
     storage::set_admin(env, &pending);
@@ -443,6 +532,7 @@ pub fn cancel_admin(env: &Env) {
 /// Update the treasury token contract address. Admin must authorize.
 pub fn set_token(env: &Env, new_token: Address) {
     let admin = require_admin(env);
+    check_and_update_gov_cooldown(env);
     let old_token = storage::get_token(env);
     storage::set_token(env, &new_token);
     TokenUpdated {
@@ -454,10 +544,11 @@ pub fn set_token(env: &Env, new_token: Address) {
 }
 
 /// Update the treasury address. Admin must authorize.
-/// Emits: (\"admin\", \"treasury\") → (old_treasury, new_treasury)
+/// Emits: ("admin", "treasury") → (old_treasury, new_treasury)
 /// *** SINGLE-STEP FALLBACK: Use propose_admin_action for two-step protection ***
 pub fn set_treasury(env: &Env, new_treasury: Address) {
     let admin = require_admin(env);
+    check_and_update_gov_cooldown(env);
     let old_treasury = storage::get_treasury(env);
     storage::set_treasury(env, &new_treasury);
     TreasuryUpdated {
@@ -470,7 +561,7 @@ pub fn set_treasury(env: &Env, new_treasury: Address) {
 
 /// Pause the contract. Admin must authorize.
 pub fn pause(env: &Env) {
-    let admin = require_admin(env);
+    let admin = require_pause_admin(env);
     storage::set_paused(env, true);
     AdminPaused {
         admin: admin.clone(),
@@ -481,7 +572,7 @@ pub fn pause(env: &Env) {
 
 /// Unpause the contract. Admin must authorize.
 pub fn unpause(env: &Env) {
-    let admin = require_admin(env);
+    let admin = require_pause_admin(env);
     storage::set_paused(env, false);
     AdminUnpaused {
         admin: admin.clone(),
@@ -491,9 +582,9 @@ pub fn unpause(env: &Env) {
 }
 
 /// Drain `amount` stroops from the contract treasury to `recipient`.
-/// Admin must authorize. Amount must be > 0.
+/// Treasury-admin (or main admin as fallback) must authorize. Amount must be > 0.
 pub fn drain(env: &Env, recipient: Address, amount: i128) {
-    let admin = require_admin(env);
+    let admin = require_treasury_admin(env);
     if amount <= 0 {
         panic_with_error!(env, AdminError::InvalidDrainAmount);
     }
@@ -519,7 +610,7 @@ pub fn drain(env: &Env, recipient: Address, amount: i128) {
 /// See full docs above.
 pub fn sweep_token(env: &Env, asset: Address, recipient: Address, amount: i128, reason_code: u32) {
     storage::bump_instance(env);
-    let admin = require_admin(env);
+    let admin = require_treasury_admin(env);
     // ... (existing validation logic)
     sweep_token_inner(env, asset, recipient, amount, reason_code);
     emit_admin_action(env, &admin, "sweep_token");
@@ -539,6 +630,24 @@ fn sweep_token_inner(
     // Validation: asset must be allowlisted (prevents arbitrary token sweeps)
     if !storage::is_allowed_asset(env, &asset) {
         panic_with_error!(env, AdminError::AssetNotAllowlisted);
+    }
+
+    // Per-ledger withdrawal limit (Issue #845)
+    if let Some(max_sweep) = storage::get_max_sweep_per_ledger(env) {
+        let now = env.ledger().sequence();
+        let last_sweep = storage::get_last_sweep_ledger(env);
+        let mut cumulative = 0;
+        if last_sweep == Some(now) {
+            cumulative = storage::get_cumulative_swept_this_ledger(env);
+        }
+        let new_cumulative = cumulative
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(env, AdminError::SweepLedgerLimitExceeded));
+        if new_cumulative > max_sweep {
+            panic_with_error!(env, AdminError::SweepLedgerLimitExceeded);
+        }
+        storage::set_last_sweep_ledger(env, now);
+        storage::set_cumulative_swept_this_ledger(env, new_cumulative);
     }
     // Validation: check per-transaction cap (if configured)
     if let Some(cap) = storage::get_sweep_cap(env) {
@@ -629,18 +738,20 @@ fn calculate_protected_balance(env: &Env, asset: &Address) -> i128 {
 }
 
 /// Set per-transaction sweep cap (optional safety limit).
-/// Set to None to disable cap. Admin must authorize.
+/// Set to None to disable cap. Treasury-admin (or main admin as fallback) must authorize.
 pub fn set_sweep_cap(env: &Env, cap: Option<i128>) {
-    let admin = require_admin(env);
+    let admin = require_treasury_admin(env);
+    check_and_update_gov_cooldown(env);
     storage::set_sweep_cap(env, cap);
     emit_admin_action(env, &admin, "set_sweep_cap");
 }
 
 /// Set the on-chain notice period (in ledgers) that must elapse between a sweep
 /// proposal and its execution. Set to 0 to disable (not recommended for mainnet).
-/// Admin must authorize.
+/// Treasury-admin (or main admin as fallback) must authorize.
 pub fn set_sweep_notice_period(env: &Env, ledgers: u32) {
-    let admin = require_admin(env);
+    let admin = require_treasury_admin(env);
+    check_and_update_gov_cooldown(env);
     storage::set_sweep_notice_period_ledgers(env, ledgers);
     emit_admin_action(env, &admin, "set_sweep_notice_period");
 }
@@ -657,7 +768,8 @@ pub struct MaxEvidenceCountUpdated {
 /// Bounded by [`storage::MAX_EVIDENCE_COUNT_HARD_MAX`] to prevent griefing.
 /// Reductions do NOT retroactively invalidate existing claims.
 pub fn set_max_evidence_count(env: &Env, new_count: u32) -> Result<(), AdminError> {
-    let admin = require_admin(env);
+    let admin = require_param_admin(env);
+    check_and_update_gov_cooldown(env);
     if new_count > storage::MAX_EVIDENCE_COUNT_HARD_MAX {
         return Err(AdminError::MaxEvidenceCountOutOfBounds);
     }
@@ -683,7 +795,8 @@ pub struct GatewayAllowlistUpdated {
 /// Evidence URLs must start with `ipfs://` or one of the allowlisted gateway prefixes.
 /// Pass an empty vector to disable gateway validation (only `ipfs://` allowed).
 pub fn set_gateway_allowlist(env: &Env, gateways: Vec<String>) -> Result<(), AdminError> {
-    let admin = require_admin(env);
+    let admin = require_param_admin(env);
+    check_and_update_gov_cooldown(env);
     storage::set_gateway_allowlist(env, &gateways);
     GatewayAllowlistUpdated {
         gateway_count: gateways.len(),
@@ -707,7 +820,8 @@ pub struct MinEvidenceCountUpdated {
 /// `new_min` must not exceed the current max evidence count.
 /// Setting to 0 disables the minimum (default behaviour).
 pub fn set_min_evidence_count(env: &Env, new_min: u32) -> Result<(), AdminError> {
-    let _admin = require_admin(env);
+    let _admin = require_param_admin(env);
+    check_and_update_gov_cooldown(env);
     let current_max = storage::get_max_evidence_count(env);
     if new_min > current_max {
         return Err(AdminError::MinEvidenceExceedsMax);
@@ -736,7 +850,8 @@ pub struct MaxWeightCapUpdated {
 /// Only meaningful when the `governance-token` feature is enabled at runtime.
 /// `new_cap` must be > 0. Falls back to `i128::MAX` (uncapped) when unset.
 pub fn set_max_weight_cap(env: &Env, new_cap: i128) -> Result<(), AdminError> {
-    let _admin = require_admin(env);
+    let _admin = require_param_admin(env);
+    check_and_update_gov_cooldown(env);
     if new_cap <= 0 {
         return Err(AdminError::InvalidMaxWeightCap);
     }
@@ -763,7 +878,8 @@ pub struct CooldownUpdated {
 /// `new_ledgers` must be in `[0, MAX_COOLDOWN_LEDGERS]`.
 /// 0 disables the cooldown (default). Does not affect claims already in `Processing`.
 pub fn set_cooldown_ledgers(env: &Env, new_ledgers: u32) -> Result<(), AdminError> {
-    let _admin = require_admin(env);
+    let _admin = require_param_admin(env);
+    check_and_update_gov_cooldown(env);
     if new_ledgers > MAX_COOLDOWN_LEDGERS {
         return Err(AdminError::CooldownLedgersOutOfBounds);
     }
@@ -774,5 +890,73 @@ pub fn set_cooldown_ledgers(env: &Env, new_ledgers: u32) -> Result<(), AdminErro
         new_ledgers,
     }
     .publish(env);
+    Ok(())
+}
+
+// ── Governance cooldown (Issue #844) ──────────────────────────────────────
+
+/// Hard maximum for the governance cooldown window to prevent admin locking all parameters indefinitely.
+pub const MAX_GOVERNANCE_COOLDOWN_LEDGERS: u32 = 30 * crate::ledger::LEDGERS_PER_DAY; // ~30 days
+
+#[contractevent(topics = ["niffyinsure", "governance_cooldown_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceCooldownUpdated {
+    pub old_ledgers: u32,
+    pub new_ledgers: u32,
+}
+
+pub fn check_and_update_gov_cooldown(env: &Env) {
+    let now = env.ledger().sequence();
+    let cooldown = storage::get_governance_cooldown_ledgers(env);
+    if cooldown > 0 {
+        if let Some(last_change) = storage::get_last_param_change_ledger(env) {
+            if now.saturating_sub(last_change) < cooldown {
+                panic_with_error!(env, AdminError::GovernanceCooldownActive);
+            }
+        }
+    }
+    storage::set_last_param_change_ledger(env, now);
+}
+
+pub fn set_governance_cooldown_ledgers(env: &Env, new_ledgers: u32) -> Result<(), AdminError> {
+    let admin = require_param_admin(env);
+    if new_ledgers > MAX_GOVERNANCE_COOLDOWN_LEDGERS {
+        return Err(AdminError::GovernanceCooldownOutOfBounds);
+    }
+    check_and_update_gov_cooldown(env);
+    let old_ledgers = storage::get_governance_cooldown_ledgers(env);
+    storage::set_governance_cooldown_ledgers(env, new_ledgers);
+    GovernanceCooldownUpdated {
+        old_ledgers,
+        new_ledgers,
+    }
+    .publish(env);
+    emit_admin_action(env, &admin, "set_governance_cooldown_ledgers");
+    Ok(())
+}
+
+// ── Treasury withdrawal limit (Issue #845) ────────────────────────────────
+
+#[contractevent(topics = ["niffyinsure", "max_sweep_per_ledger_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaxSweepPerLedgerUpdated {
+    pub old_cap: Option<i128>,
+    pub new_cap: i128,
+}
+
+pub fn set_max_sweep_per_ledger(env: &Env, cap: i128) -> Result<(), AdminError> {
+    let admin = require_treasury_admin(env);
+    check_and_update_gov_cooldown(env);
+    if cap <= 0 {
+        return Err(AdminError::MaxSweepPerLedgerOutOfBounds);
+    }
+    let old_cap = storage::get_max_sweep_per_ledger(env);
+    storage::set_max_sweep_per_ledger(env, cap);
+    MaxSweepPerLedgerUpdated {
+        old_cap,
+        new_cap: cap,
+    }
+    .publish(env);
+    emit_admin_action(env, &admin, "set_max_sweep_per_ledger");
     Ok(())
 }

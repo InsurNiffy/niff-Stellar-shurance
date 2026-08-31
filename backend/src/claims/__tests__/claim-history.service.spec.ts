@@ -146,3 +146,248 @@ describe('ClaimHistoryService', () => {
     expect(result.data[0].status).toBe('pending');
   });
 });
+
+// ── Timeline tests ───────────────────────────────────────────────────────────
+
+const TIMELINE_LEGACY_EVENTS = [
+  {
+    id: 1,
+    txHash: 'tx1',
+    eventIndex: 0,
+    contractId: 'C1',
+    ledger: 100,
+    ledgerClosedAt: new Date('2026-01-01T00:00:00Z'),
+    topic1: 'claim_filed',
+    topic2: null,
+    topic3: null,
+    topic4: null,
+    data: {},
+    createdAt: new Date(),
+  },
+  {
+    id: 2,
+    txHash: 'tx2',
+    eventIndex: 0,
+    contractId: 'C1',
+    ledger: 200,
+    ledgerClosedAt: new Date('2026-01-02T00:00:00Z'),
+    topic1: 'niffyins',
+    topic2: 'clm_final',
+    topic3: '42',
+    topic4: null,
+    data: { status: 'Approved', approve_votes: 3, reject_votes: 1, at_ledger: 200 },
+    createdAt: new Date(),
+  },
+  {
+    id: 3,
+    txHash: 'tx3',
+    eventIndex: 0,
+    contractId: 'C1',
+    ledger: 300,
+    ledgerClosedAt: new Date('2026-01-03T00:00:00Z'),
+    topic1: 'niffyins',
+    topic2: 'clm_paid',
+    topic3: '42',
+    topic4: null,
+    data: { recipient: 'GPAID', amount: '50000000', at_ledger: 300 },
+    createdAt: new Date(),
+  },
+  {
+    id: 4,
+    txHash: 'tx3',
+    eventIndex: 1,
+    contractId: 'C1',
+    ledger: 300,
+    ledgerClosedAt: new Date('2026-01-03T00:00:00Z'),
+    topic1: 'niffyinsure',
+    topic2: 'claim_fully_paid',
+    topic3: '42',
+    topic4: null,
+    data: { recipient: 'GPAID', total_paid: '50000000', at_ledger: 300 },
+    createdAt: new Date(),
+  },
+];
+
+const TIMELINE_MIXED_EVENTS = [
+  {
+    id: 1,
+    txHash: 'tx1',
+    eventIndex: 0,
+    contractId: 'C1',
+    ledger: 100,
+    ledgerClosedAt: new Date('2026-01-01T00:00:00Z'),
+    topic1: 'claim_filed',
+    topic2: null,
+    topic3: null,
+    topic4: null,
+    data: {},
+    createdAt: new Date(),
+  },
+  {
+    id: 2,
+    txHash: 'tx2',
+    eventIndex: 0,
+    contractId: 'C1',
+    ledger: 200,
+    ledgerClosedAt: new Date('2026-01-02T00:00:00Z'),
+    topic1: 'niffyinsure',
+    topic2: 'claim_withdrawn',
+    topic3: '42',
+    topic4: null,
+    data: { claimant: 'GWITHDRAW', policy_id: 1, at_ledger: 200 },
+    createdAt: new Date(),
+  },
+];
+
+describe('ClaimHistoryService.getTimeline', () => {
+  it('returns legacy events in chronological order with actor/reason as null', async () => {
+    const events = [
+      {
+        id: 1,
+        txHash: 'tx1',
+        eventIndex: 0,
+        contractId: 'C1',
+        ledger: 100,
+        ledgerClosedAt: new Date('2026-01-01T00:00:00Z'),
+        topic1: 'claim_filed',
+        topic2: null,
+        topic3: null,
+        topic4: null,
+        data: {},
+        createdAt: new Date(),
+      },
+      {
+        id: 2,
+        txHash: 'tx1',
+        eventIndex: 1,
+        contractId: 'C1',
+        ledger: 200,
+        ledgerClosedAt: new Date('2026-01-02T00:00:00Z'),
+        topic1: 'claim_approved',
+        topic2: null,
+        topic3: null,
+        topic4: null,
+        data: {},
+        createdAt: new Date(),
+      },
+      {
+        id: 3,
+        txHash: 'tx1',
+        eventIndex: 2,
+        contractId: 'C1',
+        ledger: 300,
+        ledgerClosedAt: new Date('2026-01-03T00:00:00Z'),
+        topic1: 'claim_pd',
+        topic2: null,
+        topic3: null,
+        topic4: null,
+        data: {},
+        createdAt: new Date(),
+      },
+    ];
+    const prisma = makePrisma(events);
+    const svc = new ClaimHistoryService(prisma, makeTenant());
+    const result = await svc.getTimeline(42);
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ status: 'pending', ledger: 100, timestamp: '2026-01-01T00:00:00.000Z', actor: null, reason: null });
+    expect(result[1]).toEqual({ status: 'approved', ledger: 200, timestamp: '2026-01-02T00:00:00.000Z', actor: null, reason: null });
+    expect(result[2]).toEqual({ status: 'paid', ledger: 300, timestamp: '2026-01-03T00:00:00.000Z', actor: null, reason: null });
+  });
+
+  it('extracts actor and reason for admin override events', async () => {
+    const events = [
+      {
+        id: 1,
+        txHash: 'tx1',
+        eventIndex: 0,
+        contractId: 'C1',
+        ledger: 100,
+        ledgerClosedAt: new Date('2026-01-01T00:00:00Z'),
+        topic1: 'claim_filed',
+        topic2: null,
+        topic3: null,
+        topic4: null,
+        data: {},
+        createdAt: new Date(),
+      },
+      {
+        id: 3,
+        txHash: 'tx1',
+        eventIndex: 2,
+        contractId: 'C1',
+        ledger: 300,
+        ledgerClosedAt: new Date('2026-01-03T00:00:00Z'),
+        topic1: 'claim_pd',
+        topic2: null,
+        topic3: null,
+        topic4: null,
+        data: { actor: 'GADMIN', reason: 'Paid by admin' },
+        createdAt: new Date(),
+      },
+    ];
+    const prisma = makePrisma(events);
+    const svc = new ClaimHistoryService(prisma, makeTenant());
+    const result = await svc.getTimeline(42);
+
+    const paid = result.find((e) => e.status === 'paid');
+    expect(paid?.actor).toBe('GADMIN');
+    expect(paid?.reason).toBe('Paid by admin');
+  });
+
+  it('detects contract events via topic3 claim_id lookup', async () => {
+    const prisma = {
+      claim: { findFirst: jest.fn().mockResolvedValue(mockClaim) },
+      rawEvent: { findMany: jest.fn().mockResolvedValue(TIMELINE_LEGACY_EVENTS) },
+    } as unknown as PrismaService;
+
+    const svc = new ClaimHistoryService(prisma, makeTenant());
+    const result = await svc.getTimeline(42);
+
+    expect(result).toHaveLength(4);
+    // Includes legacy txHash-based event
+    expect(result[0]).toMatchObject({ status: 'pending', ledger: 100 });
+    // Contract event via topic3 match
+    expect(result[1]).toMatchObject({ status: 'approved', ledger: 200, reason: 'Vote majority reached' });
+    expect(result[2]).toMatchObject({ status: 'paid', ledger: 300, actor: 'GPAID', reason: 'Payout processed' });
+    expect(result[3]).toMatchObject({ status: 'paid', ledger: 300 });
+  });
+
+  it('maps claim_withdrawn contract events', async () => {
+    const prisma = {
+      claim: { findFirst: jest.fn().mockResolvedValue(mockClaim) },
+      rawEvent: { findMany: jest.fn().mockResolvedValue(TIMELINE_MIXED_EVENTS) },
+    } as unknown as PrismaService;
+
+    const svc = new ClaimHistoryService(prisma, makeTenant());
+    const result = await svc.getTimeline(42);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ status: 'pending', ledger: 100 });
+    expect(result[1]).toMatchObject({ status: 'withdrawn', ledger: 200, actor: 'GWITHDRAW', reason: 'Claimant withdrawal' });
+  });
+
+  it('falls back to synthetic entries when no raw_events exist', async () => {
+    const prisma = {
+      claim: { findFirst: jest.fn().mockResolvedValue(mockClaim) },
+      rawEvent: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+
+    const svc = new ClaimHistoryService(prisma, makeTenant());
+    const result = await svc.getTimeline(42);
+
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0]).toMatchObject({ status: 'pending', actor: null, reason: null });
+    expect(result[1]).toMatchObject({ status: 'paid', actor: null, reason: null });
+  });
+
+  it('throws NotFoundException for unknown claim', async () => {
+    const prisma = {
+      claim: { findFirst: jest.fn().mockResolvedValue(null) },
+      rawEvent: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+
+    const svc = new ClaimHistoryService(prisma, makeTenant());
+    await expect(svc.getTimeline(999)).rejects.toThrow(NotFoundException);
+  });
+});

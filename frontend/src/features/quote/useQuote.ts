@@ -14,16 +14,29 @@ export interface QuoteState {
   error: string | null
 }
 
+/** Delay before a new quote simulation after coverage/input changes settle. */
+export const QUOTE_DEBOUNCE_MS = 400
+
 type ValidInputs = Required<Pick<QuoteFormData, 'policy_type' | 'region' | 'coverage_tier' | 'age' | 'risk_score'>>
 
-export function useQuote(inputs: Partial<ValidInputs> | null, debounceMs = 400): QuoteState {
+/**
+ * Live quote hook. Debounces coverage and related inputs so rapid keystrokes /
+ * slider moves only trigger one simulation for the latest value.
+ */
+export function useQuote(inputs: Partial<ValidInputs> | null, debounceMs = QUOTE_DEBOUNCE_MS): QuoteState {
   const [state, setState] = useState<QuoteState>({ status: 'idle', quote: null, error: null })
   const seqRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
 
-  // Only debounce when we have complete valid inputs
+  // Stabilize on serialized content so object identity churn does not reset the timer.
   const complete = isComplete(inputs) ? inputs : null
-  const debounced = useDebounce(complete, debounceMs)
+  const debounceKey = complete ? serializeInputs(complete) : null
+
+  // Hold `null` until inputs settle — including the first coverage value —
+  // so there is no leading-edge simulation on mount / first keystroke.
+  // When inputs become incomplete, clear immediately (delay 0).
+  const settledKey = useDebounce(debounceKey, debounceKey === null ? 0 : debounceMs, null)
+  const debounced = settledKey ? (JSON.parse(settledKey) as ValidInputs) : null
 
   useEffect(() => {
     if (!debounced) {
@@ -53,9 +66,20 @@ export function useQuote(inputs: Partial<ValidInputs> | null, debounceMs = 400):
     )
 
     return () => ctrl.abort()
-  }, [debounced])
+  }, [settledKey]) // eslint-disable-line react-hooks/exhaustive-deps -- debounced parsed from key
 
   return state
+}
+
+function serializeInputs(inputs: ValidInputs): string {
+  // Fixed key order so coverage_tier / numeric coverage inputs debounce reliably.
+  return JSON.stringify({
+    policy_type: inputs.policy_type,
+    region: inputs.region,
+    coverage_tier: inputs.coverage_tier,
+    age: inputs.age,
+    risk_score: inputs.risk_score,
+  })
 }
 
 function isComplete(inputs: Partial<ValidInputs> | null): inputs is ValidInputs {

@@ -84,10 +84,13 @@ export const IPFS_GATEWAYS: IpfsGatewayConfig[] = [
 ];
 
 /**
- * Generate gateway URLs for a given CID
+ * Generate gateway URLs for a given CID using provided gateways
+ * @param cid Content Identifier
+ * @param gateways Optional custom gateway list; uses IPFS_GATEWAYS if not provided
  */
-export function generateGatewayUrls(cid: string): string[] {
-  return IPFS_GATEWAYS.map(
-    (gateway) => gateway.url.replace('{{cid}}', cid)
-  );
+export function generateGatewayUrls(cid: string, gateways?: IpfsGatewayConfig[]): string[] {
+  const gatewayList = gateways ?? IPFS_GATEWAYS;
+  return gatewayList
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+    .map((gateway) => gateway.url.replace('{{cid}}', cid));
 }

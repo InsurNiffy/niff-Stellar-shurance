@@ -16,12 +16,13 @@
  *   - Private keys are never requested, accepted, or logged.
  */
 
-import { Keypair, StrKey } from '@stellar/stellar-sdk';
+import { StrKey } from '@stellar/stellar-sdk';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { config } from '../config/env';
 import { getNonceStore } from './nonce.store';
+import { WalletSignatureService } from './wallet-signature.service';
 
 // ── Challenge message ─────────────────────────────────────────────────────────
 
@@ -125,16 +126,9 @@ export async function verifyChallenge(
   // throws, preventing an attacker from probing with the same nonce.
   await store.del(nonce);
 
+  const signatureService = new WalletSignatureService();
   try {
-    const keypair = Keypair.fromPublicKey(publicKey);
-    const sigBytes = Buffer.from(signatureBase64, 'base64');
-    const msgBytes = Buffer.from(stored.message);
-    const valid = keypair.verify(msgBytes, sigBytes);
-    if (!valid) {
-      throw new UnauthorizedException(
-        'Signature verification failed. Ensure you signed the exact message string.',
-      );
-    }
+    await signatureService.verifyEd25519(publicKey, stored.message, signatureBase64);
   } catch (err) {
     if (err instanceof UnauthorizedException) throw err;
     throw new UnauthorizedException('Signature verification failed.');

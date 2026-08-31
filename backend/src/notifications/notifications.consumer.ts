@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
+import { ClaimNotificationBatchService } from './claim-notification-batch.service';
 import type { ClaimFinalizedEvent } from './notification.types';
 import { EventEmitter } from 'events';
 
@@ -13,11 +14,22 @@ export const notificationBus = new EventEmitter();
 export class NotificationsConsumer {
   private readonly logger = new Logger(NotificationsConsumer.name);
 
-  constructor(private readonly notifications: NotificationsService) {
+  constructor(
+    private readonly notifications: NotificationsService,
+    private readonly batch: ClaimNotificationBatchService,
+  ) {
     notificationBus.on('claim:finalized', (event: ClaimFinalizedEvent) => {
-      this.notifications.sendClaimNotifications(event).catch((err: unknown) => {
+      this.batch.accumulateEvent(event, async (events) => {
+        for (const evt of events) {
+          await this.notifications.sendClaimNotifications(evt).catch((err: unknown) => {
+            this.logger.error(
+              `Unhandled error for claim ${evt.claimId}: ${String(err)}`,
+            );
+          });
+        }
+      }).catch((err: unknown) => {
         this.logger.error(
-          `Unhandled error for claim ${event.claimId}: ${String(err)}`,
+          `Failed to accumulate event for claim ${event.claimId}: ${String(err)}`,
         );
       });
     });

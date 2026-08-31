@@ -68,6 +68,10 @@ export function QuoteResult({ status, quote, error, inputs }: Props) {
   if (!quote) return null
 
   const href = buildPurchaseHref(inputs, quote)
+  const symbol = quote.tokenSymbol ?? 'XLM'
+  const decimals = quote.tokenDecimals ?? 7
+  const protocolFeeBps = quote.protocolFeeBps ?? 500
+  const _protocolFeeStroops = BigInt(quote.premiumStroops) * BigInt(protocolFeeBps) / BigInt(10000)
 
   return (
     <div className="space-y-5" aria-live="polite" aria-atomic="true">
@@ -75,9 +79,9 @@ export function QuoteResult({ status, quote, error, inputs }: Props) {
         <p className="text-sm text-muted-foreground mb-1">Estimated Annual Premium</p>
         <p
           className="text-5xl font-bold text-primary tabular-nums"
-          aria-label={`${formatTokenAmount(quote.premiumXlm, 0)} XLM`}
+          aria-label={`${formatTokenAmount(quote.premiumStroops, decimals)} ${symbol}`}
         >
-          {formatTokenAmount(quote.premiumXlm, 0)} <span className="text-2xl">XLM</span>
+          {formatTokenAmount(quote.premiumStroops, decimals)} <span className="text-2xl">{symbol}</span>
         </p>
         <p className="text-xs text-muted-foreground mt-1">{quote.premiumStroops} stroops</p>
       </div>
@@ -108,6 +112,10 @@ export function QuoteResult({ status, quote, error, inputs }: Props) {
             <div>
               <dt className="text-muted-foreground">Min Resource Fee</dt>
               <dd className="font-medium">{quote.minResourceFee} stroops</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Protocol Fee</dt>
+              <dd className="font-medium">{(protocolFeeBps / 100).toFixed(2)}%</dd>
             </div>
           </dl>
         </CardContent>

@@ -15,15 +15,20 @@ export class GraphqlOperationGuardService {
     this.maxComplexity = limits.maxComplexity;
   }
 
-  /** Depth is enforced by `graphql-depth-limit` validation rules; complexity here. */
+  /** Depth is enforced by `graphql-depth-limit` validation rules; complexity here.
+   *  `overrideMaxComplexity` is set by PersistedQueryMiddleware for pre-approved operations
+   *  that carry an explicit per-operation complexity budget in the allowlist. */
   assertWithinLimits(
     document: DocumentNode,
     variables: Variables = {},
     schema?: GraphQLSchema,
+    overrideMaxComplexity?: number,
   ): void {
     if (!schema) {
       return;
     }
+
+    const limit = overrideMaxComplexity ?? this.maxComplexity;
 
     const complexity = getComplexity({
       schema,
@@ -32,15 +37,15 @@ export class GraphqlOperationGuardService {
       estimators: [simpleEstimator({ defaultComplexity: 1 })],
     });
 
-    if (complexity > this.maxComplexity) {
+    if (complexity > limit) {
       throw new GraphQLError(
-        `Query complexity ${complexity} exceeds the maximum allowed complexity of ${this.maxComplexity}.`,
+        `Query complexity ${complexity} exceeds the maximum allowed complexity of ${limit}.`,
         {
           extensions: {
             code: 'GRAPHQL_COMPLEXITY_LIMIT',
             limit: 'complexity',
             complexity,
-            maxComplexity: this.maxComplexity,
+            maxComplexity: limit,
             http: { status: 400 },
           },
         },

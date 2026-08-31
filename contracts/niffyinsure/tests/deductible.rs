@@ -125,6 +125,47 @@ fn process_claim_fails_when_deductible_gte_gross() {
 }
 
 #[test]
+fn max_i128_claim_with_large_deductible_still_pays_one_unit() {
+    let (env, client, _admin, token) = setup();
+    let holder = Address::generate(&env);
+    let voter1 = Address::generate(&env);
+    let voter2 = Address::generate(&env);
+    fund_holder(&env, &client, &token, &holder);
+    seed_voter(&client, &voter1);
+    seed_voter(&client, &voter2);
+
+    let _policy = client.initiate_policy(
+        &holder,
+        &PolicyType::Auto,
+        &RegionTier::Medium,
+        &AgeBand::Adult,
+        &CoverageTier::Standard,
+        &80,
+        &i128::MAX,
+        &token,
+        &niffyinsure::types::InitiatePolicyOptions {
+            deductible: Some(i128::MAX - 1),
+            ..niffyinsure::types::InitiatePolicyOptions::test_defaults(&env)
+        },
+    );
+
+    let details = String::from_str(&env, "max i128 boundary");
+    let evidence = vec![&env];
+    let claim_id = client.file_claim(&holder, &1u32, &i128::MAX, &details, &evidence, &None);
+
+    client.vote_on_claim(&voter1, &claim_id, &VoteOption::Approve);
+    client.vote_on_claim(&voter2, &claim_id, &VoteOption::Approve);
+
+    mint(&env, &token, &client.address, 1i128);
+    let before = token::Client::new(&env, &token).balance(&holder);
+    client.process_claim(&claim_id);
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&holder),
+        before + 1
+    );
+}
+
+#[test]
 fn initiate_rejects_deductible_above_coverage() {
     let (env, client, _admin, token) = setup();
     let holder = Address::generate(&env);

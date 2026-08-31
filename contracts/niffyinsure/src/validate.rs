@@ -1,8 +1,8 @@
-use soroban_sdk::{contracterror, Bytes, BytesN, Env, String, Vec};
+use soroban_sdk::{contracterror, Bytes, BytesN, Env, Map, String, Vec};
 
 use crate::types::{
     Claim, ClaimEvidenceEntry, MultiplierTable, Policy, RiskInput, DETAILS_MAX_LEN,
-    IMAGE_URL_MAX_LEN, MAX_EVIDENCE_URL_BYTES, REASON_MAX_LEN, SAFETY_SCORE_MAX,
+    MAX_EVIDENCE_URL_BYTES, REASON_MAX_LEN, SAFETY_SCORE_MAX,
 };
 #[cfg(feature = "experimental")]
 use crate::types::{OracleSource, OracleTrigger, TriggerEventType, TriggerStatus};
@@ -21,6 +21,9 @@ pub enum Error {
     DetailsTooLong = 8,
     TooManyImageUrls = 9,
     ImageUrlTooLong = 10,
+    /// NOTE: This variant is retained for ABI stability (error code 10) but is no
+    /// longer emitted by any code path. Use [`Error::EvidenceUrlTooLong`] instead,
+    /// which enforces the larger [`MAX_EVIDENCE_URL_BYTES`] limit.
     ReasonTooLong = 11,
     ClaimAlreadyTerminal = 12,
     DuplicateVote = 13,
@@ -115,7 +118,7 @@ pub enum Error {
     ProtocolFeeOutOfBounds = 71,
     /// Minimum solvency ratio basis points outside documented bounds.
     SolvencyRatioOutOfBounds = 72,
-    /// External premium calculator returned an incompatible config version.
+    /// External premium calculator ABI version does not match the expected pin.
     CalculatorVersionMismatch = 73,
     /// Commit-reveal voting phases are not configured for this claim.
     CommitRevealNotSet = 74,
@@ -129,8 +132,28 @@ pub enum Error {
     CommitmentNotFound = 78,
     /// Revealed vote does not match the prior commitment hash.
     CommitmentMismatch = 79,
-    /// Evidence URL exceeds `MAX_EVIDENCE_URL_BYTES` (issue: evidence URL length cap).
-    EvidenceUrlTooLong = 80,
+    /// Evidence array contains a duplicate (url, hash) pair.
+    DuplicateEvidence = 80,
+    /// Claimant attempted to vote on their own pending claim.
+    SelfVoteNotAllowed = 84,
+    /// Requested page_size exceeds the hard cap for this query.
+    PageSizeTooLarge = 81,
+    /// Escalation deadline must be strictly after the current ledger.
+    EscalationDeadlineNotFuture = 82,
+    /// Escalation deadline must be earlier than the current voting deadline.
+    EscalationDeadlineNotEarlier = 83,
+    /// Claim ID counter would overflow u64::MAX.
+    ClaimIdOverflow = 85,
+    /// Evidence URL byte length exceeds the per-URL limit defined by
+    /// [`MAX_EVIDENCE_URL_BYTES`]. The offending entry index is not included
+    /// in the error code (Soroban `contracterror` limitations); callers should
+    /// validate URL lengths client-side before submission.
+    EvidenceUrlTooLong = 86,
+    /// Claimant's token allowance to the contract is insufficient to cover the
+    /// configured claim filing fee.
+    InsufficientAllowanceForFee = 87,
+    /// Claim has already reached the configured maximum number of unique voters.
+    VoterCapReached = 88,
 }
 
 pub fn check_claim_evidence_update(
@@ -146,8 +169,8 @@ pub fn check_claim_evidence_update(
         return Err(Error::InsufficientEvidence);
     }
     for entry in evidence.iter() {
-        if entry.url.len() > IMAGE_URL_MAX_LEN {
-            return Err(Error::ImageUrlTooLong);
+        if entry.url.len() > MAX_EVIDENCE_URL_BYTES {
+            return Err(Error::EvidenceUrlTooLong);
         }
         validate_evidence_url(env, &entry.url)?;
     }
@@ -242,8 +265,6 @@ pub fn check_claim_fields(
         return Err(Error::InsufficientEvidence);
     }
     for entry in evidence.iter() {
-        // Each URL in the array is checked individually — not just the first —
-        // since `evidence` is attacker-controlled input filed by the claimant.
         if entry.url.len() > MAX_EVIDENCE_URL_BYTES {
             return Err(Error::EvidenceUrlTooLong);
         }
@@ -254,7 +275,15 @@ pub fn check_claim_fields(
         // Validate evidence URL format
         validate_evidence_url(env, &entry.url)?;
     }
-    let _ = env;
+    // Reject duplicate (url, hash) pairs within the same submission in O(n) time.
+    let mut seen: Map<(String, BytesN<32>), bool> = Map::new(env);
+    for entry in evidence.iter() {
+        let key = (entry.url.clone(), entry.hash.clone());
+        if seen.contains_key(key.clone()) {
+            return Err(Error::DuplicateEvidence);
+        }
+        seen.set(key, true);
+    }
     Ok(())
 }
 
@@ -327,6 +356,12 @@ pub enum OracleError {
     ReplayedNonce,
     /// Quorum threshold not met (not enough valid signatures).
     QuorumNotMet,
+    /// No trigger record found for the given trigger_id.
+    ///
+    /// This is the canonical "no data" response when querying a trigger that
+    /// has not been submitted or has been pruned. Callers must treat this as a
+    /// definitive "not found" — not as a transient network error.
+    TriggerNotFound,
 }
 
 // ── Oracle trigger validators (experimental only) ────────────────────────────
@@ -455,6 +490,13 @@ pub enum OracleError {
     QuorumNotMet,
     InvalidSignature,
     SourceNotRegistered,
+    /// No trigger record found for the given trigger_id.
+    ///
+    /// Canonical "no data" response when the oracle stub has no data available
+    /// for a requested query. Callers must treat this as a definitive
+    /// "not found" — not as a transient error. This is the safe-failure mode
+    /// when no oracle data has been submitted or the oracle is disabled.
+    TriggerNotFound,
 }
 
 /// Stub: Panics in default builds to prevent oracle trigger validation.
@@ -630,5 +672,120 @@ mod evidence_url_validation_tests {
                 Error::InvalidEvidenceUrl
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod evidence_url_byte_limit_tests {
+    extern crate alloc;
+
+    use super::*;
+    use alloc::string::String as AllocString;
+    use soroban_sdk::{BytesN, Env, String, Vec};
+
+    fn make_valid_hash(env: &Env) -> BytesN<32> {
+        BytesN::from_array(env, &[0xabu8; 32])
+    }
+
+    fn make_details(env: &Env) -> String {
+        String::from_str(env, "test claim details")
+    }
+
+    fn make_url_of_len(env: &Env, len: u32) -> String {
+        let prefix = "ipfs://";
+        let body_len = len.saturating_sub(prefix.len() as u32);
+        if body_len == 0 {
+            return String::from_str(env, prefix);
+        }
+        let mut pad = AllocString::with_capacity(body_len as usize);
+        for _ in 0..body_len {
+            pad.push('a');
+        }
+        let url = AllocString::from(prefix) + &pad;
+        String::from_str(env, &url)
+    }
+
+    #[test]
+    fn url_within_limit_is_accepted() {
+        let env = Env::default();
+        let contract_id = env.register(crate::NiffyInsure, ());
+        let url = make_url_of_len(&env, 200);
+        assert!(url.len() <= MAX_EVIDENCE_URL_BYTES);
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url,
+            hash: make_valid_hash(&env),
+        });
+        env.as_contract(&contract_id, || {
+            assert!(check_claim_fields(&env, 100, 1000, &make_details(&env), &evidence).is_ok());
+        });
+    }
+
+    #[test]
+    fn url_exactly_at_limit_is_accepted() {
+        let env = Env::default();
+        let contract_id = env.register(crate::NiffyInsure, ());
+        let url = make_url_of_len(&env, MAX_EVIDENCE_URL_BYTES);
+        assert_eq!(url.len(), MAX_EVIDENCE_URL_BYTES);
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url,
+            hash: make_valid_hash(&env),
+        });
+        env.as_contract(&contract_id, || {
+            assert!(check_claim_fields(&env, 100, 1000, &make_details(&env), &evidence).is_ok());
+        });
+    }
+
+    #[test]
+    fn url_over_limit_is_rejected_with_evidence_url_too_long() {
+        let env = Env::default();
+        let contract_id = env.register(crate::NiffyInsure, ());
+        let url = make_url_of_len(&env, MAX_EVIDENCE_URL_BYTES + 1);
+        assert!(url.len() > MAX_EVIDENCE_URL_BYTES);
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url,
+            hash: make_valid_hash(&env),
+        });
+        let err = env.as_contract(&contract_id, || {
+            check_claim_fields(&env, 100, 1000, &make_details(&env), &evidence).unwrap_err()
+        });
+        assert_eq!(err, Error::EvidenceUrlTooLong);
+    }
+
+    #[test]
+    fn second_url_over_limit_is_identified() {
+        let env = Env::default();
+        let contract_id = env.register(crate::NiffyInsure, ());
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url: make_url_of_len(&env, 100),
+            hash: make_valid_hash(&env),
+        });
+        evidence.push_back(ClaimEvidenceEntry {
+            url: make_url_of_len(&env, MAX_EVIDENCE_URL_BYTES + 1),
+            hash: make_valid_hash(&env),
+        });
+        let err = env.as_contract(&contract_id, || {
+            check_claim_fields(&env, 100, 1000, &make_details(&env), &evidence).unwrap_err()
+        });
+        assert_eq!(err, Error::EvidenceUrlTooLong);
+    }
+
+    #[test]
+    fn large_url_rejected_via_evidence_update_path() {
+        let env = Env::default();
+        let contract_id = env.register(crate::NiffyInsure, ());
+        let url = make_url_of_len(&env, MAX_EVIDENCE_URL_BYTES + 1);
+        let mut evidence: Vec<ClaimEvidenceEntry> = Vec::new(&env);
+        evidence.push_back(ClaimEvidenceEntry {
+            url,
+            hash: make_valid_hash(&env),
+        });
+        let err = env.as_contract(&contract_id, || {
+            check_claim_evidence_update(&env, &evidence).unwrap_err()
+        });
+        assert_eq!(err, Error::EvidenceUrlTooLong);
     }
 }

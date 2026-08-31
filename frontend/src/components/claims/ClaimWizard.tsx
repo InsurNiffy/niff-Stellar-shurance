@@ -279,6 +279,7 @@ export function ClaimWizard({ policyId, maxCoverage, policyCoverage }: ClaimWiza
             data={formData}
             policyId={policyId}
             policyCoverage={policyCoverage}
+            deductible={policyCoverage?.deductible ?? '0'}
             onEdit={(step) => setActiveStep(step)}
           />
         </StepContent>

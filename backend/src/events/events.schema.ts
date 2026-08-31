@@ -241,6 +241,81 @@ export interface GracePeriodUpdatedAdminEvent {
   new_ledgers: number;
 }
 
+// ── Additional events (events.rs) ─────────────────────────────────────────────
+
+/** claim_status_changed — emitted on every claim status transition.
+ *  topics: (NS_CLAIM, "claim_status_changed", claim_id: u64) */
+export interface ClaimStatusChangedEvent {
+  version: number;
+  old_status: string;
+  new_status: string;
+  at_ledger: number;
+}
+
+/** payout_asset_override_applied — emitted when a PolicyTypeConfig override is used.
+ *  topics: (NS_POLICY, "payout_asset_override_applied", claim_id: u64) */
+export interface PayoutAssetOverrideAppliedEvent {
+  version: number;
+  policy_type: 'Auto' | 'Health' | 'Property';
+  premium_asset: string;
+  payout_asset: string;
+}
+
+/** asset_premium_table_set — emitted when an asset-specific multiplier table is set or cleared.
+ *  topics: (NS_POLICY, "asset_premium_table_set", asset: Address) */
+export interface AssetPremiumTableSetEvent {
+  version: number;
+  table_version: number;
+  /** 1 = table removed, 0 = table stored. */
+  cleared: number;
+}
+
+/** installment_disbursed — emitted by disburse_installment on each partial payout.
+ *  topics: (NS_POLICY, "installment_disbursed", claim_id: u64) */
+export interface InstallmentDisbursedEvent {
+  version: number;
+  recipient: string;
+  amount: string;
+  paid_amount: string;
+  total_amount: string;
+  installment_count: number;
+  asset: string;
+  at_ledger: number;
+}
+
+/** claim_fully_paid — emitted when paid_amount >= net_amount (claim fully settled).
+ *  topics: (NS_POLICY, "claim_fully_paid", claim_id: u64) */
+export interface ClaimFullyPaidEvent {
+  version: number;
+  recipient: string;
+  total_paid: string;
+  installment_count: number;
+  at_ledger: number;
+}
+
+/** policy_transferred — emitted when ownership transfers to a new holder.
+ *  topics: (NS_POLICY, "policy_transferred", policy_id: u32, old_holder: Address, new_holder: Address) */
+export interface PolicyTransferredEvent {
+  version: number;
+  at_ledger: number;
+}
+
+/** claim_evidence_updated — emitted when claimant replaces evidence before voting.
+ *  topics: (NS_POLICY, "claim_evidence_updated", claim_id: u64) */
+export interface ClaimEvidenceUpdatedEvent {
+  policy_id: number;
+  evidence_hashes: string[];
+  at_ledger: number;
+}
+
+/** payout_recipient_warning — emitted when payout goes to a contract address.
+ *  topics: (NS_POLICY, "payout_recipient_warning", claim_id: u64) */
+export interface PayoutRecipientWarningEvent {
+  recipient: string;
+  asset: string;
+  at_ledger: number;
+}
+
 // ── Parser table ──────────────────────────────────────────────────────────────
 
 /**
@@ -252,6 +327,7 @@ export type EventKey =
   | 'niffyins:vote_cast'
   | 'niffyins:clm_final'
   | 'niffyins:clm_paid'
+  | 'niffyins:claim_status_changed'
   | 'niffyinsure:claim_withdrawn'
   | 'niffyinsure:PolicyInitiated'
   | 'niffyinsure:PolicyRenewed'
@@ -260,6 +336,13 @@ export type EventKey =
   | 'niffyinsure:BeneficiaryUpdated'
   | 'niffyinsure:quorum_updated'
   | 'niffyinsure:GracePeriodUpdated'
+  | 'niffyinsure:payout_asset_override_applied'
+  | 'niffyinsure:asset_premium_table_set'
+  | 'niffyinsure:installment_disbursed'
+  | 'niffyinsure:claim_fully_paid'
+  | 'niffyinsure:policy_transferred'
+  | 'niffyinsure:claim_evidence_updated'
+  | 'niffyinsure:payout_recipient_warning'
   | 'niffyins:tbl_upd'
   | 'niffyins:asset_set'
   | 'niffyins:adm_prop'
@@ -301,6 +384,9 @@ export const EVENT_PARSERS: Record<
   'niffyins:clm_paid': {
     1: (r) => r as ClaimPaidEvent,
   },
+  'niffyins:claim_status_changed': {
+    1: (r) => r as ClaimStatusChangedEvent,
+  },
   'niffyinsure:claim_withdrawn': {
     1: (r) => r as ClaimWithdrawnEvent,
   },
@@ -324,6 +410,27 @@ export const EVENT_PARSERS: Record<
   },
   'niffyinsure:GracePeriodUpdated': {
     1: (r) => r as GracePeriodUpdatedAdminEvent,
+  },
+  'niffyinsure:payout_asset_override_applied': {
+    1: (r) => r as PayoutAssetOverrideAppliedEvent,
+  },
+  'niffyinsure:asset_premium_table_set': {
+    1: (r) => r as AssetPremiumTableSetEvent,
+  },
+  'niffyinsure:installment_disbursed': {
+    1: (r) => r as InstallmentDisbursedEvent,
+  },
+  'niffyinsure:claim_fully_paid': {
+    1: (r) => r as ClaimFullyPaidEvent,
+  },
+  'niffyinsure:policy_transferred': {
+    1: (r) => r as PolicyTransferredEvent,
+  },
+  'niffyinsure:claim_evidence_updated': {
+    1: (r) => r as ClaimEvidenceUpdatedEvent,
+  },
+  'niffyinsure:payout_recipient_warning': {
+    1: (r) => r as PayoutRecipientWarningEvent,
   },
   'niffyins:tbl_upd': {
     1: (r) => r as PremiumTableUpdatedEvent,

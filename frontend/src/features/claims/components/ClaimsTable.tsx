@@ -8,13 +8,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { SkeletonRow } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Pagination } from '@/components/ui/pagination';
 import type { ClaimBoard } from '@/lib/schemas/claims-board';
 import type { ClaimSortField, ClaimSortDir } from '../api';
-
-const SKELETON_ROWS = 5;
+import { ClaimsListSkeleton } from './ClaimsSkeleton';
 
 const STATUS_CONFIG: Record<string, { label: string; shape: string; className: string }> = {
   Processing: { label: 'Processing', shape: '◐', className: 'bg-yellow-100 text-yellow-900' },
@@ -115,13 +113,13 @@ export function ClaimsTable({
           </TableHeader>
           <TableBody>
             {showSkeleton
-              ? Array.from({ length: SKELETON_ROWS }, (_, i) => (
-                  <TableRow key={i}>
+              ? (
+                  <TableRow>
                     <TableCell colSpan={COLUMNS.length} className="p-0">
-                      <SkeletonRow />
+                      <ClaimsListSkeleton />
                     </TableCell>
                   </TableRow>
-                ))
+                )
               : claims.map((claim) => {
                   const cfg = STATUS_CONFIG[claim.status] ?? {
                     label: claim.status,

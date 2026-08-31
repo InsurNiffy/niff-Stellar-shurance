@@ -319,3 +319,195 @@ fn window_rollover_resets_cumulative() {
     approve_and_pay(&env, &client, &v1, &v2, c2);
     assert_eq!(client.get_claim(&c2).status, ClaimStatus::Paid);
 }
+
+/// Issue #1152: rolling cap RESETS across a policy renewal boundary.
+///
+/// A claim paid just before renewal fills the cap; after renewal (same ledger
+/// bucket) a same-sized claim must succeed because cumulative_paid was cleared.
+#[test]
+fn rolling_cap_resets_across_policy_renewal() {
+    let (env, client, _admin, token) = setup();
+    let holder = Address::generate(&env);
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    fund_and_bind(&env, &client, &token, &holder);
+    seed_two_voters(&client, &v1, &v2);
+
+    let policy = client.initiate_policy(
+        &holder,
+        &PolicyType::Auto,
+        &RegionTier::Medium,
+        &AgeBand::Adult,
+        &CoverageType::Standard,
+        &80,
+        &500_000i128,
+        &token,
+        &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
+    );
+
+    let details = String::from_str(&env, "pre-renewal");
+    let urls = vec![&env];
+    let c1 = client
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details, &urls, &None)
+        .unwrap()
+        .unwrap();
+    approve_and_pay(&env, &client, &v1, &v2, c1);
+    assert_eq!(
+        client.get_rolling_claim_remaining(&holder, &policy.policy_id),
+        0
+    );
+
+    // Stay inside the same ledger window bucket, past claim rate limit, then renew.
+    advance_past_claim_rate_limit(&env);
+    assert_eq!(
+        env.ledger().sequence() / WINDOW,
+        LEDGER / WINDOW,
+        "renewal must stay in the same ledger window so the reset is attributable to renewal"
+    );
+    client.test_renew_policy(&holder, &policy.policy_id);
+    assert_eq!(
+        client.get_rolling_claim_remaining(&holder, &policy.policy_id),
+        CAP,
+        "cap headroom must be restored after renewal"
+    );
+
+    let details2 = String::from_str(&env, "post-renewal");
+    let c2 = client
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details2, &urls, &None)
+        .unwrap()
+        .unwrap();
+    approve_and_pay(&env, &client, &v1, &v2, c2);
+    assert_eq!(client.get_claim(&c2).status, ClaimStatus::Paid);
+}
+
+/// Issue #1153: claims at ledger immediately before / exactly at / after the
+/// window boundary must match the documented half-open window definition.
+#[test]
+fn rolling_cap_window_boundary_ledgers() {
+    let (env, client, _admin, token) = setup();
+    let holder = Address::generate(&env);
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    fund_and_bind(&env, &client, &token, &holder);
+    seed_two_voters(&client, &v1, &v2);
+
+    // Boundary = first ledger of bucket 1. Place the pre-boundary filing far enough
+    // back that one rate-limit advance lands exactly on the boundary.
+    let boundary = WINDOW;
+    let before = boundary.saturating_sub(1);
+    // pre_file + RATE_LIMIT_WINDOW_LEDGERS + 1 == boundary
+    let pre_file = boundary
+        .saturating_sub(RATE_LIMIT_WINDOW_LEDGERS)
+        .saturating_sub(1);
+    env.ledger().with_mut(|l| {
+        l.sequence_number = pre_file;
+    });
+
+    let policy = client.initiate_policy(
+        &holder,
+        &PolicyType::Auto,
+        &RegionTier::Medium,
+        &AgeBand::Adult,
+        &CoverageType::Standard,
+        &80,
+        &500_000i128,
+        &token,
+        &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
+    );
+    let urls = vec![&env];
+
+    // 1) File in the ledger window BEFORE the boundary (bucket 0).
+    let details_before = String::from_str(&env, "before-boundary");
+    let c_before = client
+        .try_file_claim(
+            &holder,
+            &policy.policy_id,
+            &60_000i128,
+            &details_before,
+            &urls,
+            &None,
+        )
+        .unwrap()
+        .unwrap();
+    approve_and_pay(&env, &client, &v1, &v2, c_before);
+
+    // Confirm the ledger immediately before the boundary is still bucket 0.
+    env.ledger().with_mut(|l| {
+        l.sequence_number = before;
+    });
+    let _ = client.get_rolling_claim_remaining(&holder, &policy.policy_id);
+    let state_before = client
+        .get_rolling_claim_state(&holder, &policy.policy_id)
+        .unwrap();
+    assert_eq!(
+        state_before.window_start, 0,
+        "ledger immediately before boundary stays in the prior window"
+    );
+    assert_eq!(state_before.cumulative_paid, 60_000);
+
+    // 2) Exactly AT the boundary → next bucket (prior cumulative must not carry).
+    env.ledger().with_mut(|l| {
+        l.sequence_number = pre_file;
+    });
+    advance_past_claim_rate_limit(&env);
+    assert_eq!(
+        env.ledger().sequence(),
+        boundary,
+        "rate-limit advance from pre_file must land on the exact boundary ledger"
+    );
+    let details_at = String::from_str(&env, "at-boundary");
+    let c_at = client
+        .try_file_claim(&holder, &policy.policy_id, &CAP, &details_at, &urls, &None)
+        .unwrap()
+        .unwrap();
+    approve_and_pay(&env, &client, &v1, &v2, c_at);
+    let state_at = client
+        .get_rolling_claim_state(&holder, &policy.policy_id)
+        .unwrap();
+    assert_eq!(
+        state_at.window_start, boundary,
+        "exact boundary ledger must open the new window"
+    );
+    assert_eq!(
+        state_at.cumulative_paid, CAP,
+        "new window must start fresh (prior bucket paid amount excluded)"
+    );
+
+    // 3) Immediately AFTER the boundary → same new bucket; headroom exhausted.
+    advance_past_claim_rate_limit(&env);
+    env.ledger().with_mut(|l| {
+        // Ensure we are strictly after the boundary but still in bucket 1.
+        if l.sequence_number <= boundary {
+            l.sequence_number = boundary.saturating_add(1);
+        }
+    });
+    assert!(env.ledger().sequence() > boundary);
+    assert_eq!(
+        env.ledger().sequence() / WINDOW,
+        boundary / WINDOW,
+        "post-boundary ledger must remain in the new window bucket"
+    );
+    assert_eq!(
+        client.get_rolling_claim_remaining(&holder, &policy.policy_id),
+        0
+    );
+    let details_after = String::from_str(&env, "after-boundary");
+    match client.try_file_claim(
+        &holder,
+        &policy.policy_id,
+        &1i128,
+        &details_after,
+        &urls,
+        &None,
+    ) {
+        Ok(Err(e)) => assert_eq!(e, Error::RollingClaimCapExceeded.into()),
+        Ok(Ok(id)) => panic!("expected cap error after boundary, got claim_id={id}"),
+        Err(e) => {
+            let s = format!("{e:?}");
+            assert!(
+                s.contains("RollingClaimCapExceeded"),
+                "expected RollingClaimCapExceeded, got {s}"
+            );
+        }
+    }
+}
