@@ -55,8 +55,54 @@ jobs:
       - name: Clippy
         run: cargo clippy --target wasm32v1-none --release -- -D warnings
 
-      - name: Test
-        run: cargo test --workspace --features testutils
-
       - name: Build WASM
         run: cargo build --release --target wasm32v1-none --workspace
+
+  contract-tests-matrix:
+    name: Contract tests (${{ matrix.soroban_sdk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        soroban_sdk: [pinned, latest]
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    # A failure on `latest` is a non-blocking warning to investigate; only
+    # `pinned` failures fail the required check for this job.
+    continue-on-error: ${{ matrix.soroban_sdk == 'latest' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          targets: wasm32v1-none
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.soroban_sdk }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-${{ matrix.soroban_sdk }}-
+
+      - name: Bump soroban-sdk to latest stable
+        if: matrix.soroban_sdk == 'latest'
+        run: |
+          # Relax the exact-pin constraint just for this leg of the matrix
+          # so `cargo update` is free to pull the newest published release.
+          sed -i 's/soroban-sdk = { version = "=\([0-9.]*\)"/soroban-sdk = { version = "\1"/' \
+            contracts/niffyinsure/Cargo.toml contracts/premium_calculator/Cargo.toml
+          cargo update -p soroban-sdk
+
+      - name: Test (pinned toolchain)
+        if: matrix.soroban_sdk == 'pinned'
+        run: cargo test --workspace --features testutils
+
+      - name: Test (latest toolchain)
+        if: matrix.soroban_sdk == 'latest'
+        run: cargo test --workspace --features testutils
