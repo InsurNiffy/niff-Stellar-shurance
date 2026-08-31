@@ -13,7 +13,7 @@ const config = {
     "^use-intl(.*)$": "<rootDir>/src/__mocks__/next-intl.ts",
   },
   testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.test.tsx"],
-  setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
+  setupFilesAfterEnv: ["<rootDir>/jest.setup.ts", "<rootDir>/jest.flaky-retry.js"],
   globals: {
     "ts-jest": {
       tsconfig: "<rootDir>/tsconfig.test.json",

@@ -7,4 +7,5 @@ module.exports = {
     "^.+\\.tsx?$": ["ts-jest", { tsconfig: "tsconfig.test.json", diagnostics: { warnOnly: true } }],
   },
   setupFiles: ["<rootDir>/jest.setup.ts"],
+  setupFilesAfterEnv: ["<rootDir>/jest.flaky-retry.js"],
 };

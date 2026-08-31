@@ -1,0 +1,77 @@
+name: Flaky Test Report
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  detect-flaky:
+    name: Detect flaky tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [frontend, backend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.workspace }}
+    env:
+      CI: true
+      NEXT_PUBLIC_API_URL: https://api.example.com
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ${{ matrix.workspace }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Runs the suite with jest.retryTimes enabled (see jest.flaky-retry.js)
+      # and captures per-test invocation counts. This step is informational
+      # only — it never fails the build; a real failure on the pinned/final
+      # attempt is still caught by the workspace's own CI job.
+      - name: Run tests with retry tracking
+        continue-on-error: true
+        run: npx jest --json --outputFile=jest-results.json || true
+
+      - name: Report tests that needed a retry
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = "jest-results.json";
+            if (!fs.existsSync(path)) { console.log("No jest results found, skipping."); process.exit(0); }
+            const results = JSON.parse(fs.readFileSync(path, "utf8"));
+            const flaky = [];
+            for (const suite of results.testResults || []) {
+              for (const test of suite.testResults || []) {
+                if ((test.invocations || 1) > 1 && test.status === "passed") {
+                  flaky.push(`${suite.testFilePath}: ${test.fullName}`);
+                }
+              }
+            }
+            if (flaky.length === 0) {
+              console.log("No flaky (retry-then-pass) tests detected in this run.");
+            } else {
+              console.log("::warning::Flaky tests detected (passed only after retry) — consider quarantining per docs/flaky-test-quarantine.md");
+              for (const name of flaky) {
+                console.log(`::warning::Flaky test: ${name}`);
+              }
+            }
+          '
+
+      - name: Upload flaky test report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa9 # v4.6.2
+        with:
+          name: flaky-tests-report-${{ matrix.workspace }}
+          path: ${{ matrix.workspace }}/jest-results.json
+          retention-days: 14
