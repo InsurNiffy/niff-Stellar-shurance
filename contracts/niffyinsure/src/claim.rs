@@ -822,6 +822,18 @@ pub fn process_payout_timeout(env: &Env, claim_id: u64) -> Result<ClaimStatus, E
 /// This invariant is enforced structurally: `on_reject` does not call
 /// `payout`, and there is no entrypoint that transitions a `Rejected` claim
 /// to `Approved`.
+///
+/// CHECKS-EFFECTS-INTERACTIONS: the claim's status is flipped to `Paid` and
+/// persisted to storage BEFORE the token transfer (`payout`, the
+/// "interaction") is invoked. Soroban does not support Ethereum-style
+/// reentrancy into the same contract instance during a single host
+/// invocation, but a cross-contract call into the token contract can still
+/// panic or trap partway through (insufficient balance, a malicious/faulty
+/// token implementation, etc). Ordering effects before interactions means
+/// that if the transfer traps, the *entire* top-level invocation — including
+/// the `Paid` write already made — is atomically rolled back by the host, so
+/// the claim is left in `Approved`, never in a state where it is marked
+/// `Paid` without a completed transfer (or payable twice).
 pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
@@ -841,7 +853,19 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
         return Err(Error::DisputeWindowActive);
     }
 
+    // ── EFFECTS: persist the terminal status before the external interaction ──
+    let old_status = claim.status.clone();
+    claim.status = ClaimStatus::Paid;
+    push_status_transition(&mut claim.status_history, ClaimStatus::Paid, now);
+    storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
+    storage::remove_claim_rate_limit_prev(env, claim_id);
+    storage::set_claim(env, &claim);
+
+    // ── INTERACTION: token transfer. If this returns Err, the `?` below
+    // aborts the whole invocation and the host rolls back every storage
+    // write made above — the claim reverts to `Approved`, never stuck `Paid`.
     payout(env, &claim)?;
+
     crate::rolling_claim_cap::record_claim_paid(
         env,
         &claim.claimant,
@@ -849,12 +873,6 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
         claim.amount,
         now,
     );
-    let old_status = claim.status.clone();
-    claim.status = ClaimStatus::Paid;
-    push_status_transition(&mut claim.status_history, ClaimStatus::Paid, now);
-    storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
-    storage::remove_claim_rate_limit_prev(env, claim_id);
-    storage::set_claim(env, &claim);
     events::emit_claim_status_changed(env, claim_id, old_status, ClaimStatus::Paid);
     Ok(())
 }
