@@ -2353,6 +2353,13 @@ impl NiffyInsure {
         storage::remove_voter(&env, &holder);
     }
 
+    /// Test-only: seed a (possibly corrupt) voting-power override for `voter`
+    /// on `claim_id`, so tests can exercise `Error::CorruptSnapshotEntry`
+    /// without needing a naturally-occurring zero/negative snapshot entry.
+    pub fn test_seed_claim_voter_power(env: Env, claim_id: u64, voter: Address, power: i128) {
+        storage::set_claim_voter_power_override(&env, claim_id, &voter, power);
+    }
+
     /// Test-only: extend a seeded policy's end_ledger to simulate a renewal
     /// without going through token transfer. Mirrors what `renew_policy` does
     /// after premium collection (extend end, keep start) and resets the rolling cap.

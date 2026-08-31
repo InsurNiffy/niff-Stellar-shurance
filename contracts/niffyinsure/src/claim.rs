@@ -609,13 +609,18 @@ pub fn vote_on_claim(
 
     // Compute vote weight: proportional to active policy count when governance token
     // is enabled (capped by max_weight_cap), or 1 when disabled.
-    let vote_weight: u32 = if crate::governance_token::governance_token_effective_enabled(env) {
+    let default_weight: u32 = if crate::governance_token::governance_token_effective_enabled(env) {
         let balance = storage::get_holder_active_policy_count(env, voter) as i128;
         let cap = storage::get_max_weight_cap(env);
         balance.min(cap).max(1) as u32
     } else {
         1
     };
+    // Validity check on the snapshot entry: a zero or negative voting power
+    // (only reachable via a corrupted/seeded entry — see
+    // `storage::voting_power_for`) must not be silently treated as valid
+    // weight, since that would skew quorum math. Revert instead.
+    let vote_weight: u32 = storage::voting_power_for(env, claim_id, voter, default_weight)?;
 
     match vote {
         VoteOption::Approve => {
