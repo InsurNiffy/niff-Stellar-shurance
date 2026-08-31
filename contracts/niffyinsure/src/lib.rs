@@ -1263,15 +1263,21 @@ impl NiffyInsure {
     ) -> Vec<types::PolicySummary> {
         let cap = limit.min(types::PAGE_SIZE_MAX);
         let total = storage::get_policy_counter(&env, &holder);
+        let now = env.ledger().sequence();
         let mut results: Vec<types::PolicySummary> = Vec::new(&env);
         let mut id: u32 = start_after.saturating_add(1);
         while id <= total && results.len() < cap {
             if let Some(p) = storage::get_policy(&env, &holder, id) {
+                // Ledger-based truth (see `ledger::is_policy_active_by_ledger`):
+                // the stored flag can lag an expired window until a keeper call
+                // catches up, so callers reading "is this active right now"
+                // should not trust the raw flag alone.
+                let active = ledger::is_policy_active_by_ledger(&p, now);
                 results.push_back(types::PolicySummary {
                     policy_id: p.policy_id,
                     policy_type: p.policy_type,
                     coverage: p.coverage,
-                    is_active: p.is_active,
+                    is_active: active,
                     end_ledger: p.end_ledger,
                 });
             }
@@ -1308,7 +1314,10 @@ impl NiffyInsure {
         let mut id: u32 = 1;
         while id <= total && results.len() < page_size {
             if let Some(p) = storage::get_policy(&env, &holder, id) {
-                if !p.is_active || now > p.end_ledger {
+                // Ledger-truth check (see `ledger::is_policy_active_by_ledger`)
+                // instead of trusting the stored flag alone, which can lag an
+                // already-expired window until a keeper call flips it.
+                if !ledger::is_policy_active_by_ledger(&p, now) {
                     if skipped < skip {
                         skipped = skipped.saturating_add(1);
                     } else {
@@ -1958,11 +1967,13 @@ impl NiffyInsure {
 
     /// Admin: set the minimum coverage amount floor. Policies below this are rejected.
     pub fn admin_set_min_coverage_amount(env: Env, amount: i128) -> Result<(), validate::Error> {
-        let _admin = admin::require_admin(&env);
+        let admin = admin::require_admin(&env);
         if amount < 0 {
             return Err(validate::Error::ZeroCoverage);
         }
+        let old_amount = storage::get_min_coverage_amount(&env);
         storage::set_min_coverage_amount(&env, amount);
+        events::emit_min_coverage_amount_updated(&env, &admin, old_amount, amount);
         Ok(())
     }
 
@@ -1986,6 +1997,32 @@ impl NiffyInsure {
     /// Read the current max voters per claim cap.
     pub fn get_max_voters_per_claim(env: Env) -> u32 {
         storage::get_max_voters_per_claim(&env)
+    }
+
+    // ── Batch voter registration (governance setup / migration) ──────────────
+
+    /// Admin: register many voters in a single call. Reduces per-address
+    /// transaction overhead for initial protocol setup and large governance
+    /// migrations compared to relying on one-by-one registration via
+    /// `initiate_policy`.
+    ///
+    /// The `storage::MAX_ELIGIBLE_VOTERS` cap is checked against the entire
+    /// batch atomically: if adding every new (non-duplicate) address in
+    /// `addresses` would push the registry past the cap, the whole call
+    /// reverts and no address is written. Duplicate addresses — whether
+    /// already registered or repeated within `addresses` — are silently
+    /// skipped rather than causing an error, so a batch can be safely
+    /// retried or overlapped with another without corrupting the registry.
+    ///
+    /// Emits one `VoterAdded` event per address actually added.
+    pub fn add_voters_batch(env: Env, addresses: Vec<Address>) -> Result<(), validate::Error> {
+        let admin = admin::require_admin(&env);
+        let added = storage::add_voters_batch(&env, &addresses)
+            .map_err(|_| validate::Error::VoterRegistryCapExceeded)?;
+        for voter in added.iter() {
+            events::emit_voter_added(&env, &voter, &admin);
+        }
+        Ok(())
     }
 
     // ── Issue #782: Token decimal normalization ───────────────────────────────
@@ -2351,6 +2388,25 @@ impl NiffyInsure {
 
     pub fn test_remove_voter(env: Env, holder: Address) {
         storage::remove_voter(&env, &holder);
+    }
+
+    /// Test-only: force a seeded policy's `is_active` flag and `start_ledger`
+    /// directly (bypassing normal transitions) so tests can construct
+    /// flag/ledger-window disagreement scenarios for
+    /// `ledger::is_policy_active_by_ledger`.
+    pub fn test_set_policy_flag_and_window(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+        is_active: bool,
+        start_ledger: u32,
+        end_ledger: u32,
+    ) {
+        let mut policy = storage::get_policy(&env, &holder, policy_id).expect("policy not found");
+        policy.is_active = is_active;
+        policy.start_ledger = start_ledger;
+        policy.end_ledger = end_ledger;
+        storage::set_policy(&env, &holder, policy_id, &policy);
     }
 
     /// Test-only: extend a seeded policy's end_ledger to simulate a renewal
