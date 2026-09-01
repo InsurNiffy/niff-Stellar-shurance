@@ -692,6 +692,58 @@ pub fn get_voters(env: &Env) -> Vec<Address> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+/// Hard cap on the size of the voter registry. Enforced atomically across an
+/// entire `add_voters_batch` call so a batch that would exceed the cap reverts
+/// in full, leaving no partial writes.
+pub const MAX_ELIGIBLE_VOTERS: u32 = 5_000;
+
+/// Batch-register `addresses` as voters, skipping addresses already present
+/// (in storage or earlier in the same batch) so duplicates cannot corrupt the
+/// registry or double-count. The `MAX_ELIGIBLE_VOTERS` cap is checked against
+/// the final, de-duplicated size of the registry *before* any write happens,
+/// so a batch that would exceed the cap reverts atomically with zero partial
+/// writes.
+///
+/// Returns the list of addresses actually added (in call order), which the
+/// caller uses to emit one `VoterAdded` event per address.
+pub fn add_voters_batch(env: &Env, addresses: &Vec<Address>) -> Result<Vec<Address>, ()> {
+    let mut voters = get_voters(env);
+    let mut to_add: Vec<Address> = Vec::new(env);
+
+    for addr in addresses.iter() {
+        let mut already_present = false;
+        for v in voters.iter() {
+            if v == addr {
+                already_present = true;
+                break;
+            }
+        }
+        if !already_present {
+            for v in to_add.iter() {
+                if v == addr {
+                    already_present = true;
+                    break;
+                }
+            }
+        }
+        if !already_present {
+            to_add.push_back(addr.clone());
+        }
+    }
+
+    let projected_len = voters.len().saturating_add(to_add.len());
+    if projected_len > MAX_ELIGIBLE_VOTERS {
+        return Err(());
+    }
+
+    for addr in to_add.iter() {
+        voters.push_back(addr.clone());
+    }
+    set_voters(env, &voters);
+
+    Ok(to_add)
+}
+
 // ── Governance proposals ─────────────────────────────────────────────────────
 
 pub fn next_proposal_id(env: &Env) -> u64 {

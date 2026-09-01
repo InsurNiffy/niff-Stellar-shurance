@@ -5,7 +5,11 @@
 
 mod common;
 
-use niffyinsure::{types::ClaimStatus, NiffyInsureClient};
+use niffyinsure::{
+    types::{ClaimStatus, VoteOption},
+    validate::Error,
+    NiffyInsureClient,
+};
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     Address, Env, String,
@@ -152,3 +156,160 @@ fn finalize_appeal_succeeds_for_arbitrary_caller_after_deadline() {
     );
     assert_eq!(client.get_claim(&cid).status, ClaimStatus::AppealRejected);
 }
+
+/// Issue #1314: appeal-round duplicate-vote tracking is scoped per
+/// `(claim_id, voter)` (`DataKey::AppealVote`) and therefore independent of the
+/// base-claim vote tracking (`DataKey::Vote`). A second `vote_on_appeal` from
+/// the same voter in the same round must be rejected as `DuplicateVote`, while
+/// a voter who already voted in the base round is still allowed to cast an
+/// appeal-round vote.
+#[test]
+fn appeal_votes_are_immutable_and_scoped_per_round() {
+    let (_env, client, v1, v2, _v3, cid) = rejected_and_appealed();
+
+    // v1 casts the first appeal-round vote (claimants may vote in appeals).
+    let status = client.vote_on_appeal(&v1, &cid, &VoteOption::Approve);
+    assert_eq!(
+        status,
+        ClaimStatus::UnderAppeal,
+        "a single vote must not resolve the appeal (3-voter round needs all 3 at 75% quorum)"
+    );
+
+    // A second vote in the same round — even the opposite option — is rejected.
+    let err = client
+        .try_vote_on_appeal(&v1, &cid, &VoteOption::Reject)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::DuplicateVote);
+
+    // v2 already voted Reject in the BASE round — that must not block an
+    // appeal-round vote (per-round tracking keys are distinct).
+    let status = client.vote_on_appeal(&v2, &cid, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::UnderAppeal);
+
+    // Base-round and appeal-round tallies stay independent.
+    let claim = client.get_claim(&cid);
+    assert_eq!(claim.approve_votes, 0, "base approve tally untouched");
+    assert_eq!(claim.reject_votes, 2, "base reject votes (v1 + v2) preserved");
+    assert_eq!(claim.appeal_approve_votes, 2);
+    assert_eq!(claim.appeal_reject_votes, 0);
+}
+
+/// Issue #1315: `vote_on_appeal` rejects votes cast after the appeal has
+/// already resolved (quorum reached mid-vote, per the `vote_on_appeal` doc
+/// comment). In a four-voter round with the default 75% appeal quorum the
+/// third vote hits quorum and resolves the appeal immediately, so the fourth
+/// voter's late ballot is refused with `ClaimAlreadyTerminal`.
+#[test]
+fn late_vote_after_appeal_resolved_mid_vote_is_rejected() {
+    let (_env, client, _admin, _token) = setup();
+    let v1 = Address::generate(&_env);
+    let v2 = Address::generate(&_env);
+    let v3 = Address::generate(&_env);
+    let v4 = Address::generate(&_env);
+    seed(&client, &v1, 1_000_000, 500_000);
+    seed(&client, &v2, 1_000_000, 500_000);
+    seed(&client, &v3, 1_000_000, 500_000);
+    seed(&client, &v4, 1_000_000, 500_000);
+
+    // Base round: 2 of 4 reject (default 50% quorum ⇒ quorum met) → Rejected.
+    let cid = file(&client, &v1, 100_000, &_env);
+    client.vote_on_claim(&v1, &cid, &VoteOption::Reject);
+    client.vote_on_claim(&v2, &cid, &VoteOption::Reject);
+    assert_eq!(client.get_claim(&cid).status, ClaimStatus::Rejected);
+
+    client.open_appeal(&v1, &cid);
+    assert_eq!(client.get_claim(&cid).status, ClaimStatus::UnderAppeal);
+
+    // Four-voter appeal round at 75% quorum needs 3 of 4 to resolve.
+    let status = client.vote_on_appeal(&v1, &cid, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::UnderAppeal);
+    let status = client.vote_on_appeal(&v2, &cid, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::UnderAppeal);
+
+    // The third vote reaches quorum and resolves the appeal immediately —
+    // while the round is still in progress.
+    let status = client.vote_on_appeal(&v3, &cid, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::AppealApproved);
+    assert_eq!(client.get_claim(&cid).status, ClaimStatus::AppealApproved);
+
+    // v4 was in the appeal snapshot but is now too late — the round is over.
+    let err = client
+        .try_vote_on_appeal(&v4, &cid, &VoteOption::Approve)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::ClaimAlreadyTerminal);
+}
+
+/// Issue #1316: the appeal-round quorum snapshot (`AppealClaimQuorumBps`) is
+/// scoped per `claim_id`. Two claims whose appeals open under different
+/// admin-configured elevated-quorum settings keep isolated snapshots, and a
+/// later admin change must not retroactively alter an earlier claim's snapshot.
+#[test]
+fn appeal_quorum_snapshot_is_scoped_per_claim() {
+    let (env, client, _admin, _token) = setup();
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    let v3 = Address::generate(&env);
+    let v4 = Address::generate(&env);
+    seed(&client, &v1, 1_000_000, 500_000);
+    seed(&client, &v2, 1_000_000, 500_000);
+    seed(&client, &v3, 1_000_000, 500_000);
+    seed(&client, &v4, 1_000_000, 500_000);
+
+    // Claim A (filed by v1): appeal opens under the default elevated quorum.
+    let cid_a = file(&client, &v1, 100_000, &env);
+    client.vote_on_claim(&v1, &cid_a, &VoteOption::Reject);
+    client.vote_on_claim(&v2, &cid_a, &VoteOption::Reject);
+    assert_eq!(client.get_claim(&cid_a).status, ClaimStatus::Rejected);
+    client.open_appeal(&v1, &cid_a);
+
+    // Admin raises the elevated quorum before claim B's appeal opens.
+    client.admin_set_elevated_quorum_bps(&10_000u32);
+
+    // Claim B (filed by v4): appeal opens under the raised elevated quorum.
+    let cid_b = file(&client, &v4, 100_000, &env);
+    client.vote_on_claim(&v1, &cid_b, &VoteOption::Reject);
+    client.vote_on_claim(&v2, &cid_b, &VoteOption::Reject);
+    assert_eq!(client.get_claim(&cid_b).status, ClaimStatus::Rejected);
+    client.open_appeal(&v4, &cid_b);
+
+    // Snapshots are per-claim and immutable once frozen.
+    let quorum_a = env.as_contract(&client.address, || {
+        niffyinsure::storage::get_appeal_claim_quorum_bps(&env, cid_a)
+    });
+    let quorum_b = env.as_contract(&client.address, || {
+        niffyinsure::storage::get_appeal_claim_quorum_bps(&env, cid_b)
+    });
+    assert_eq!(quorum_a, 7_500, "claim A froze the default 75% elevated quorum");
+    assert_eq!(quorum_b, 10_000, "claim B froze the raised 100% elevated quorum");
+
+    // Behavioral proof of isolation: claim A resolves once 3 of 4 vote
+    // (3 >= ceil(4 * 75%)), while claim B — also at 3 of 4 — stays open
+    // (3 < ceil(4 * 100%)), so the snapshots genuinely apply per claim.
+    let status = client.vote_on_appeal(&v1, &cid_a, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::UnderAppeal, "1/4 votes: below A's 75% quorum");
+    let status = client.vote_on_appeal(&v2, &cid_a, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::UnderAppeal, "2/4 votes: below A's 75% quorum");
+    let status = client.vote_on_appeal(&v3, &cid_a, &VoteOption::Approve);
+    assert_eq!(
+        status,
+        ClaimStatus::AppealApproved,
+        "3/4 votes meets A's frozen 75% quorum"
+    );
+
+    let status = client.vote_on_appeal(&v1, &cid_b, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::UnderAppeal);
+    let status = client.vote_on_appeal(&v2, &cid_b, &VoteOption::Approve);
+    assert_eq!(status, ClaimStatus::UnderAppeal);
+    let status = client.vote_on_appeal(&v3, &cid_b, &VoteOption::Approve);
+    assert_eq!(
+        status,
+        ClaimStatus::UnderAppeal,
+        "3/4 votes must NOT meet B's frozen 100% quorum — snapshots are per claim"
+    );
+    assert_eq!(client.get_claim(&cid_b).status, ClaimStatus::UnderAppeal);
+}
+

@@ -57,7 +57,6 @@ fn fund(env: &Env, client: &NiffyInsureClient<'_>, token: &Address, holder: &Add
 fn initiate_policy_rejects_zero_holder() {
     let (env, client, _, token) = setup();
     let zero = zero_address(&env);
-    fund(&env, &client, &token, &zero);
 
     let err = client
         .try_initiate_policy(
@@ -170,4 +169,35 @@ fn initiate_policy_accepts_non_zero_holder() {
         &InitiatePolicyOptions::test_defaults(&env),
     );
     assert_eq!(policy.holder, holder);
+}
+
+#[test]
+fn file_claim_rejects_details_over_max_length() {
+    let (env, client, _, token) = setup();
+    let holder = Address::generate(&env);
+    fund(&env, &client, &token, &holder);
+
+    let policy = client.initiate_policy(
+        &holder,
+        &PolicyType::Auto,
+        &RegionTier::Low,
+        &AgeBand::Adult,
+        &CoverageTier::Standard,
+        &10u32,
+        &1_000_000i128,
+        &token,
+        &InitiatePolicyOptions::test_defaults(&env),
+    );
+
+    let long_details = format!("{}", "x".repeat(257));
+    let details = String::from_str(&env, &long_details);
+    let ev = common::empty_evidence(&env);
+
+    let err = client
+        .try_file_claim(&holder, &policy.policy_id, &100_000i128, &details, &ev, &None)
+        .err()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(err, niffyinsure::validate::Error::DetailsTooLong.into());
 }

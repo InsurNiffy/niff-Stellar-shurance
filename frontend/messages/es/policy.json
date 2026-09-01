@@ -18,9 +18,9 @@
     "active": "Activa",
     "expired": "Vencida",
     "pending": "Pendiente",
-    "renewalWindow": "La renovación abre {days} días antes del vencimiento",
-    "gracePeriod": "Período de gracia: renueva hasta {days} día(s) después del vencimiento sin interrupción de cobertura",
-    "gracePeriodCountdown": "El período de gracia termina en {ledgers} ledgers (~{minutes} min)",
+    "renewalWindow": "{days, plural, one {La renovación abre # día antes del vencimiento} other {La renovación abre # días antes del vencimiento}}",
+    "gracePeriod": "{days, plural, one {Período de gracia: renueva hasta # día después del vencimiento sin interrupción de cobertura} other {Período de gracia: renueva hasta # días después del vencimiento sin interrupción de cobertura}}",
+    "gracePeriodCountdown": "{ledgers, plural, one {El período de gracia termina en # ledger} other {El período de gracia termina en # ledgers}} (~{minutes} min)",
     "renewalLedgerNote": "La cuenta regresiva usa números de secuencia de ledger (1 ledger ≈ 5 s). El último ledger válido de renovación es vencimiento + gracia − 1."
   },
   "coverageTier": {

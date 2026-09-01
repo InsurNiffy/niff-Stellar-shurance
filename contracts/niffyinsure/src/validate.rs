@@ -154,12 +154,10 @@ pub enum Error {
     InsufficientAllowanceForFee = 87,
     /// Claim has already reached the configured maximum number of unique voters.
     VoterCapReached = 88,
-    /// A voter snapshot/weight entry read during vote validation had zero or
-    /// negative voting power. This indicates corrupted snapshot data (should be
-    /// unreachable in normal operation) and the vote attempt is reverted rather
-    /// than silently treated as zero weight, which would otherwise skew quorum
-    /// math. See `storage::voting_power_for` and `tests/corrupt_snapshot_entry.rs`.
-    CorruptSnapshotEntry = 89,
+    /// `add_voters_batch` would push the global voter registry past
+    /// `storage::MAX_ELIGIBLE_VOTERS`. The entire batch reverts atomically;
+    /// no partial writes are made.
+    VoterRegistryCapExceeded = 89,
 }
 
 pub fn check_claim_evidence_update(

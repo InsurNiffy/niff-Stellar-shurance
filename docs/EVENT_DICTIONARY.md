@@ -347,11 +347,14 @@ Emitted when a holder sets or changes their designated payout beneficiary.
 | `adm_prop` | `(NS, "adm_prop", old_admin, new_admin)` | `version` only |
 | `adm_acc` | `(NS, "adm_acc", old_admin, new_admin)` | `version` only |
 | `adm_can` | `(NS, "adm_can", admin, cancelled_pending)` | `version` only |
+| `admin_rotated` | `("niffyinsure", "admin_rotated", old_admin, new_admin)` | `ledger: u32` |
 | `adm_tok` | `(NS, "adm_tok")` | `old_token`, `new_token` |
 | `adm_paus` | `(NS, "adm_paus", admin)` | `paused: 0\|1` |
 | `adm_drn` | `(NS, "adm_drn", admin)` | `recipient`, `amount` (stroops) |
 | `quorum_updated` | `("niffyinsure", "quorum_updated")` | `old_bps: u32`, `new_bps: u32` |
 | `GracePeriodUpdated` | `("niffyinsure", "GracePeriodUpdated", admin)` | `old_ledgers: u32`, `new_ledgers: u32` |
+| `min_coverage_updated` | `("niffyinsure", "min_coverage_updated", admin)` | `old_amount: i128`, `new_amount: i128`, `at_ledger: u32` |
+| `voter_added` | `("niffyinsure", "voter_added", voter)` | `added_by: Address`, `at_ledger: u32` |
 
 ### `quorum_updated` — DAO quorum threshold changed
 
@@ -366,6 +369,32 @@ Emitted when a holder sets or changes their designated payout beneficiary.
 ```
 
 Does not retroactively affect claims already in `Processing`.
+
+---
+
+### `admin_rotated` — admin address changed (chain-of-custody record)
+
+Emitted from `accept_admin`, the point where `storage::set_admin` actually
+changes the stored admin post-initialization. This contract only exposes
+admin rotation via the two-step propose/accept flow today; any future
+single-step rotation entrypoint must also emit this event so it stays a
+complete audit trail regardless of rotation path.
+
+**Topics:** `("niffyinsure", "admin_rotated", old_admin: Address, new_admin: Address)`
+
+```json
+{
+  "old_admin": "G...",
+  "new_admin": "G...",
+  "ledger": 123456
+}
+```
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `old_admin` | string (G...) | Admin address before rotation |
+| `new_admin` | string (G...) | Admin address after rotation |
+| `ledger` | u32 | Ledger sequence at rotation time |
 
 ---
 
@@ -385,6 +414,85 @@ Does not retroactively affect claims already in `Processing`.
 |-------|------|-------------|
 | `old_ledgers` | u32 | Previous grace period in ledgers |
 | `new_ledgers` | u32 | New grace period in ledgers |
+
+---
+
+### `min_coverage_updated` — coverage amount floor changed
+
+Emitted by `admin_set_min_coverage_amount` on **every** call, including
+no-op updates. Enforced at `initiate_policy`: `coverage_amount < min_coverage_amount`
+reverts with `InvalidCoverage`. The floor only applies to policies bound
+*after* the change — already-bound policies are never retroactively affected.
+
+**Topics:** `("niffyinsure", "min_coverage_updated", admin: Address)`
+
+```json
+{
+  "version": 1,
+  "old_amount": "1000000",
+  "new_amount": "5000000",
+  "at_ledger": 1234700
+}
+```
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `old_amount` | string (stroops) | Floor value before this change |
+| `new_amount` | string (stroops) | Floor value after this change |
+
+---
+
+### `voter_added` — voter registered via batch admin call
+
+Emitted once per address by `add_voters_batch`. Addresses already present in
+the registry, or repeated within the same batch, are skipped and do **not**
+emit a duplicate event.
+
+**Topics:** `("niffyinsure", "voter_added", voter: Address)`
+
+```json
+{
+  "version": 1,
+  "added_by": "G...",
+  "at_ledger": 1234700
+}
+```
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `added_by` | string (G…) | Admin account that authorized the batch |
+
+---
+
+## Claim / policy events audited but previously undocumented
+
+The following events existed in `events.rs` prior to this audit but had no
+entry here. Topic layout is unchanged; this section only fills the
+documentation gap (issue: stable topic layout audit).
+
+| Event | Topics | Key payload fields |
+|-------|--------|--------------------|
+| `payout_asset_override_applied` | `("niffyinsure", "payout_asset_override_applied", claim_id: u64)` | `policy_type`, `premium_asset`, `payout_asset` |
+| `asset_premium_table_set` | `("niffyinsure", "asset_premium_table_set", asset: Address)` | `table_version: u32`, `cleared: 0\|1` |
+| `installment_disbursed` | `("niffyinsure", "installment_disbursed", claim_id: u64)` | `recipient`, `amount`, `paid_amount`, `total_amount`, `installment_count`, `asset`, `at_ledger` |
+| `claim_fully_paid` | `("niffyinsure", "claim_fully_paid", claim_id: u64)` | `recipient`, `total_paid`, `installment_count`, `at_ledger` |
+| `policy_transferred` | `("niffyinsure", "policy_transferred", policy_id: u32, old_holder: Address, new_holder: Address)` | `at_ledger: u32` |
+| `claim_evidence_updated` | `("niffyinsure", "claim_evidence_updated", claim_id: u64)` | `policy_id`, `evidence_hashes`, `at_ledger` |
+| `payout_recipient_warning` | `("niffyinsure", "payout_recipient_warning", claim_id: u64)` | `recipient`, `asset`, `at_ledger` |
+
+**Normalization applied:** `claim_evidence_updated` and `payout_recipient_warning`
+did not carry a `version` field, unlike every other catalog event. Both now
+include `version: u32` (currently `1`) so indexers can apply the same
+schema-version dispatch logic uniformly across all events. This is an
+additive field — existing parsers keyed on `(topic[0], topic[1])` are
+unaffected.
+
+**Topic ordering rule confirmed by this audit:** every event's topics follow
+`[namespace, event_name, entity_id(s)..., actor(s)...]` — i.e. the thing the
+event is *about* (claim_id, policy_id, asset) comes before *who acted*
+(admin, voter, holder), when both are present. No event deviated from this
+ordering; the only deviation found was the missing `version` field noted
+above, now fixed.
 
 ---
 

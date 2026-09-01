@@ -1,23 +1,28 @@
 /**
  * ReconciliationService — scheduled job that verifies vote tally columns
- * match the COUNT of individual vote rows.
+ * match the COUNT of individual vote rows, and that appeal bookkeeping
+ * (appealsCount / appealTxHash) matches the indexed on-chain status.
  *
- * Discrepancies indicate a partial-failure bug in the indexer and must be
+ * Discrepancies indicate a partial-failure bug in the indexer or an
+ * optimistic appeal write that never confirmed on-chain, and must be
  * resolved before finalization display is shown as authoritative.
  *
  * Safe to run concurrently with live ingestion: uses READ COMMITTED isolation
  * and only updates claims where a real discrepancy exists.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { MetricsService } from '../metrics/metrics.service';
 
 export interface ReconciliationResult {
   checkedAt: Date;
   totalChecked: number;
   discrepancies: number;
   discrepantClaimIds: number[];
+  /** Number of appeal-field corrections applied in the last run. */
+  appealCorrections: number;
   ok: boolean;
 }
 
@@ -26,7 +31,10 @@ export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
   private lastResult: ReconciliationResult | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly metrics?: MetricsService,
+  ) {}
 
   getLastResult(): ReconciliationResult | null {
     return this.lastResult;
@@ -63,13 +71,21 @@ export class ReconciliationService {
   async runReconciliation(): Promise<ReconciliationResult> {
     this.logger.log('Starting vote tally reconciliation...');
 
-    // Fetch all non-finalized claims with their stored tallies.
+    // Fetch all non-finalized claims with their stored tallies and appeal fields.
     const claims = await this.prisma.claim.findMany({
       where: { isFinalized: false },
-      select: { id: true, approveVotes: true, rejectVotes: true },
+      select: {
+        id: true,
+        approveVotes: true,
+        rejectVotes: true,
+        status: true,
+        appealsCount: true,
+        appealTxHash: true,
+      },
     });
 
     const discrepantIds: number[] = [];
+    let appealCorrections = 0;
 
     for (const claim of claims) {
       const [countApprove, countReject] = await Promise.all([
@@ -91,6 +107,43 @@ export class ReconciliationService {
           data: { approveVotes: countApprove, rejectVotes: countReject },
         });
       }
+
+      // ── Appeal field drift (issue #1319) ────────────────────────────────────
+      // appealsCount/appealTxHash are written optimistically in
+      // ClaimsService.submitAppealTransaction before on-chain confirmation. The
+      // indexer mirrors on-chain truth into `status`: only a claim the contract
+      // actually placed in UnderAppeal has an open appeal, and the contract
+      // enforces MAX_APPEALS_PER_CLAIM = 1 (so at most one appeal ever opens).
+      // Resolved appeals are finalized (isFinalized = true) and therefore
+      // excluded from this pass. A non-finalized claim not in UNDER_APPEAL thus
+      // cannot have an opened appeal — a residual appealsCount/appealTxHash is
+      // drift from an optimistic write that never confirmed on-chain.
+      const expectedAppealsCount = claim.status === 'UNDER_APPEAL' ? 1 : 0;
+
+      if (claim.appealsCount !== expectedAppealsCount) {
+        discrepantIds.push(claim.id);
+        appealCorrections += 1;
+        this.logger.warn(
+          `Appeal field discrepancy on claim ${claim.id}: ` +
+            `stored appealsCount=${claim.appealsCount} status=${claim.status} ` +
+            `expected appealsCount=${expectedAppealsCount}. Correcting...`,
+        );
+
+        // Self-heal: reset the optimistic appeal bookkeeping to the indexed
+        // on-chain state. A residual txHash with no open appeal means the
+        // optimistic submission never confirmed — clear it as well.
+        await this.prisma.claim.update({
+          where: { id: claim.id },
+          data: {
+            appealsCount: expectedAppealsCount,
+            ...(expectedAppealsCount === 0 && claim.appealTxHash != null
+              ? { appealTxHash: null }
+              : {}),
+          },
+        });
+
+        this.metrics?.recordAppealReconciliationCorrection(claim.id);
+      }
     }
 
     const result: ReconciliationResult = {
@@ -98,6 +151,7 @@ export class ReconciliationService {
       totalChecked: claims.length,
       discrepancies: discrepantIds.length,
       discrepantClaimIds: discrepantIds,
+      appealCorrections,
       ok: discrepantIds.length === 0,
     };
 
@@ -106,7 +160,7 @@ export class ReconciliationService {
     if (discrepantIds.length > 0) {
       this.logger.error(
         `Reconciliation found ${discrepantIds.length} discrepant claim(s): [${discrepantIds.join(', ')}]. ` +
-          `Tallies have been corrected. Investigate indexer for partial-failure bugs.`,
+          `Stored tallies/appeal fields have been corrected. Investigate indexer for partial-failure bugs.`,
       );
     } else {
       this.logger.log(`Reconciliation OK — ${claims.length} claims checked, no discrepancies.`);

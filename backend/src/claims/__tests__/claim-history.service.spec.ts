@@ -54,6 +54,10 @@ const mockClaim = {
   createdAtLedger: 100,
   createdAt: new Date('2026-01-01T00:00:00Z'),
   status: 'PAID',
+  appealsCount: 0,
+  appealTxHash: null,
+  updatedAt: new Date('2026-01-01T00:00:00Z'),
+  updatedAtLedger: 100,
 };
 
 function makePrisma(events = FIXED_EVENTS) {
@@ -389,5 +393,108 @@ describe('ClaimHistoryService.getTimeline', () => {
 
     const svc = new ClaimHistoryService(prisma, makeTenant());
     await expect(svc.getTimeline(999)).rejects.toThrow(NotFoundException);
+  });
+
+  it('includes appeal open and resolve transitions from indexed events (#1324)', async () => {
+    const appealEvents = [
+      {
+        id: 1,
+        txHash: 'tx1',
+        eventIndex: 0,
+        contractId: 'C1',
+        ledger: 100,
+        ledgerClosedAt: new Date('2026-01-01T00:00:00Z'),
+        topic1: 'claim_filed',
+        topic2: null,
+        topic3: null,
+        topic4: null,
+        data: {},
+        createdAt: new Date(),
+      },
+      {
+        id: 2,
+        txHash: 'tx2',
+        eventIndex: 0,
+        contractId: 'C1',
+        ledger: 200,
+        ledgerClosedAt: new Date('2026-01-02T00:00:00Z'),
+        topic1: 'claim_rejected',
+        topic2: null,
+        topic3: null,
+        topic4: null,
+        data: {},
+        createdAt: new Date(),
+      },
+      {
+        id: 3,
+        txHash: 'tx-appeal',
+        eventIndex: 0,
+        contractId: 'C1',
+        ledger: 300,
+        ledgerClosedAt: new Date('2026-01-03T00:00:00Z'),
+        topic1: 'niffyinsure',
+        topic2: 'appeal_opened',
+        topic3: '42',
+        topic4: null,
+        data: { claimant: 'GCLAIMANT', policy_id: 1, at_ledger: 300 },
+        createdAt: new Date(),
+      },
+      {
+        id: 4,
+        txHash: 'tx-appeal-done',
+        eventIndex: 0,
+        contractId: 'C1',
+        ledger: 400,
+        ledgerClosedAt: new Date('2026-01-04T00:00:00Z'),
+        topic1: 'niffyinsure',
+        topic2: 'appeal_resolved',
+        topic3: '42',
+        topic4: null,
+        data: {
+          claimant: 'GCLAIMANT',
+          outcome: 'AppealApproved',
+          approve_votes: 5,
+          reject_votes: 1,
+          at_ledger: 400,
+        },
+        createdAt: new Date(),
+      },
+    ];
+
+    const prisma = {
+      claim: {
+        findFirst: jest.fn().mockResolvedValue({
+          ...mockClaim,
+          status: 'APPROVED',
+          appealsCount: 1,
+          appealTxHash: 'tx-appeal',
+          updatedAt: new Date('2026-01-04T00:00:00Z'),
+          updatedAtLedger: 400,
+        }),
+      },
+      rawEvent: { findMany: jest.fn().mockResolvedValue(appealEvents) },
+    } as unknown as PrismaService;
+
+    const svc = new ClaimHistoryService(prisma, makeTenant());
+    const result = await svc.getTimeline(42);
+
+    expect(result.map((e) => e.status)).toEqual([
+      'pending',
+      'rejected',
+      'under_appeal',
+      'appeal_approved',
+    ]);
+    expect(result[2]).toMatchObject({
+      status: 'under_appeal',
+      ledger: 300,
+      actor: 'GCLAIMANT',
+      reason: 'Appeal opened',
+    });
+    expect(result[3]).toMatchObject({
+      status: 'appeal_approved',
+      ledger: 400,
+      actor: 'GCLAIMANT',
+      reason: 'Appeal approved',
+    });
   });
 });
