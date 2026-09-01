@@ -10,6 +10,7 @@ import { WasmDriftJob } from './wasm-drift.job';
 import { PrivacyService } from './privacy.service';
 import { DataRetentionService } from './data-retention.service';
 import { SolvencyMonitoringService } from './solvency-monitoring.service';
+import { AppealSlaMonitorService } from './appeal-sla-monitor.service';
 import { IpfsPinCheckJob } from './ipfs-pin-check.job';
 import { VacuumService } from './vacuum.service';
 import { VacuumJob } from './vacuum.job';

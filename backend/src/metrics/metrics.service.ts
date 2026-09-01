@@ -128,6 +128,14 @@ export class MetricsService implements OnModuleInit {
    */
   readonly appealsInFlightGauge: client.Gauge<string>;
 
+  /**
+   * Number of UNDER_APPEAL claims past appeal_deadline_ledger + grace (#1348).
+   */
+  readonly appealsSlaStuckGauge: client.Gauge<string>;
+
+  /** Appeal SLA monitor job failures. */
+  readonly appealsSlaCheckErrorsTotal: client.Counter<string>;
+
   constructor(cardinalityGuard: MetricsCardinalityGuard) {
     this.cardinalityGuard = cardinalityGuard;
     this.registry = new client.Registry();
@@ -396,6 +404,18 @@ export class MetricsService implements OnModuleInit {
       help: 'Number of appeals currently open (not yet resolved)',
       registers: [this.registry],
     });
+
+    this.appealsSlaStuckGauge = new client.Gauge({
+      name: 'appeals_sla_stuck',
+      help: 'UNDER_APPEAL claims past on-chain appeal deadline + grace (stuck finalize_appeal)',
+      registers: [this.registry],
+    });
+
+    this.appealsSlaCheckErrorsTotal = new client.Counter({
+      name: 'appeals_sla_check_errors_total',
+      help: 'Appeal SLA monitor job failures',
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -596,6 +616,15 @@ export class MetricsService implements OnModuleInit {
   recordAppealRejected() {
     this.appealsRejectedTotal.inc();
     this.appealsInFlightGauge.dec();
+  }
+
+  /** Set after each Appeal SLA monitor pass (#1348). */
+  recordAppealSlaStuckCount(count: number) {
+    this.appealsSlaStuckGauge.set(count);
+  }
+
+  recordAppealSlaCheckError() {
+    this.appealsSlaCheckErrorsTotal.inc();
   }
 
   async getMetrics(): Promise<string> {

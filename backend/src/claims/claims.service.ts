@@ -530,13 +530,21 @@ export class ClaimsService {
     // Persist appeal tracking fields and set claim status to UNDER_APPEAL.
     // The indexer will later decode the appeal_approved / appeal_rejected event
     // and move the claim to APPROVED or REJECTED.
-    await this.prisma.claim.update({
+    const updated = await this.prisma.claim.update({
       where: { id: claimId },
       data: {
         status: 'UNDER_APPEAL',
         appealsCount: { increment: 1 },
         appealTxHash: txHash,
       },
+      select: { id: true, status: true, updatedAt: true },
+    });
+
+    // Push live status to GET /claims/status/stream subscribers (#1326).
+    ClaimsService.publishStatusChange({
+      claimId: String(updated.id),
+      status: updated.status.toLowerCase(),
+      updatedAt: updated.updatedAt.toISOString(),
     });
 
     // Increment appeal metrics (task #1328)
