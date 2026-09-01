@@ -24,6 +24,7 @@ import {
   clampLimit,
 } from '../helpers/pagination';
 import { ClaimViewMapper } from './claim-view.mapper';
+import { AppealSimulationCacheService } from './services/appeal-simulation-cache.service';
 
 /** In-app notification type for appeal-round voter fan-out (#1321). */
 const APPEAL_ROUND_NOTIFICATION_TYPE = 'appeal_round_open';
@@ -53,8 +54,7 @@ export class ClaimsService {
     private readonly aggregation: ClaimAggregationService,
     private readonly claimSummaryCache: ClaimSummaryCacheService,
     private readonly metrics: MetricsService,
-    private readonly audit: AuditService,
-    private readonly notifications: NotificationsService,
+    private readonly appealSimulationCache: AppealSimulationCacheService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
@@ -470,7 +470,59 @@ export class ClaimsService {
   // ── Appeal submission ─────────────────────────────────────────────────────
 
   /**
+   * Simulate file_appeal for a rejected claim (wallet pre-flight).
+   *
+   * Short-TTL Redis cache keyed by (claimId, walletAddress) avoids redundant
+   * RPC on retries (#1327). Successful responses never include unsignedXdr —
+   * callers that need signing material must hit buildAppealTransaction, which
+   * always runs a fresh simulation.
+   */
+  async simulateAppealTransaction(args: {
+    claimId: number;
+    walletAddress: string;
+    reason?: string;
+  }) {
+    const tenantId = this.tenantCtx.tenantId;
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: args.claimId }),
+      select: { id: true },
+    });
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${args.claimId} not found`);
+    }
+
+    const cached = await this.appealSimulationCache.get(args.claimId, args.walletAddress);
+    if (cached) {
+      this.logger.debug(
+        `Appeal simulate cache hit claim=${args.claimId} wallet=${args.walletAddress}`,
+      );
+      return { ...cached, cached: true as const };
+    }
+
+    const built = await this.soroban.buildAppealTransaction({
+      claimant: args.walletAddress,
+      claimId: args.claimId,
+      reason: args.reason?.trim() || 'Appeal simulation',
+    });
+
+    const payload = {
+      ok: true as const,
+      claimId: args.claimId,
+      walletAddress: args.walletAddress,
+      minResourceFee: built.minResourceFee,
+      baseFee: built.baseFee,
+      totalEstimatedFee: built.totalEstimatedFee,
+      totalEstimatedFeeXlm: built.totalEstimatedFeeXlm,
+      currentLedger: built.currentLedger,
+    };
+
+    await this.appealSimulationCache.set(args.claimId, args.walletAddress, payload);
+    return { ...payload, cached: false as const };
+  }
+
+  /**
    * Build an unsigned file_appeal transaction for a rejected claim.
+   * Always fresh RPC — never reads the appeal simulate cache (#1327).
    */
   async buildAppealTransaction(args: {
     claimant: string;
@@ -544,33 +596,14 @@ export class ClaimsService {
         appealsCount: { increment: 1 },
         appealTxHash: txHash,
       },
-      select: { appealsCount: true, creatorAddress: true },
+      select: { id: true, status: true, updatedAt: true },
     });
 
-    // Offline mirror of on-chain snapshot_appeal_voters (live registry at open time).
-    const registeredVoters = await this.prisma.registeredVoter.findMany({
-      select: { walletAddress: true },
-    });
-    if (registeredVoters.length > 0) {
-      await this.prisma.appealVoterSnapshot.createMany({
-        data: registeredVoters.map((v) => ({
-          claimId,
-          walletAddress: v.walletAddress,
-          appealsCount: updated.appealsCount,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    // #1321 — notify eligible appeal voters that a new voting round is open
-    await this.notifyAppealVoters(claimId, registeredVoters.map((v) => v.walletAddress));
-
-    // #1323 — admin audit trail for support/compliance
-    await this.writeAppealAudit({
-      actor: claim.creatorAddress,
-      claimId,
-      txHash,
-      appealsCount: updated.appealsCount,
+    // Push live status to GET /claims/status/stream subscribers (#1326).
+    ClaimsService.publishStatusChange({
+      claimId: String(updated.id),
+      status: updated.status.toLowerCase(),
+      updatedAt: updated.updatedAt.toISOString(),
     });
 
     // Increment appeal metrics (task #1328)

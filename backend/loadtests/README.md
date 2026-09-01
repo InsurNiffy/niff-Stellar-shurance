@@ -63,6 +63,12 @@ BASE_URL=https://staging.niffyinsur.com \
 TEST_JWT=<token> \
   k6 run loadtests/claim-submit.js
 
+# Appeal burst (build/simulate + submit path)
+BASE_URL=https://staging.niffyinsur.com/api \
+TEST_JWT=<token> \
+APPEAL_CLAIM_IDS=101,102,103 \
+  k6 run loadtests/appeal-flow.js
+
 # Full smoke test (quick sanity check)
 BASE_URL=https://staging.niffyinsur.com \
   k6 run --vus 2 --duration 30s loadtests/smoke.js
@@ -76,6 +82,11 @@ BASE_URL=https://staging.niffyinsur.com \
 | `http_req_duration{p(99)}` | < 2000 ms | Engineering ticket |
 | `http_req_failed` | < 1% | Immediate investigation |
 | `checks` pass rate | > 99% | Engineering ticket |
+| appeal-build p(95) | < 3000 ms | Engineering ticket (RPC / simulate path) |
+| appeal-submit p(95) | < 4000 ms | Engineering ticket |
+| appeal `http_req_failed` | < 2% | Immediate investigation |
+
+Appeal baselines: `backend/docs/perf/appeal-baseline-2026-08-29.md`.
 
 Thresholds are enforced in each script's `thresholds` block. k6 exits with
 code 99 when a threshold is breached, which fails the CI job.

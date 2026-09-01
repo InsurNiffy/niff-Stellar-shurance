@@ -209,6 +209,8 @@ enum ClaimStatus {
   PAID
   REJECTED
   UNDER_APPEAL
+  APPEAL_APPROVED
+  APPEAL_REJECTED
 }
 
 enum ClaimSeverity {

@@ -32,6 +32,9 @@ import {
   simulateAppeal,
   submitAppeal,
   getAppealErrorMessage,
+  simulateAppealVote,
+  submitAppealVote,
+  getAppealVoteErrorMessage,
   simulateWithdrawal,
   submitWithdrawal,
   getWithdrawalErrorMessage,
@@ -43,12 +46,24 @@ import {
   isTerminal,
   isVoteOpen,
 } from '@/lib/schemas/vote'
-import { trackVoteCast } from '@/lib/analytics'
+import {
+  trackVoteCast,
+  trackAppealButtonClicked,
+  trackAppealConfirmOpened,
+  trackAppealSimulated,
+  trackAppealSigning,
+  trackAppealSubmitted,
+  trackAppealSuccess,
+  trackAppealFailure,
+} from '@/lib/analytics'
+import { fetchClaimTimeline, type ClaimTimelineEntry } from '@/lib/api/claim-detail'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { patchNotificationPreferences } from '@/lib/api/notifications'
 
 import { AppealButton } from './AppealButton'
 import { AppealConfirmModal } from './AppealConfirmModal'
+import { AppealCountdownBadge } from './AppealCountdownBadge'
+import type { AppealIneligibilityReason } from './AppealButton'
 import { EvidenceVerifyButton } from './EvidenceVerifyButton'
 import { VoteConfirmModal } from './vote-confirm-modal'
 import { VoteEducationPanel } from './vote-education-panel'
@@ -87,7 +102,6 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   // the `claims_appeal_enabled` flag so it can be released per environment.
   const { enabled: appealFeatureEnabled } = useFeatureFlag(APPEAL_FEATURE_FLAG)
   const [appealState, setAppealState] = useState<AppealState>('idle')
-  const [appealSubmitted, setAppealSubmitted] = useState(false)
   const [appealTxHash, setAppealTxHash] = useState<string | null>(null)
   const [appealError, setAppealError] = useState<string | null>(null)
   // #1337: track whether the appeal-status check is in flight
@@ -104,6 +118,15 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   const [withdrawalState, setWithdrawalState] = useState<WithdrawalState>('idle')
   const [withdrawalTxHash, setWithdrawalTxHash] = useState<string | null>(null)
   const [withdrawalError, setWithdrawalError] = useState<string | null>(null)
+
+  // Appeal-round vote state
+  const [pendingAppealVote, setPendingAppealVote] = useState<VoteOption | null>(null)
+  const [appealVoteState, setAppealVoteState] = useState<SubmitState>('idle')
+  const [appealVoteTxHash, setAppealVoteTxHash] = useState<string | null>(null)
+  const [appealVoteSimError, setAppealVoteSimError] = useState<string | null>(null)
+
+  // #1335 — Appeal outcome timeline state
+  const [timeline, setTimeline] = useState<ClaimTimelineEntry[] | null>(null)
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -152,7 +175,6 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
     setLoadingAppealStatus(true)
     checkAppealStatus(claimId)
       .then((submitted) => {
-        setAppealSubmitted(submitted)
         // #1336: if already appealed, surface the specific reason
         if (submitted) {
           setAppealIneligibilityReason('APPEAL_ALREADY_SUBMITTED')
@@ -161,10 +183,21 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
       .catch(() => {
         // On error we default to not-submitted so the user can try to appeal;
         // the backend will reject with a clear error if the appeal already exists.
-        setAppealSubmitted(false)
       })
       .finally(() => setLoadingAppealStatus(false))
   }, [appealFeatureEnabled, claim, claimId])
+
+  // ── #1335: Fetch appeal timeline once appeal is settled ─────────────────────
+  useEffect(() => {
+    if (!claim) return
+    const appealSettled =
+      !!claim.appeal_submitted &&
+      claim.status !== 'UnderAppeal'
+    if (!appealSettled) return
+    fetchClaimTimeline(claimId)
+      .then(setTimeline)
+      .catch(() => setTimeline(null))
+  }, [claimId, claim])
 
   // ── Vote flow ───────────────────────────────────────────────────────────────
   const handleVoteClick = useCallback(
@@ -307,7 +340,6 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
       const result = await submitAppeal(claimId, walletAddress, signedXdr)
 
       setAppealTxHash(result.transactionHash)
-      setAppealSubmitted(true)
       setAppealState('done')
 
       // #1338: confirmed on-chain
@@ -356,7 +388,6 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
           code === 'APPEAL_WINDOW_CLOSED'
         ) {
           setAppealIneligibilityReason(code)
-          setAppealSubmitted(code === 'APPEAL_ALREADY_SUBMITTED')
         }
       }
 
@@ -364,7 +395,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
       toast({ title: 'Appeal failed', description: msg, variant: 'destructive' })
       setAppealState('idle')
     }
-  }, [claimId, walletAddress, signTransaction, toast, loadClaim, jwt])
+  }, [claimId, walletAddress, signTransaction, toast, loadClaim, jwt, appealState])
 
   const handleAppealCancel = useCallback(() => {
     setAppealState('idle')
@@ -420,6 +451,73 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
 
   const handleWithdrawalCancel = useCallback(() => {
     setWithdrawalState('idle')
+  }, [])
+
+  // ── Appeal-round vote flow ───────────────────────────────────────────────────
+  const handleAppealVoteClick = useCallback(
+    async (vote: VoteOption) => {
+      if (!walletAddress) return
+      setAppealVoteSimError(null)
+      setAppealVoteState('simulating')
+
+      const simErr = await simulateAppealVote(claimId, walletAddress, vote)
+      if (simErr) {
+        setAppealVoteSimError(simErr)
+        setAppealVoteState('idle')
+        return
+      }
+
+      setPendingAppealVote(vote)
+      setAppealVoteState('confirming')
+    },
+    [claimId, walletAddress],
+  )
+
+  const handleAppealVoteConfirm = useCallback(async () => {
+    if (!pendingAppealVote || !walletAddress) return
+    setAppealVoteState('signing')
+
+    try {
+      const signedXdr = await signTransaction(`appeal-vote:${claimId}:${pendingAppealVote}`)
+
+      setAppealVoteState('submitting')
+      const result = await submitAppealVote(claimId, walletAddress, pendingAppealVote, signedXdr)
+
+      setAppealVoteTxHash(result.transactionHash)
+      setClaim((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: result.status as typeof prev.status,
+              approve_votes: result.approve_votes,
+              reject_votes: result.reject_votes,
+            }
+          : prev,
+      )
+      setAppealVoteState('done')
+      trackVoteCast(pendingAppealVote === 'Approve' ? 'approve' : 'reject')
+
+      toast({
+        title: 'Appeal vote submitted',
+        description: `Your ${pendingAppealVote.toLowerCase()} vote on the appeal was recorded on-chain.`,
+      })
+    } catch (e) {
+      const msg =
+        e instanceof VoteAPIError
+          ? getAppealVoteErrorMessage(e)
+          : e instanceof Error
+            ? e.message
+            : 'Appeal vote submission failed'
+      toast({ title: 'Appeal vote failed', description: msg, variant: 'destructive' })
+      setAppealVoteState('idle')
+    } finally {
+      setPendingAppealVote(null)
+    }
+  }, [claimId, pendingAppealVote, signTransaction, toast, walletAddress])
+
+  const handleAppealVoteCancel = useCallback(() => {
+    setPendingAppealVote(null)
+    setAppealVoteState('idle')
   }, [])
 
   // ── Derived state ───────────────────────────────────────────────────────────
@@ -573,15 +671,22 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
 
       {/* Appeal button for rejected claims — gated by the appeal feature flag (#1355) */}
       {appealFeatureEnabled && claim.status === 'Rejected' && (
-        <AppealButton
-          claim={claim}
-          walletAddress={walletAddress}
-          loadingAppealStatus={loadingAppealStatus}
-          ineligibilityReason={appealIneligibilityReason}
-          submitting={appealState === 'signing' || appealState === 'submitting'}
-          onClick={(e) => handleAppealClick(e)}
-          className="mt-4"
-        />
+        <div className="space-y-2">
+          <AppealButton
+            claim={claim}
+            walletAddress={walletAddress}
+            loadingAppealStatus={loadingAppealStatus}
+            ineligibilityReason={appealIneligibilityReason}
+            submitting={appealState === 'signing' || appealState === 'submitting'}
+            onClick={(e) => handleAppealClick(e)}
+            className="mt-4"
+          />
+          {/* #1333 — live countdown to appeal filing deadline */}
+          <AppealCountdownBadge
+            appealDeadlineLedger={claim.appeal_open_deadline_ledger}
+            currentLedger={currentLedger}
+          />
+        </div>
       )}
 
       {/* #1337: Retry affordance when simulateAppeal fails for a transient (non-ineligibility) reason */}
@@ -664,6 +769,205 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
           </Button>
           {withdrawalError && (
             <p className="text-xs text-amber-900 mt-2">{withdrawalError}</p>
+          )}
+        </div>
+      )}
+
+      {/* #1334 — Appeal-round voting controls (UnderAppeal status) */}
+      {claim.status === 'UnderAppeal' && (
+        <div
+          className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3"
+          data-testid="appeal-vote-panel"
+        >
+          <div>
+            <p className="text-sm font-semibold text-amber-900">Appeal round in progress</p>
+            <p className="text-xs text-amber-800 mt-0.5">
+              This claim is under appeal. Eligible voters can cast a vote on the appeal outcome.
+            </p>
+          </div>
+
+          {/* Appeal-round simulation error */}
+          {appealVoteSimError && (
+            <div
+              role="alert"
+              className="rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-xs text-yellow-900"
+            >
+              <AlertTriangle className="mr-1 inline h-3 w-3" aria-hidden="true" />
+              Pre-flight check failed: {appealVoteSimError}
+            </div>
+          )}
+
+          {/* Appeal-round post-vote tx link */}
+          {appealVoteState === 'done' && appealVoteTxHash && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
+            >
+              <CheckCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>Appeal vote confirmed on-chain.</span>
+              <a
+                href={explorerUrl(appealVoteTxHash)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto flex items-center gap-1 underline underline-offset-2"
+                aria-label="View transaction on Stellar Explorer (opens in new tab)"
+              >
+                View on Explorer
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              </a>
+            </div>
+          )}
+
+          {/* Appeal-round vote buttons */}
+          {walletAddress && eligible && !alreadyVoted && appealVoteState === 'idle' && (
+            <div className="flex gap-3">
+              <Button
+                className="flex-1"
+                variant="default"
+                aria-label="Vote to approve this appeal"
+                onClick={() => handleAppealVoteClick('Approve')}
+              >
+                <CheckCircle className="mr-2 h-4 w-4" aria-hidden="true" />
+                Approve Appeal
+              </Button>
+              <Button
+                className="flex-1"
+                variant="destructive"
+                aria-label="Vote to reject this appeal"
+                onClick={() => handleAppealVoteClick('Reject')}
+              >
+                <XCircle className="mr-2 h-4 w-4" aria-hidden="true" />
+                Reject Appeal
+              </Button>
+            </div>
+          )}
+
+          {/* Appeal-round in-progress state */}
+          {(appealVoteState === 'simulating' || appealVoteState === 'signing' || appealVoteState === 'submitting') && (
+            <p className="text-xs text-amber-800 animate-pulse" aria-busy="true">
+              {appealVoteState === 'simulating' && 'Running pre-flight simulation…'}
+              {appealVoteState === 'signing' && 'Waiting for wallet signature…'}
+              {appealVoteState === 'submitting' && 'Submitting appeal vote…'}
+            </p>
+          )}
+
+          {/* Appeal-round ineligible notice */}
+          {(!walletAddress || !eligible || alreadyVoted) && appealVoteState !== 'done' && (
+            <p className="text-xs text-amber-800" role="note">
+              {!walletAddress
+                ? 'Connect your wallet to vote on this appeal.'
+                : alreadyVoted
+                  ? `You already voted ${eligibility?.priorVote?.toLowerCase()} on this appeal.`
+                  : (ineligibleReason ?? 'Your wallet is not eligible to vote on this appeal.')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* #1335 — Appeal outcome: shown once appeal is submitted and status has moved past UnderAppeal */}
+      {claim.appeal_submitted && claim.status !== 'UnderAppeal' && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <div>
+            <p className="text-base font-semibold">Appeal outcome</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              The resolved outcome of the appeal process, including vote tally and resolution details.
+            </p>
+          </div>
+
+          {/* Final appeal status badge */}
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium text-muted-foreground">Final outcome:</span>
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                claim.status === 'AppealApproved'
+                  ? 'bg-green-100 text-green-800'
+                  : claim.status === 'AppealRejected'
+                    ? 'bg-red-100 text-red-800'
+                    : 'bg-gray-100 text-gray-800'
+              }`}
+            >
+              {claim.status === 'AppealApproved'
+                ? 'Appeal Approved'
+                : claim.status === 'AppealRejected'
+                  ? 'Appeal Rejected'
+                  : claim.status}
+            </span>
+          </div>
+
+          {/* Vote tally from appeal round */}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border bg-muted p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Appeal approve votes</p>
+              <p className="mt-2 text-2xl font-semibold text-green-600 tabular-nums">{claim.approve_votes}</p>
+            </div>
+            <div className="rounded-xl border bg-muted p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Appeal reject votes</p>
+              <p className="mt-2 text-2xl font-semibold text-red-600 tabular-nums">{claim.reject_votes}</p>
+            </div>
+            <div className="rounded-xl border bg-muted p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Total appeal ballots</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">{claim.approve_votes + claim.reject_votes}</p>
+            </div>
+          </div>
+
+          {/* Resolution timeline from GET /claims/:id/timeline */}
+          {timeline && timeline.filter((e) =>
+            ['appeal', 'under_appeal', 'underappeal', 'appeal_approved', 'appeal_rejected'].includes(e.status.toLowerCase())
+          ).length > 0 ? (
+            <div>
+              <p className="text-sm font-semibold mb-3">Appeal timeline</p>
+              <ol className="relative ml-3 border-l-2 border-gray-200" aria-label="Appeal timeline">
+                {timeline
+                  .filter((entry) =>
+                    ['appeal', 'under_appeal', 'underappeal', 'appeal_approved', 'appeal_rejected'].includes(
+                      entry.status.toLowerCase(),
+                    ),
+                  )
+                  .map((entry, index) => {
+                    const lower = entry.status.toLowerCase()
+                    const isResolved = lower.includes('approved') || lower.includes('rejected')
+                    const dotColor = isResolved
+                      ? lower.includes('approved')
+                        ? 'bg-green-500'
+                        : 'bg-red-500'
+                      : 'bg-amber-500'
+                    return (
+                      <li key={`${entry.status}-${entry.ledger}-${index}`} className="relative mb-4 ml-6 last:mb-0">
+                        <span
+                          className={`absolute -left-[31px] flex h-4 w-4 items-center justify-center rounded-full ring-4 ring-background ${dotColor}`}
+                          aria-hidden="true"
+                        />
+                        <div className="rounded-lg border bg-muted p-3">
+                          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                            <span className="text-sm font-medium capitalize">
+                              {entry.status.replace(/_/g, ' ')}
+                            </span>
+                            <time className="text-xs text-muted-foreground" dateTime={entry.timestamp}>
+                              {new Date(entry.timestamp).toLocaleString()}
+                            </time>
+                          </div>
+                          <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                            Ledger #{entry.ledger.toLocaleString()}
+                          </p>
+                          {entry.reason && (
+                            <p className="mt-1 text-xs text-muted-foreground">{entry.reason}</p>
+                          )}
+                          {entry.actor && (
+                            <p className="mt-1 truncate text-xs text-muted-foreground" title={entry.actor}>
+                              Actor: {entry.actor}
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+              </ol>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Appeal resolution details are being indexed and will appear shortly.
+            </p>
           )}
         </div>
       )}
@@ -754,6 +1058,17 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         onConfirm={handleAppealConfirm}
         onCancel={handleAppealCancel}
         triggerRef={appealTriggerRef}
+      />
+
+      {/* Appeal-round vote confirmation modal */}
+      <VoteConfirmModal
+        open={appealVoteState === 'confirming'}
+        vote={pendingAppealVote}
+        claimId={claimId}
+        claim={claim}
+        submitting={appealVoteState === 'signing' || appealVoteState === 'submitting'}
+        onConfirm={handleAppealVoteConfirm}
+        onCancel={handleAppealVoteCancel}
       />
 
       {/* Withdrawal confirmation dialog */}
