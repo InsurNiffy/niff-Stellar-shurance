@@ -509,6 +509,8 @@ Every page must have at minimum: `<main>`, `<nav>` (if navigation present), and 
 
 All text must meet WCAG AA contrast ratios (4.5:1 normal text, 3:1 large text). Claim outcomes (Approved / Rejected / Pending) must not rely on color alone — shape indicators and text labels are required.
 
+Appeal UI (`AppealButton`, `AppealConfirmModal`) conformance against **WCAG 2.1 AA** is recorded in [`docs/appeal-accessibility-conformance.md`](docs/appeal-accessibility-conformance.md) (#1363).
+
 ### Adding new UI
 
 When adding new interactive components:
