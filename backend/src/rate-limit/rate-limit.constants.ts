@@ -7,6 +7,17 @@ export const WALLET_RATE_LIMIT_DEFAULTS = {
 };
 
 /**
+ * Dedicated appeal throttle (#1322). Stricter than claim filing because appeals
+ * are rarer and higher-stakes; counters are isolated under `appeal:` Redis keys.
+ */
+export const APPEAL_RATE_LIMIT_DEFAULTS = {
+  HOUR_LIMIT: 2,
+  DAY_LIMIT: 5,
+  HOUR_WINDOW_SECONDS: 3600,
+  DAY_WINDOW_SECONDS: 86400,
+};
+
+/**
  * Global rate limit circuit breaker: total claims across all wallets per window.
  */
 export const GLOBAL_RATE_LIMIT_DEFAULTS = {

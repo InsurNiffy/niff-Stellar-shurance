@@ -61,6 +61,10 @@ export interface EnvironmentVariables {
   CACHE_TTL_SECONDS: number;
   QUOTE_SIMULATION_CACHE_ENABLED: 'true' | 'false' | '1' | '0';
   QUOTE_SIMULATION_CACHE_TTL_SECONDS: number;
+  APPEAL_SIMULATION_CACHE_ENABLED: 'true' | 'false' | '1' | '0';
+  APPEAL_SIMULATION_CACHE_TTL_SECONDS: number;
+  MAX_APPEALS_PER_WALLET_PER_HOUR: number;
+  MAX_APPEALS_PER_WALLET_PER_DAY: number;
   ALLOWED_ASSETS_REFRESH_INTERVAL_MS: number;
   ALLOWED_ASSETS_REFRESH_JITTER_MS: number;
   CAPTCHA_PROVIDER: CaptchaProvider;
@@ -766,6 +770,41 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '30',
     required: 'required',
     schema: Joi.number().integer().min(1).max(600).default(30),
+  },
+  APPEAL_SIMULATION_CACHE_ENABLED: {
+    key: 'APPEAL_SIMULATION_CACHE_ENABLED',
+    section: 'Caching',
+    description:
+      'Enable short-TTL Redis cache for POST /claims/:id/appeal/simulate (not build-transaction).',
+    example: 'true',
+    required: 'optional',
+    schema: Joi.string().valid('true', 'false', '1', '0').default('true'),
+  },
+  APPEAL_SIMULATION_CACHE_TTL_SECONDS: {
+    key: 'APPEAL_SIMULATION_CACHE_TTL_SECONDS',
+    section: 'Caching',
+    description: 'TTL for cached appeal simulation results in seconds (keyed by claimId + wallet).',
+    example: '30',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).max(600).default(30),
+  },
+  MAX_APPEALS_PER_WALLET_PER_HOUR: {
+    key: 'MAX_APPEALS_PER_WALLET_PER_HOUR',
+    section: 'Rate Limiting',
+    description:
+      'Dedicated appeal throttle: max appeals per wallet per hour (stricter than claim filing).',
+    example: '2',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(2),
+  },
+  MAX_APPEALS_PER_WALLET_PER_DAY: {
+    key: 'MAX_APPEALS_PER_WALLET_PER_DAY',
+    section: 'Rate Limiting',
+    description:
+      'Dedicated appeal throttle: max appeals per wallet per day (isolated from claim counters).',
+    example: '5',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(5),
   },
   ALLOWED_ASSETS_REFRESH_INTERVAL_MS: {
     key: 'ALLOWED_ASSETS_REFRESH_INTERVAL_MS',
