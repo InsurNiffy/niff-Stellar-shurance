@@ -183,6 +183,73 @@ export function getAppealErrorMessage(error: VoteAPIError): string {
   return APPEAL_ERROR_MESSAGES[error.code] ?? error.message
 }
 
+// ── Appeal-round vote API ───────────────────────────────────────────────────
+
+export interface AppealVoteResponse {
+  transactionHash: string;
+  status: string;
+  approve_votes: number;
+  reject_votes: number;
+}
+
+/**
+ * Simulate an appeal-round vote transaction before opening the wallet popup.
+ * Returns null if simulation passes, or an error message string if it fails.
+ */
+export async function simulateAppealVote(
+  claimId: string,
+  walletAddress: string,
+  vote: VoteOption,
+): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/claims/${claimId}/appeal/vote/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletAddress, vote }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Simulation failed' }));
+      return err.message ?? 'Appeal vote simulation failed';
+    }
+    return null;
+  } catch {
+    return null; // non-blocking: proceed to wallet if simulation endpoint unavailable
+  }
+}
+
+/**
+ * Submit a vote in the appeal round for a claim that is UnderAppeal.
+ * Uses the dedicated appeal vote endpoint on the backend.
+ */
+export async function submitAppealVote(
+  claimId: string,
+  walletAddress: string,
+  vote: VoteOption,
+  signedXdr: string,
+): Promise<AppealVoteResponse> {
+  const res = await fetch(`${API_BASE}/api/claims/${claimId}/appeal/vote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ walletAddress, vote, signedXdr }),
+  });
+  const data = await handleResponse<AppealVoteResponse>(res);
+  return data;
+}
+
+export const APPEAL_VOTE_ERROR_MESSAGES: Record<string, string> = {
+  NOT_ELIGIBLE_VOTER: 'Your wallet is not in the eligible voter list for this appeal.',
+  DUPLICATE_VOTE: 'You have already cast an appeal vote on this claim.',
+  VOTING_WINDOW_CLOSED: 'The appeal voting window has closed.',
+  CLAIM_NOT_UNDER_APPEAL: 'This claim is not currently in the appeal round.',
+  CLAIM_NOT_FOUND: 'Claim not found.',
+  CLAIMS_PAUSED: 'Claim operations are currently paused by the contract admin.',
+  REQUEST_FAILED: 'Request failed. Please try again.',
+};
+
+export function getAppealVoteErrorMessage(error: VoteAPIError): string {
+  return APPEAL_VOTE_ERROR_MESSAGES[error.code] ?? error.message;
+}
+
 // ── Claim withdrawal API ────────────────────────────────────────────────────────
 
 export interface WithdrawalResponse {

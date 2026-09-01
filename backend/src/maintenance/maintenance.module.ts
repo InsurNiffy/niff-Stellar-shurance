@@ -17,12 +17,11 @@ import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
 import { VoteReconciliationJob } from './vote-reconciliation.job';
 import { RampReconciliationService } from '../jobs/ramp-reconciliation.service';
 import { RampHealthCheckService } from '../jobs/ramp-health-check.service';
-import { TlsCertificateMonitorService } from './tls-certificate-monitor.service';
-import { CertificateCheckerService } from '../common/tls/certificate-checker.service';
+import { AppealFinalizeKeeperService } from '../jobs/appeal-finalize-keeper.service';
 
 @Module({
   imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule, MetricsModule],
-  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService, TlsCertificateMonitorService, CertificateCheckerService],
-  exports: [PrivacyService, SolvencyMonitoringService, TlsCertificateMonitorService],
+  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService, AppealFinalizeKeeperService],
+  exports: [PrivacyService, SolvencyMonitoringService],
 })
 export class MaintenanceModule {}
