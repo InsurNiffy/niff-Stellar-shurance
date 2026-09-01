@@ -14,6 +14,7 @@
     "check-docs": "node scripts/check-docs-links.js",
     "check-csp": "node scripts/check-csp-allowlist.mjs",
     "check-translations": "node scripts/check-translations.js",
+    "check-plurals": "node scripts/check-plurals.js",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "test-storybook": "test-storybook",
