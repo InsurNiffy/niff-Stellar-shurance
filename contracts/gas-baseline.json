@@ -34,5 +34,9 @@
   "_comment_appeal_footprint": "Appeal storage/ledger footprint vs. a normal vote cycle: open_appeal writes a fresh voter snapshot + quorum snapshot + reset tallies on top of the shared file+reject prefix. CPU instruction cost is used as the proxy for ledger read/write footprint (see tests/gas_appeal_footprint.rs). Placeholder values below pending an actual `cargo test --test gas_appeal_footprint --features testutils -- --nocapture` run to fill in measured numbers.",
   "appeal_footprint.normal_vote_cycle": null,
   "appeal_footprint.appeal_cycle": null,
-  "appeal_footprint.storage_delta": null
+  "appeal_footprint.storage_delta": null,
+  "_comment_appeal_entrypoints": "Individual appeal entrypoint CPU instruction baselines. Run `cargo test --test gas_benchmarks --features testutils -- --nocapture` after adding bench_open_appeal, bench_vote_on_appeal, bench_finalize_appeal tests to contracts/niffyinsure/tests/gas_benchmarks.rs (see Issue #1308). Entrypoint signatures: open_appeal(claimant, claim_id), vote_on_appeal(voter, claim_id, vote), finalize_appeal(claim_id). These values pending real benchmark execution.",
+  "open_appeal": null,
+  "vote_on_appeal": null,
+  "finalize_appeal": null
 }
