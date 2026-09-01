@@ -704,12 +704,14 @@ pub fn emit_policy_transferred(
 // ── Claim evidence updated event ──────────────────────────────────────────────
 
 /// Emitted by `add_claim_evidence` when claimant replaces evidence before voting.
-/// topics: ("niffyinsure", "claim_evidence_updated", claim_id)
+/// topics: ("niffyinsure", "claim_evidence_updated", claim_id) — normalized (issue #EVT-1)
+/// to carry `version` like every other catalog event; payload otherwise unchanged.
 #[contractevent(topics = ["niffyinsure", "claim_evidence_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimEvidenceUpdated {
     #[topic]
     pub claim_id: u64,
+    pub version: u32,
     pub policy_id: u32,
     pub evidence_hashes: Vec<BytesN<32>>,
     pub at_ledger: u32,
@@ -718,13 +720,73 @@ pub struct ClaimEvidenceUpdated {
 // ── Payout recipient warning event ────────────────────────────────────────────
 
 /// Emitted when payout is sent to a contract address (phishing risk warning).
-/// topics: ("niffyinsure", "payout_recipient_warning", claim_id)
+/// topics: ("niffyinsure", "payout_recipient_warning", claim_id) — normalized (issue #EVT-1)
+/// to carry `version` like every other catalog event; payload otherwise unchanged.
 #[contractevent(topics = ["niffyinsure", "payout_recipient_warning"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PayoutRecipientWarning {
     #[topic]
     pub claim_id: u64,
+    pub version: u32,
     pub recipient: Address,
     pub asset: Address,
     pub at_ledger: u32,
+}
+
+// ── Coverage floor event (issue #787 / governance floor) ─────────────────────
+
+/// Emitted by `admin_set_min_coverage_amount` on every floor change.
+/// topics: ("niffyinsure", "min_coverage_updated", admin)
+/// Follows the catalog's `[namespace, event_name, actor]` layout since there is
+/// no per-entity id for a global instance-storage parameter.
+#[contractevent(topics = ["niffyinsure", "min_coverage_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinCoverageAmountUpdatedData {
+    #[topic]
+    pub admin: Address,
+    pub version: u32,
+    pub old_amount: i128,
+    pub new_amount: i128,
+    pub at_ledger: u32,
+}
+
+pub fn emit_min_coverage_amount_updated(
+    env: &Env,
+    admin: &Address,
+    old_amount: i128,
+    new_amount: i128,
+) {
+    MinCoverageAmountUpdatedData {
+        admin: admin.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        old_amount,
+        new_amount,
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+}
+
+// ── Batch voter registration event (governance setup) ────────────────────────
+
+/// Emitted once per address by `add_voters_batch`.
+/// topics: ("niffyinsure", "voter_added", voter) — matches the catalog's
+/// `[namespace, event_name, actor]` layout used by other per-address admin events.
+#[contractevent(topics = ["niffyinsure", "voter_added"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoterAddedData {
+    #[topic]
+    pub voter: Address,
+    pub version: u32,
+    pub added_by: Address,
+    pub at_ledger: u32,
+}
+
+pub fn emit_voter_added(env: &Env, voter: &Address, added_by: &Address) {
+    VoterAddedData {
+        voter: voter.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        added_by: added_by.clone(),
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
 }

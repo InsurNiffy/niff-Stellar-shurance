@@ -1082,6 +1082,7 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         }
         PayoutRecipientWarning {
             claim_id: claim.claim_id,
+            version: events::EVENT_SCHEMA_VERSION,
             recipient: payout_to.clone(),
             asset: effective_asset.clone(),
             at_ledger: now,
@@ -1441,6 +1442,7 @@ pub fn add_claim_evidence(
     }
     ClaimEvidenceUpdated {
         claim_id,
+        version: events::EVENT_SCHEMA_VERSION,
         policy_id: claim.policy_id,
         evidence_hashes,
         at_ledger: now,

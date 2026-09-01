@@ -181,6 +181,34 @@ pub fn is_within_window(now: u32, start: u32, end: u32) -> bool {
     now >= start && now < end
 }
 
+/// Ledger-truth activity check for a policy — deliberately **ignores**
+/// `policy.is_active` and answers purely from `[start_ledger, end_ledger)`.
+///
+/// # Rationale (issue: flag/ledger-window consistency)
+///
+/// `policy.is_active` is a stored flag that must be flipped by an explicit
+/// write (e.g. `policy_lifecycle::terminate_policy`, strike-threshold
+/// deactivation in `claim.rs`, or the `process_expired` keeper). If that
+/// write is ever missed, delayed, or races a read, the flag and the ledger
+/// window can disagree — most commonly a policy whose `end_ledger` has
+/// already passed but whose `is_active` flag is still `true` because no
+/// keeper call has run yet to flip it.
+///
+/// The ledger window `[start_ledger, end_ledger)` is derived at bind/renewal
+/// time from consensus-ordered ledger sequence numbers and needs no
+/// follow-up write to stay correct — it is authoritative for "is this policy
+/// currently in its coverage term" regardless of whether housekeeping writes
+/// have caught up. Read entrypoints and keeper calls should therefore prefer
+/// this helper over the raw flag whenever they need to know whether a policy
+/// is *currently* active. The stored flag remains useful for its own
+/// purpose — recording *why* a policy stopped early (voluntary cancellation,
+/// fraud, admin override, strike threshold) — which the ledger window alone
+/// cannot express.
+#[inline]
+pub fn is_policy_active_by_ledger(policy: &crate::types::Policy, current_ledger: u32) -> bool {
+    is_within_window(current_ledger, policy.start_ledger, policy.end_ledger)
+}
+
 /// Returns `true` if the window `[start, end)` has not yet started.
 #[inline]
 #[allow(dead_code)]
