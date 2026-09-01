@@ -10,6 +10,7 @@ import { EvidenceProxyService } from './services/evidence-proxy.service';
 import { ClaimDeadlineProcessorService } from './claim-deadline.processor.service';
 import { ClaimDeadlineBootstrap } from './claim-deadline.bootstrap';
 import { ClaimHistoryService } from './services/claim-history.service';
+import { AppealSimulationCacheService } from './services/appeal-simulation-cache.service';
 import { RpcModule } from '../rpc/rpc.module';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { TenantModule } from '../tenant/tenant.module';
@@ -35,6 +36,7 @@ import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
     ClaimDeadlineProcessorService,
     ClaimDeadlineBootstrap,
     ClaimHistoryService,
+    AppealSimulationCacheService,
   ],
   exports: [
     ClaimsService,

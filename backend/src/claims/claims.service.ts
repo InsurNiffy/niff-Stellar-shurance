@@ -22,6 +22,7 @@ import {
   clampLimit,
 } from '../helpers/pagination';
 import { ClaimViewMapper } from './claim-view.mapper';
+import { AppealSimulationCacheService } from './services/appeal-simulation-cache.service';
 
 export interface ListClaimsParams {
   after?: string;
@@ -47,6 +48,7 @@ export class ClaimsService {
     private readonly aggregation: ClaimAggregationService,
     private readonly claimSummaryCache: ClaimSummaryCacheService,
     private readonly metrics: MetricsService,
+    private readonly appealSimulationCache: AppealSimulationCacheService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
@@ -415,7 +417,59 @@ export class ClaimsService {
   // ── Appeal submission ─────────────────────────────────────────────────────
 
   /**
+   * Simulate file_appeal for a rejected claim (wallet pre-flight).
+   *
+   * Short-TTL Redis cache keyed by (claimId, walletAddress) avoids redundant
+   * RPC on retries (#1327). Successful responses never include unsignedXdr —
+   * callers that need signing material must hit buildAppealTransaction, which
+   * always runs a fresh simulation.
+   */
+  async simulateAppealTransaction(args: {
+    claimId: number;
+    walletAddress: string;
+    reason?: string;
+  }) {
+    const tenantId = this.tenantCtx.tenantId;
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: args.claimId }),
+      select: { id: true },
+    });
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${args.claimId} not found`);
+    }
+
+    const cached = await this.appealSimulationCache.get(args.claimId, args.walletAddress);
+    if (cached) {
+      this.logger.debug(
+        `Appeal simulate cache hit claim=${args.claimId} wallet=${args.walletAddress}`,
+      );
+      return { ...cached, cached: true as const };
+    }
+
+    const built = await this.soroban.buildAppealTransaction({
+      claimant: args.walletAddress,
+      claimId: args.claimId,
+      reason: args.reason?.trim() || 'Appeal simulation',
+    });
+
+    const payload = {
+      ok: true as const,
+      claimId: args.claimId,
+      walletAddress: args.walletAddress,
+      minResourceFee: built.minResourceFee,
+      baseFee: built.baseFee,
+      totalEstimatedFee: built.totalEstimatedFee,
+      totalEstimatedFeeXlm: built.totalEstimatedFeeXlm,
+      currentLedger: built.currentLedger,
+    };
+
+    await this.appealSimulationCache.set(args.claimId, args.walletAddress, payload);
+    return { ...payload, cached: false as const };
+  }
+
+  /**
    * Build an unsigned file_appeal transaction for a rejected claim.
+   * Always fresh RPC — never reads the appeal simulate cache (#1327).
    */
   async buildAppealTransaction(args: {
     claimant: string;
@@ -474,16 +528,23 @@ export class ClaimsService {
     const result = await this.soroban.submitTransaction(transactionXdr);
 
     // Persist appeal tracking fields and set claim status to UNDER_APPEAL.
-    // The indexer later decodes AppealOpened / claim_status_changed(UnderAppeal)
-    // and AppealResolved / claim_status_changed(AppealApproved|AppealRejected)
-    // to keep the row in sync without relying solely on this optimistic write.
-    await this.prisma.claim.update({
+    // The indexer will later decode the appeal_approved / appeal_rejected event
+    // and move the claim to APPROVED or REJECTED.
+    const updated = await this.prisma.claim.update({
       where: { id: claimId },
       data: {
         status: 'UNDER_APPEAL',
         appealsCount: { increment: 1 },
         appealTxHash: txHash,
       },
+      select: { id: true, status: true, updatedAt: true },
+    });
+
+    // Push live status to GET /claims/status/stream subscribers (#1326).
+    ClaimsService.publishStatusChange({
+      claimId: String(updated.id),
+      status: updated.status.toLowerCase(),
+      updatedAt: updated.updatedAt.toISOString(),
     });
 
     // Increment appeal metrics (task #1328)
