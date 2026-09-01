@@ -17,6 +17,8 @@ import {
   ClaimFinalizedEvent,
   ClaimPaidEvent,
   ClaimStatusChangedEvent,
+  AppealOpenedEvent,
+  AppealResolvedEvent,
   PolicyInitiatedEvent,
   PolicyRenewedEvent,
   PolicyTerminatedEvent,
@@ -349,6 +351,90 @@ describe('claim_status_changed', () => {
     expect(p.old_status).toBe('Processing');
     expect(p.new_status).toBe('Approved');
     expect(p.at_ledger).toBe(LEDGER);
+  });
+});
+
+// ── Appeal event sequence (#1318) ────────────────────────────────────────────
+
+describe('appeal event sequence (AppealOpened → status → AppealResolved)', () => {
+  const CLAIM_ID = 42n;
+
+  const openedTopics = ['niffyinsure', 'appeal_opened', CLAIM_ID];
+  const openedPayload: AppealOpenedEvent = {
+    policy_id: 3,
+    claimant: HOLDER,
+    appeal_deadline_ledger: LEDGER + 100,
+    quorum_bps: 7500,
+    at_ledger: LEDGER,
+  };
+
+  const underAppealStatusTopics = ['niffyins', 'claim_status_changed', CLAIM_ID];
+  const underAppealStatusPayload: ClaimStatusChangedEvent = {
+    version: SCHEMA_VERSION,
+    old_status: 'Rejected',
+    new_status: 'UnderAppeal',
+    at_ledger: LEDGER,
+  };
+
+  const approvedStatusPayload: ClaimStatusChangedEvent = {
+    version: SCHEMA_VERSION,
+    old_status: 'UnderAppeal',
+    new_status: 'AppealApproved',
+    at_ledger: LEDGER + 50,
+  };
+
+  const resolvedTopics = ['niffyinsure', 'appeal_resolved', CLAIM_ID];
+  const resolvedPayload: AppealResolvedEvent = {
+    policy_id: 3,
+    claimant: HOLDER,
+    outcome: 'AppealApproved',
+    approve_votes: 5,
+    reject_votes: 1,
+    at_ledger: LEDGER + 50,
+  };
+
+  it('decodes AppealOpened', () => {
+    const ev = parseEvent(openedTopics, openedPayload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:appeal_opened');
+    expect(ev?.ids[0]).toBe(CLAIM_ID);
+    const p = ev?.payload as AppealOpenedEvent;
+    expect(p.appeal_deadline_ledger).toBe(LEDGER + 100);
+    expect(p.quorum_bps).toBe(7500);
+    expect(p.claimant).toBe(HOLDER);
+  });
+
+  it('decodes appeal-open ClaimStatusChanged (UnderAppeal)', () => {
+    const ev = parseEvent(underAppealStatusTopics, underAppealStatusPayload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyins:claim_status_changed');
+    const p = ev?.payload as ClaimStatusChangedEvent;
+    expect(p.old_status).toBe('Rejected');
+    expect(p.new_status).toBe('UnderAppeal');
+  });
+
+  it('decodes appeal-outcome ClaimStatusChanged (AppealApproved)', () => {
+    const ev = parseEvent(underAppealStatusTopics, approvedStatusPayload, LEDGER + 50, TX);
+    expect(ev?.key).toBe('niffyins:claim_status_changed');
+    const p = ev?.payload as ClaimStatusChangedEvent;
+    expect(p.new_status).toBe('AppealApproved');
+  });
+
+  it('decodes AppealResolved', () => {
+    const ev = parseEvent(resolvedTopics, resolvedPayload, LEDGER + 50, TX);
+    expect(ev?.key).toBe('niffyinsure:appeal_resolved');
+    expect(ev?.ids[0]).toBe(CLAIM_ID);
+    const p = ev?.payload as AppealResolvedEvent;
+    expect(p.outcome).toBe('AppealApproved');
+    expect(p.approve_votes).toBe(5);
+    expect(p.reject_votes).toBe(1);
+  });
+
+  it('fixture sequence preserves claim_id across open → resolve', () => {
+    const openEv = parseEvent(openedTopics, openedPayload, LEDGER, TX);
+    const statusEv = parseEvent(underAppealStatusTopics, underAppealStatusPayload, LEDGER, TX);
+    const resolveEv = parseEvent(resolvedTopics, resolvedPayload, LEDGER + 50, TX);
+    expect(openEv?.ids[0]).toBe(CLAIM_ID);
+    expect(statusEv?.ids[0]).toBe(CLAIM_ID);
+    expect(resolveEv?.ids[0]).toBe(CLAIM_ID);
   });
 });
 
