@@ -15,7 +15,8 @@ Welcome. This guide takes you from a fresh clone to a passing CI run and an open
 7. [PR review process](#7-pr-review-process)
 8. [Good first issues](#8-good-first-issues)
 9. [Security rules](#9-security-rules)
-10. [Dependency update policy](#10-dependency-update-policy)
+10. [On-call operations](#10-on-call-operations)
+11. [Dependency update policy](#11-dependency-update-policy)
 
 ---
 
@@ -529,7 +530,21 @@ See [section 3](#3-contract-development-rust--soroban) for the refresh workflow.
 
 ---
 
-## 10. Dependency update policy
+## 10. On-call operations
+
+If you are on-call for production incidents, refer to the **[On-Call Runbook Index](docs/ops/README.md)** for step-by-step procedures covering:
+
+- **Database & data loss** — PostgreSQL restore, GDPR data deletion, retention policies
+- **Job queue issues** — Failed BullMQ job replay, queue depth alerts
+- **Smart contract incidents** — WASM drift, testnet resets, contract upgrades, emergency pause
+- **API & error handling** — Error code lookup, log correlation, Stellar transaction debugging
+- **Operational maintenance** — Secret rotation, dependency audits, indexer reindex
+
+When an incident is declared, open the runbook index and scan by symptom to find the matching runbook. Each runbook includes detection signals, step-by-step procedures, smoke tests, and escalation paths.
+
+---
+
+## 11. Dependency update policy
 
 ### Cadence and automation
 
