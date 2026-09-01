@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ClaimsController } from './claims.controller';
 import { ClaimsService } from './claims.service';
 import { SanitizationService } from './sanitization.service';
@@ -21,9 +22,23 @@ import { IpfsModule } from '../ipfs/ipfs.module';
 import { AdminModule } from '../admin/admin.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule, RpcModule, RateLimitModule, TenantModule, IndexerModule, CacheModule, IpfsModule, AdminModule, MetricsModule, FeatureFlagsModule],
+  imports: [
+    ScheduleModule.forRoot(),
+    PrismaModule,
+    RpcModule,
+    RateLimitModule,
+    TenantModule,
+    IndexerModule,
+    CacheModule,
+    IpfsModule,
+    AdminModule,
+    MetricsModule,
+    FeatureFlagsModule,
+    NotificationsModule,
+  ],
   controllers: [ClaimsController],
   providers: [
     ClaimsService,

@@ -11,6 +11,8 @@ import { ReconciliationService } from '../indexer/reconciliation.service';
 import { ClaimAggregationService } from './services/claim-aggregation.service';
 import { ClaimSummaryCacheService } from './services/claim-summary-cache.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { AuditService } from '../admin/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   ClaimDetailResponseDto,
   ClaimsListResponseDto,
@@ -23,6 +25,10 @@ import {
 } from '../helpers/pagination';
 import { ClaimViewMapper } from './claim-view.mapper';
 import { AppealSimulationCacheService } from './services/appeal-simulation-cache.service';
+
+/** In-app notification type for appeal-round voter fan-out (#1321). */
+const APPEAL_ROUND_NOTIFICATION_TYPE = 'appeal_round_open';
+const APPEAL_ROUND_NOTIFICATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export interface ListClaimsParams {
   after?: string;
@@ -242,6 +248,53 @@ export class ClaimsService {
         vote: dbVote === 'APPROVE' ? 'yes' : dbVote === 'REJECT' ? 'no' : undefined,
       };
     });
+  }
+
+  /**
+   * List eligible voters for the current appeal round (offline mirror of
+   * on-chain snapshot_appeal_voters). Returns empty when no appeal snapshot
+   * has been persisted yet.
+   */
+  async getAppealVoters(claimId: number): Promise<ClaimVoterDto[]> {
+    const tenantId = this.tenantCtx.tenantId;
+    const readClient = this.getReadClient();
+
+    const claim = await readClient.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: claimId }),
+      select: { id: true, status: true, appealsCount: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${claimId} not found`);
+    }
+
+    if (claim.appealsCount < 1) {
+      return [];
+    }
+
+    const [snapshot, registeredVoters] = await Promise.all([
+      readClient.appealVoterSnapshot.findMany({
+        where: { claimId, appealsCount: claim.appealsCount },
+        select: { walletAddress: true },
+      }),
+      readClient.registeredVoter.findMany({
+        select: { walletAddress: true, displayName: true },
+      }),
+    ]);
+
+    const displayNameByWallet = new Map(
+      registeredVoters.map((v) => [v.walletAddress.toLowerCase(), v.displayName]),
+    );
+
+    // Appeal-round vote status is not yet indexed separately from the original
+    // round; surface eligibility only (voted=false) so the FE can list the electorate.
+    return snapshot.map((row) => ({
+      walletAddress: row.walletAddress,
+      displayName:
+        displayNameByWallet.get(row.walletAddress.toLowerCase()) ?? undefined,
+      voted: false,
+      vote: undefined,
+    }));
   }
 
   async getClaimsByPolicyIds(
@@ -501,7 +554,13 @@ export class ClaimsService {
     // Verify the claim exists and belongs to the correct tenant
     const claim = await this.prisma.claim.findFirst({
       where: claimTenantWhere(tenantId, { id: claimId }),
-      select: { id: true, status: true, appealTxHash: true, appealsCount: true },
+      select: {
+        id: true,
+        status: true,
+        appealTxHash: true,
+        appealsCount: true,
+        creatorAddress: true,
+      },
     });
 
     if (!claim) {
@@ -556,6 +615,51 @@ export class ClaimsService {
     this.logger.log(`Appeal submitted for claim=${claimId} txHash=${txHash}`);
 
     return { cached: false, txHash, claimId, ...result };
+  }
+
+  private async notifyAppealVoters(
+    claimId: number,
+    voterAddresses: string[],
+  ): Promise<void> {
+    for (const walletAddress of voterAddresses) {
+      try {
+        await this.notifications.createNotificationRecord({
+          userId: walletAddress,
+          type: APPEAL_ROUND_NOTIFICATION_TYPE,
+          payload: {
+            claimId,
+            message: `A new appeal voting round is open for claim ${claimId}. Cast your vote.`,
+          },
+          ttlSeconds: APPEAL_ROUND_NOTIFICATION_TTL_SECONDS,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Failed to notify appeal voter ${walletAddress} for claim=${claimId}: ${err}`,
+        );
+      }
+    }
+  }
+
+  private async writeAppealAudit(params: {
+    actor: string;
+    claimId: number;
+    txHash: string;
+    appealsCount: number;
+  }): Promise<void> {
+    try {
+      await this.audit.write({
+        actor: params.actor,
+        action: 'appeal_submitted',
+        payload: {
+          claimId: params.claimId,
+          txHash: params.txHash,
+          appealsCount: params.appealsCount,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Appeal audit write failed for claim=${params.claimId}: ${err}`);
+    }
   }
 
   // ── Claim status polling & SSE ───────────────────────────────────────────

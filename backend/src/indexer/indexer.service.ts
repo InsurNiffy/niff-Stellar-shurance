@@ -727,6 +727,14 @@ export class IndexerService {
     const alreadyCounted =
       existing.status === 'UNDER_APPEAL' && existing.appealsCount > 0;
 
+    const existing = await tx.claim.findUnique({
+      where: { id: claimId },
+      select: { appealsCount: true },
+    });
+
+    // Ensure appealsCount reflects an opened appeal when the tx bypassed submitAppealTransaction.
+    const nextAppealsCount = Math.max(existing?.appealsCount ?? 0, 1);
+
     await tx.claim.updateMany({
       where: { id: claimId, deletedAt: null },
       data: {
@@ -735,6 +743,26 @@ export class IndexerService {
         ...(alreadyCounted ? {} : { appealsCount: { increment: 1 } }),
       },
     });
+
+    // Mirror snapshot_appeal_voters when not already written by the API path.
+    const existingSnapshot = await tx.appealVoterSnapshot.count({
+      where: { claimId, appealsCount: nextAppealsCount },
+    });
+    if (existingSnapshot === 0) {
+      const voters = await tx.registeredVoter.findMany({
+        select: { walletAddress: true },
+      });
+      if (voters.length > 0) {
+        await tx.appealVoterSnapshot.createMany({
+          data: voters.map((v) => ({
+            claimId,
+            walletAddress: v.walletAddress,
+            appealsCount: nextAppealsCount,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
 
     await this.claimEvents?.publish({
       claimId: String(claimId),
