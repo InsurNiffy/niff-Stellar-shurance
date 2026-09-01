@@ -76,6 +76,15 @@ pub fn get_balance(env: &Env, asset: &Address) -> i128 {
     client.balance(&env.current_contract_address())
 }
 
+/// Pre-flight check: how much of `asset` has `owner` approved this contract
+/// to spend via `transfer_from`. Used to surface a friendly
+/// `InsufficientAllowance` error at `initiate_policy` instead of letting the
+/// SEP-41 `transfer_from` call trap with an opaque host error.
+pub fn get_allowance(env: &Env, asset: &Address, owner: &Address) -> i128 {
+    let client = token::TokenClient::new(env, asset);
+    client.allowance(owner, &env.current_contract_address())
+}
+
 /// Get the current balance of `asset` held by the configured treasury address.
 pub fn get_treasury_balance(env: &Env, asset: &Address) -> i128 {
     let treasury = storage::get_treasury(env);

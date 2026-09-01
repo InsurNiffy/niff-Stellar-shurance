@@ -101,6 +101,20 @@ pub struct PolicyInitiated {
     pub terms_hash: BytesN<32>,
 }
 
+/// Emitted right before `initiate_policy` reverts with
+/// `PolicyError::InsufficientAllowance`. Carries the exact required and
+/// actual allowance so a frontend can prompt the user to call
+/// `token.approve(contract_address, required)` and retry.
+#[contractevent(topics = ["niffyinsure", "insufficient_allowance"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsufficientAllowanceDetail {
+    #[topic]
+    pub holder: Address,
+    pub asset: Address,
+    pub required: i128,
+    pub actual: i128,
+}
+
 /// Emitted when a protocol fee is collected from a premium payment.
 #[contractevent(topics = ["niffyinsure", "protocol_fee_collected"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -555,6 +569,22 @@ pub fn initiate_policy(
     let treasury_amount = premium_amount
         .checked_sub(fee_amount)
         .ok_or(PolicyError::PremiumOverflow)?;
+
+    // Pre-flight allowance check (before any state changes): surface a
+    // friendly `InsufficientAllowance` error instead of letting the
+    // downstream SEP-41 `transfer_from` call trap with an opaque host error
+    // when the holder has not approved this contract as a spender.
+    let allowance = token::get_allowance(env, &asset, &holder);
+    if allowance < premium_amount {
+        InsufficientAllowanceDetail {
+            holder: holder.clone(),
+            asset: asset.clone(),
+            required: premium_amount,
+            actual: allowance,
+        }
+        .publish(env);
+        return Err(PolicyError::InsufficientAllowance);
+    }
 
     // Allocate unique per-holder policy_id.
     let policy_id = storage::next_policy_id(env, &holder);

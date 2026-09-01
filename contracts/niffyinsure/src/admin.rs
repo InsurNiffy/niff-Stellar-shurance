@@ -209,6 +209,35 @@ struct AdminCancelled {
     pub cancelled_pending: Address,
 }
 
+/// Emitted on every admin address change, giving auditors a complete
+/// on-chain chain-of-custody for the admin key.
+///
+/// This contract currently exposes admin rotation only via the two-step
+/// propose/accept flow (`propose_admin` + `accept_admin`); `AdminRotated` is
+/// published from `accept_admin`, the single point where `storage::set_admin`
+/// actually changes the stored admin post-initialization. If a future
+/// single-step rotation entrypoint is added, it MUST call
+/// `emit_admin_rotated` too so this event remains a complete record of every
+/// admin change regardless of rotation path.
+#[contractevent(topics = ["niffyinsure", "admin_rotated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminRotated {
+    #[topic]
+    pub old_admin: Address,
+    #[topic]
+    pub new_admin: Address,
+    pub ledger: u32,
+}
+
+fn emit_admin_rotated(env: &Env, old_admin: &Address, new_admin: &Address) {
+    AdminRotated {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+        ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+}
+
 #[contractevent(topics = ["niffyinsure", "token_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TokenUpdated {
@@ -481,10 +510,11 @@ pub fn accept_admin(env: &Env) {
     storage::set_admin(env, &pending);
     storage::clear_pending_admin(env);
     AdminAccepted {
-        old_admin,
+        old_admin: old_admin.clone(),
         new_admin: pending.clone(),
     }
     .publish(env);
+    emit_admin_rotated(env, &old_admin, &pending);
     emit_admin_action(env, &pending, "accept_admin");
 }
 
