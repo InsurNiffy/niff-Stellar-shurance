@@ -60,6 +60,15 @@ pub enum SubscriptionError {
     /// Subscription not found or already expired.
     NotFound = 2,
 }
+#[contractevent(topics = ["niffyinsure", "voter_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VoterRemovedEvent {
+    #[topic]
+    pub admin: Address,
+    #[topic]
+    pub voter: Address,
+}
+
 #[contractevent(topics = ["niffyinsure", "allowed_asset_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AllowedAssetUpdated {
@@ -923,6 +932,25 @@ impl NiffyInsure {
 
     pub fn voter_registry_contains(env: Env, holder: Address) -> bool {
         storage::get_voters(&env).iter().any(|v| v == holder)
+    }
+
+    /// Remove an ineligible address from the voter registry.
+    ///
+    /// Authenticated by admin. Existing votes cast by the removed address in
+    /// already-snapshotted claims are **not** retroactively invalidated — this
+    /// is a deliberate design choice: the vote was cast when the voter was
+    /// eligible, and retroactive removal would change outcomes after the fact.
+    ///
+    /// Emits a `VoterRemoved` event on success.
+    pub fn admin_remove_voter(env: Env, voter: Address) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        storage::remove_voter(&env, &voter);
+        VoterRemovedEvent {
+            admin: admin.clone(),
+            voter: voter.clone(),
+        }
+        .publish(&env);
     }
 
     pub fn holder_active_policy_count(env: Env, holder: Address) -> u32 {
