@@ -46,6 +46,16 @@ pub fn transfer_from_contract(env: &Env, to: &Address, amount: i128) {
     client.transfer(&env.current_contract_address(), to, &amount);
 }
 
+/// Refund a previously-collected claim filing fee back to `to` in `asset`.
+/// Draws from the contract's own balance, mirroring the outgoing-transfer
+/// pattern used by claim payouts (`claim::payout`), since fee collection
+/// deposits into the configured treasury which is expected to route back
+/// through the contract's holdings for this asset.
+pub fn refund_fee(env: &Env, to: &Address, asset: &Address, amount: i128) {
+    let client = token::TokenClient::new(env, asset);
+    client.transfer(&env.current_contract_address(), to, &amount);
+}
+
 /// Low-level SEP-41 `transfer` invocation for a specific allowlisted asset.
 ///
 /// Defence-in-depth: verifies `token` is on the allowlist before invoking.

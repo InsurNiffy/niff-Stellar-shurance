@@ -162,6 +162,13 @@ pub enum DataKey {
     /// Value of `LastClaimLedger(claimant)` **before** this claim's filing updated it.
     /// Removed when the claim leaves `Processing` without withdraw, or consumed by `withdraw_claim`.
     ClaimRateLimitPrev(u64),
+    /// Filing fee actually collected for this claim (stroops), set at `file_claim`
+    /// when `claim_filing_fee > 0`. Consumed (removed) and refunded by `withdraw_claim`.
+    ClaimFilingFeePaid(u64),
+    /// Test/ops-only override of a voter's snapshot voting power for a given claim.
+    /// Used to seed a corrupt (zero/negative) entry in tests of `CorruptSnapshotEntry`;
+    /// not written by any normal contract flow.
+    ClaimVoterPowerOverride(u64, Address),
     /// Per-holder replay-protection nonce. Incremented on each successful mutating call
     /// when the caller supplies `expected_nonce`. Supplementary to Stellar sequence numbers.
     HolderNonce(Address),
@@ -1242,6 +1249,70 @@ pub fn get_claim_filing_fee(env: &Env) -> i128 {
         .instance()
         .get(&DataKey::ClaimFilingFee)
         .unwrap_or(0)
+}
+
+/// Record the filing fee actually collected for `claim_id` so it can be
+/// refunded in full if the claim is withdrawn before any vote is cast.
+pub fn set_claim_filing_fee_paid(env: &Env, claim_id: u64, fee: i128) {
+    let key = DataKey::ClaimFilingFeePaid(claim_id);
+    env.storage().persistent().set(&key, &fee);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+/// Remove and return the filing fee recorded for `claim_id`, if any.
+/// Called once by `withdraw_claim` so a claim cannot be refunded twice.
+pub fn take_claim_filing_fee_paid(env: &Env, claim_id: u64) -> Option<i128> {
+    let key = DataKey::ClaimFilingFeePaid(claim_id);
+    let fee = env.storage().persistent().get(&key);
+    if fee.is_some() {
+        env.storage().persistent().remove(&key);
+    }
+    fee
+}
+
+// ── Claim voter power override (persistent, test/ops-only) ──────────────────
+
+/// Test/ops-only: force a specific voter's snapshot voting power for `claim_id`.
+/// Not used by any normal contract flow — exists so tests can seed a corrupt
+/// (zero/negative) snapshot entry to exercise `Error::CorruptSnapshotEntry`.
+pub fn set_claim_voter_power_override(env: &Env, claim_id: u64, voter: &Address, power: i128) {
+    let key = DataKey::ClaimVoterPowerOverride(claim_id, voter.clone());
+    env.storage().persistent().set(&key, &power);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+/// Read the voter power override for `(claim_id, voter)`, if one was seeded.
+pub fn get_claim_voter_power_override(env: &Env, claim_id: u64, voter: &Address) -> Option<i128> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ClaimVoterPowerOverride(claim_id, voter.clone()))
+}
+
+/// Resolve the effective voting power for `voter` on `claim_id`, validating
+/// that any seeded snapshot entry has strictly positive power.
+///
+/// Issue: finalization/quorum math assumes every cast ballot carries positive
+/// weight. A zero or negative entry (corrupted snapshot data) would silently
+/// distort `approve_votes` / `reject_votes` and therefore quorum results.
+/// Reverts with `Error::CorruptSnapshotEntry` rather than clamping or
+/// ignoring the bad entry, so corruption is surfaced instead of masked.
+pub fn voting_power_for(
+    env: &Env,
+    claim_id: u64,
+    voter: &Address,
+    default_weight: u32,
+) -> Result<u32, crate::validate::Error> {
+    if let Some(power) = get_claim_voter_power_override(env, claim_id, voter) {
+        if power <= 0 {
+            return Err(crate::validate::Error::CorruptSnapshotEntry);
+        }
+        return Ok(power as u32);
+    }
+    Ok(default_weight)
 }
 
 // ── Per-policy cooldown (persistent) ─────────────────────────────────────────

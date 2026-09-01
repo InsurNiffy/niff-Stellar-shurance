@@ -190,6 +190,23 @@ pub struct ClaimFeeCollected {
     pub at_ledger: u32,
 }
 
+/// Emitted when a previously-collected filing fee is refunded in full because
+/// the claimant withdrew the claim before any vote was cast.
+///
+/// Topic layout: ["niffyinsure", "claim_fee_refunded", claim_id]
+/// Data: { fee_amount, recipient, at_ledger }
+#[contractevent(topics = ["niffyinsure", "claim_fee_refunded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimFeeRefunded {
+    #[topic]
+    pub claim_id: u64,
+    /// Fee amount refunded (stroops); always equal to the amount originally collected.
+    pub fee_amount: i128,
+    /// Address the refund was sent to (the claimant).
+    pub recipient: Address,
+    pub at_ledger: u32,
+}
+
 /// Emitted when the claimant withdraws before any vote is cast.
 ///
 /// Topic layout: ["niffyinsure", "claim_withdrawn", claim_id]
@@ -383,6 +400,7 @@ pub fn file_claim(
         }
 
         crate::token::collect_premium(env, holder, &policy.asset, filing_fee);
+        storage::set_claim_filing_fee_paid(env, claim_id, filing_fee);
 
         ClaimFeeCollected {
             claim_id,
@@ -494,6 +512,25 @@ pub fn withdraw_claim(env: &Env, claimant: &Address, claim_id: u64) -> Result<()
 
     storage::set_claim(env, &claim);
 
+    // ── Filing fee refund ────────────────────────────────────────────────
+    //
+    // If a non-zero filing fee was collected at `file_claim`, refund it in
+    // full now. Withdrawal is only reachable while `approve_votes ==
+    // reject_votes == 0` (checked above), so this always refunds a claim
+    // that has not yet been voted on.
+    if let Some(fee_paid) = storage::take_claim_filing_fee_paid(env, claim_id) {
+        if fee_paid > 0 {
+            crate::token::refund_fee(env, &claim.claimant, &claim.asset, fee_paid);
+            ClaimFeeRefunded {
+                claim_id,
+                fee_amount: fee_paid,
+                recipient: claim.claimant.clone(),
+                at_ledger: now,
+            }
+            .publish(env);
+        }
+    }
+
     ClaimWithdrawn {
         claim_id,
         policy_id: claim.policy_id,
@@ -572,13 +609,18 @@ pub fn vote_on_claim(
 
     // Compute vote weight: proportional to active policy count when governance token
     // is enabled (capped by max_weight_cap), or 1 when disabled.
-    let vote_weight: u32 = if crate::governance_token::governance_token_effective_enabled(env) {
+    let default_weight: u32 = if crate::governance_token::governance_token_effective_enabled(env) {
         let balance = storage::get_holder_active_policy_count(env, voter) as i128;
         let cap = storage::get_max_weight_cap(env);
         balance.min(cap).max(1) as u32
     } else {
         1
     };
+    // Validity check on the snapshot entry: a zero or negative voting power
+    // (only reachable via a corrupted/seeded entry — see
+    // `storage::voting_power_for`) must not be silently treated as valid
+    // weight, since that would skew quorum math. Revert instead.
+    let vote_weight: u32 = storage::voting_power_for(env, claim_id, voter, default_weight)?;
 
     match vote {
         VoteOption::Approve => {
@@ -686,6 +728,23 @@ fn finalize_claim_inner(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> 
     let quorum_bps = effective_quorum_bps(env, claim_id);
 
     if participation_quorum_met(cast, eligible, quorum_bps) {
+        // ── Tie-breaking rule ────────────────────────────────────────────
+        //
+        // When `approve_votes == reject_votes` exactly, the claim is
+        // Rejected, not Approved. This is a strict `>` comparison (not
+        // `>=`), so a tie falls through to the `else` branch below.
+        //
+        // Rationale (insurer-favored default, matching the no-quorum branch
+        // a few lines down): approval should require an affirmative
+        // majority, not merely "no fewer" reject votes. This mirrors
+        // `resolve_plurality_if_quorum_met` (used by `vote_on_claim` for
+        // early resolution), which applies the identical `>` comparison —
+        // so the outcome of a tie is the same whether the claim resolves
+        // early via voting or later via `finalize_claim`/deadline, and is
+        // independent of the order in which votes were submitted (only the
+        // final approve/reject totals matter). See
+        // `tests/finalize_tie_vote.rs` and `docs/GOVERNANCE.md` /
+        // `docs/EVENT_DICTIONARY.md` for the documented rule.
         if claim.approve_votes > claim.reject_votes {
             claim.status = ClaimStatus::Approved;
         } else {
