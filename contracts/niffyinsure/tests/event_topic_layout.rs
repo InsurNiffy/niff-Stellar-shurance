@@ -36,8 +36,8 @@ fn seed(client: &NiffyInsureClient, holder: &Address, coverage: i128, end_ledger
 /// contain `event_name`.
 fn topics_for(env: &Env, event_name: &str) -> String {
     let all = env.events().all();
-    for (_, topics, _) in all.iter() {
-        let s = soroban_sdk::testutils::arbitrary::std::format!("{:?}", topics);
+    for event in all.events() {
+        let s = soroban_sdk::testutils::arbitrary::std::format!("{:?}", event.body);
         if s.contains(event_name) {
             return String::from_str(env, &s);
         }
