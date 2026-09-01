@@ -1,0 +1,19 @@
+{
+  "endpoints": [
+    {
+      "hostname": "api.example.com",
+      "port": 443,
+      "description": "Backend API"
+    },
+    {
+      "hostname": "app.example.com",
+      "port": 443,
+      "description": "Frontend application"
+    },
+    {
+      "hostname": "gateway.pinata.cloud",
+      "port": 443,
+      "description": "Pinata IPFS gateway (external dependency)"
+    }
+  ]
+}
