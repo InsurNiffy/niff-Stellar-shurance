@@ -26,7 +26,7 @@ export interface AppealConfirmModalProps {
    * The wallet address at the time the modal was opened.
    * Used to detect mid-flow wallet switches before signing.
    */
-  walletAddress: string | null;
+  walletAddress?: string | null;
   /**
    * Callback when user confirms the appeal.
    * @param notifyOnOutcome - true if the claimant opted into appeal-outcome notifications
@@ -64,10 +64,10 @@ export function AppealConfirmModal({
   open,
   claim,
   submitting,
-  walletAddress,
+  walletAddress = null,
   onConfirm,
   onCancel,
-  triggerRef,
+  triggerRef: _triggerRef,
 }: AppealConfirmModalProps) {
   const t = useTranslations('claims.appeal');
   const [notifyOnOutcome, setNotifyOnOutcome] = useState(true);

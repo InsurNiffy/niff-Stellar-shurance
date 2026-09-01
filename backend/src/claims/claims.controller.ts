@@ -42,10 +42,12 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
 import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
 import { ClaimRateLimitGuard } from '../rate-limit/claim-rate-limit.guard';
+import { AppealRateLimitGuard } from '../rate-limit/appeal-rate-limit.guard';
 import { MAX_LIMIT, DEFAULT_LIMIT } from '../helpers/pagination';
 import { OptionalJwtAuthGuard } from '../tx/guards/optional-jwt.guard';
 import { Feature } from '../feature-flags/feature.decorator';
 import { APPEAL_FEATURE_FLAG } from './claims.constants';
+import { SimulateAppealDto } from './dto/simulate-appeal.dto';
 
 /** Maximum claim IDs accepted per status-poll or SSE subscription. */
 const MAX_WATCH_IDS = 50;
@@ -184,6 +186,23 @@ export class ClaimsController {
     return this.claimsService.getClaimVoters(id);
   }
 
+  /**
+   * GET /api/claims/:id/appeal/voters
+   *
+   * Lists the appeal-round electorate (offline mirror of snapshot_appeal_voters)
+   * once an appeal is open. Same DTO shape as GET /claims/:id/voters.
+   */
+  @Get(':id/appeal/voters')
+  @Feature(APPEAL_FEATURE_FLAG)
+  @ApiOperation({ summary: 'List eligible voters for the current appeal round' })
+  @ApiResponse({ status: 200, description: 'Appeal voters with eligibility', type: [ClaimVoterDto] })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  async getAppealVoters(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ClaimVoterDto[]> {
+    return this.claimsService.getAppealVoters(id);
+  }
+
   @Post(':id/evidence/metadata')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
@@ -241,19 +260,47 @@ export class ClaimsController {
   }
 
   // ── Appeal endpoints ─────────────────────────────────────────────────────
-  // Both endpoints are gated behind the `claims_appeal_enabled` feature flag
-  // (#1355) so the appeal feature can be staged per environment. When the flag
-  // is off, FeatureFlagsGuard returns the configured disabled status (404/403).
+  // Gated behind `claims_appeal_enabled` (#1355). Appeal writes use
+  // AppealRateLimitGuard (#1322) — a stricter, isolated tier from claim filing.
+
+  /**
+   * POST /api/claims/:id/appeal/simulate
+   *
+   * Dry-runs file_appeal via Soroban simulation. Results are short-TTL Redis
+   * cached by (claimId, walletAddress) so wallet retries avoid redundant RPC
+   * (#1327). Never returns signing XDR — use /build-transaction for that.
+   */
+  @Post(':id/appeal/simulate')
+  @Feature(APPEAL_FEATURE_FLAG)
+  @UseGuards(OptionalJwtAuthGuard, AppealRateLimitGuard)
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Simulate file_appeal (short-TTL cache; no signing XDR)' })
+  @ApiResponse({ status: 200, description: 'Simulation succeeded (may be cache hit)' })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
+  async simulateAppeal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SimulateAppealDto,
+  ) {
+    return this.claimsService.simulateAppealTransaction({
+      claimId: id,
+      walletAddress: dto.walletAddress,
+      reason: dto.reason,
+    });
+  }
 
   /**
    * POST /api/claims/:id/appeal/build-transaction
    *
    * Builds an unsigned file_appeal XDR for a rejected claim.
+   * Always performs a fresh RPC simulation — never served from the simulate cache (#1327).
    * The client signs the XDR with their wallet and submits it via POST ./:id/appeal.
    */
   @Post(':id/appeal/build-transaction')
   @Feature(APPEAL_FEATURE_FLAG)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AppealRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiBearerAuth()
@@ -261,6 +308,7 @@ export class ClaimsController {
   @ApiResponse({ status: 200, description: 'Unsigned appeal transaction XDR + fee estimates' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Claim not found' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
   async buildAppealTransaction(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: BuildAppealTransactionDto,
@@ -279,10 +327,12 @@ export class ClaimsController {
    *
    * Idempotency: if `txHash` was already recorded for this claim, the cached
    * result is returned without re-submitting or double-counting the appeal.
+   *
+   * Rate limit: AppealRateLimitGuard (2/hour, 5/day per wallet) — see #1322.
    */
   @Post(':id/appeal')
   @Feature(APPEAL_FEATURE_FLAG)
-  @UseGuards(JwtAuthGuard, ClaimRateLimitGuard, RateLimitGuard)
+  @UseGuards(JwtAuthGuard, AppealRateLimitGuard, RateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiBearerAuth()
@@ -362,5 +412,318 @@ export class ClaimsController {
       clearInterval(heartbeat);
       unsubscribe();
     });
+  }
+
+  // ── Appeal endpoints ──────────────────────────────────────────────────────
+  // These endpoints expose build/simulate/submit/status operations for the
+  // appeal flow. Each error response includes a `code` field matching one of
+  // the APPEAL_ERROR_MESSAGES codes; examples are provided below for every code
+  // a client can receive so the generated OpenAPI spec stays in sync.
+
+  /**
+   * GET /api/claims/:id/appeal/status
+   * Returns whether an appeal has already been submitted for a claim.
+   */
+  @Get(':id/appeal/status')
+  @ApiOperation({ summary: 'Check whether an appeal has been submitted for a claim' })
+  @ApiResponse({
+    status: 200,
+    description: 'Appeal status for the claim',
+    schema: {
+      type: 'object',
+      properties: {
+        appealSubmitted: { type: 'boolean', example: false },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Claim not found — CLAIM_NOT_FOUND',
+    content: {
+      'application/json': {
+        examples: {
+          CLAIM_NOT_FOUND: {
+            summary: 'Claim not found',
+            value: { code: 'CLAIM_NOT_FOUND', message: 'Claim not found.' },
+          },
+        },
+      },
+    },
+  })
+  async getAppealStatus(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<{ appealSubmitted: boolean }> {
+    return this.claimsService.getAppealStatus(id);
+  }
+
+  /**
+   * POST /api/claims/:id/appeal/simulate
+   * Simulates the appeal transaction to pre-flight check eligibility.
+   * Returns HTTP 200 on success (null body) or a 4xx with an error code.
+   */
+  @Post(':id/appeal/simulate')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Simulate the appeal transaction (pre-flight check)' })
+  @ApiResponse({ status: 200, description: 'Simulation passed — safe to open wallet popup' })
+  @ApiResponse({
+    status: 400,
+    description: 'Simulation failed — appeal cannot proceed',
+    content: {
+      'application/json': {
+        examples: {
+          NOT_CLAIMANT: {
+            summary: 'Caller is not the claimant',
+            value: { code: 'NOT_CLAIMANT', message: 'Only the claimant can appeal this claim.' },
+          },
+          CLAIM_NOT_REJECTED: {
+            summary: 'Claim is not in Rejected status',
+            value: { code: 'CLAIM_NOT_REJECTED', message: 'Only rejected claims can be appealed.' },
+          },
+          APPEAL_ALREADY_SUBMITTED: {
+            summary: 'Appeal already submitted',
+            value: { code: 'APPEAL_ALREADY_SUBMITTED', message: 'An appeal has already been submitted for this claim.' },
+          },
+          APPEAL_WINDOW_CLOSED: {
+            summary: 'Appeal filing deadline has passed',
+            value: { code: 'APPEAL_WINDOW_CLOSED', message: 'The appeal window for this claim has closed.' },
+          },
+          CLAIMS_PAUSED: {
+            summary: 'Contract admin has paused claims operations',
+            value: { code: 'CLAIMS_PAUSED', message: 'Claim operations are currently paused by the contract admin.' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Claim not found — CLAIM_NOT_FOUND',
+    content: {
+      'application/json': {
+        examples: {
+          CLAIM_NOT_FOUND: {
+            summary: 'Claim not found',
+            value: { code: 'CLAIM_NOT_FOUND', message: 'Claim not found.' },
+          },
+        },
+      },
+    },
+  })
+  async simulateAppeal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { walletAddress: string },
+  ): Promise<void> {
+    return this.claimsService.simulateAppeal(id, body.walletAddress);
+  }
+
+  /**
+   * POST /api/claims/:id/appeal
+   * Submit a signed appeal transaction for a rejected claim.
+   * Opens a new voting window with elevated quorum requirements.
+   */
+  @Post(':id/appeal')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RateLimitGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Submit a signed appeal transaction for a rejected claim' })
+  @ApiResponse({
+    status: 200,
+    description: 'Appeal submitted — new voting window is open',
+    schema: {
+      type: 'object',
+      properties: {
+        transactionHash: { type: 'string', example: 'abc123...' },
+        status: { type: 'string', example: 'UnderAppeal' },
+        message: { type: 'string', example: 'Appeal submitted successfully.' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Appeal cannot be submitted',
+    content: {
+      'application/json': {
+        examples: {
+          NOT_CLAIMANT: {
+            summary: 'Caller is not the claimant',
+            value: { code: 'NOT_CLAIMANT', message: 'Only the claimant can appeal this claim.' },
+          },
+          CLAIM_NOT_REJECTED: {
+            summary: 'Claim is not in Rejected status',
+            value: { code: 'CLAIM_NOT_REJECTED', message: 'Only rejected claims can be appealed.' },
+          },
+          APPEAL_ALREADY_SUBMITTED: {
+            summary: 'Appeal already submitted',
+            value: { code: 'APPEAL_ALREADY_SUBMITTED', message: 'An appeal has already been submitted for this claim.' },
+          },
+          APPEAL_WINDOW_CLOSED: {
+            summary: 'Appeal filing deadline has passed',
+            value: { code: 'APPEAL_WINDOW_CLOSED', message: 'The appeal window for this claim has closed.' },
+          },
+          CLAIMS_PAUSED: {
+            summary: 'Contract admin has paused claims operations',
+            value: { code: 'CLAIMS_PAUSED', message: 'Claim operations are currently paused by the contract admin.' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Claim not found — CLAIM_NOT_FOUND',
+    content: {
+      'application/json': {
+        examples: {
+          CLAIM_NOT_FOUND: {
+            summary: 'Claim not found',
+            value: { code: 'CLAIM_NOT_FOUND', message: 'Claim not found.' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
+  async submitAppeal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { walletAddress: string; signedXdr: string },
+  ): Promise<{ transactionHash: string; status: string; message: string }> {
+    return this.claimsService.submitAppeal(id, body.walletAddress, body.signedXdr);
+  }
+
+  /**
+   * POST /api/claims/:id/appeal/vote/simulate
+   * Simulates the appeal-round vote transaction to pre-flight check eligibility.
+   */
+  @Post(':id/appeal/vote/simulate')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Simulate an appeal-round vote (pre-flight check)' })
+  @ApiResponse({ status: 200, description: 'Simulation passed — safe to open wallet popup' })
+  @ApiResponse({
+    status: 400,
+    description: 'Appeal vote simulation failed',
+    content: {
+      'application/json': {
+        examples: {
+          NOT_ELIGIBLE_VOTER: {
+            summary: 'Wallet is not in the eligible voter snapshot',
+            value: { code: 'NOT_ELIGIBLE_VOTER', message: 'Your wallet is not in the eligible voter list for this appeal.' },
+          },
+          DUPLICATE_VOTE: {
+            summary: 'Already voted in this appeal round',
+            value: { code: 'DUPLICATE_VOTE', message: 'You have already cast an appeal vote on this claim.' },
+          },
+          VOTING_WINDOW_CLOSED: {
+            summary: 'Appeal voting window has closed',
+            value: { code: 'VOTING_WINDOW_CLOSED', message: 'The appeal voting window has closed.' },
+          },
+          CLAIM_NOT_UNDER_APPEAL: {
+            summary: 'Claim is not in UnderAppeal status',
+            value: { code: 'CLAIM_NOT_UNDER_APPEAL', message: 'This claim is not currently in the appeal round.' },
+          },
+          CLAIMS_PAUSED: {
+            summary: 'Contract admin has paused claims operations',
+            value: { code: 'CLAIMS_PAUSED', message: 'Claim operations are currently paused by the contract admin.' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Claim not found — CLAIM_NOT_FOUND',
+    content: {
+      'application/json': {
+        examples: {
+          CLAIM_NOT_FOUND: {
+            summary: 'Claim not found',
+            value: { code: 'CLAIM_NOT_FOUND', message: 'Claim not found.' },
+          },
+        },
+      },
+    },
+  })
+  async simulateAppealVote(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { walletAddress: string; vote: 'Approve' | 'Reject' },
+  ): Promise<void> {
+    return this.claimsService.simulateAppealVote(id, body.walletAddress, body.vote);
+  }
+
+  /**
+   * POST /api/claims/:id/appeal/vote
+   * Submit a signed vote in the appeal round for a UnderAppeal claim.
+   */
+  @Post(':id/appeal/vote')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RateLimitGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Submit a signed vote in the appeal round' })
+  @ApiResponse({
+    status: 200,
+    description: 'Appeal vote recorded on-chain',
+    schema: {
+      type: 'object',
+      properties: {
+        transactionHash: { type: 'string', example: 'abc123...' },
+        status: { type: 'string', example: 'UnderAppeal' },
+        approve_votes: { type: 'integer', example: 3 },
+        reject_votes: { type: 'integer', example: 1 },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Appeal vote cannot be submitted',
+    content: {
+      'application/json': {
+        examples: {
+          NOT_ELIGIBLE_VOTER: {
+            summary: 'Wallet is not in the eligible voter snapshot',
+            value: { code: 'NOT_ELIGIBLE_VOTER', message: 'Your wallet is not in the eligible voter list for this appeal.' },
+          },
+          DUPLICATE_VOTE: {
+            summary: 'Already voted in this appeal round',
+            value: { code: 'DUPLICATE_VOTE', message: 'You have already cast an appeal vote on this claim.' },
+          },
+          VOTING_WINDOW_CLOSED: {
+            summary: 'Appeal voting window has closed',
+            value: { code: 'VOTING_WINDOW_CLOSED', message: 'The appeal voting window has closed.' },
+          },
+          CLAIM_NOT_UNDER_APPEAL: {
+            summary: 'Claim is not in UnderAppeal status',
+            value: { code: 'CLAIM_NOT_UNDER_APPEAL', message: 'This claim is not currently in the appeal round.' },
+          },
+          CLAIMS_PAUSED: {
+            summary: 'Contract admin has paused claims operations',
+            value: { code: 'CLAIMS_PAUSED', message: 'Claim operations are currently paused by the contract admin.' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Claim not found — CLAIM_NOT_FOUND',
+    content: {
+      'application/json': {
+        examples: {
+          CLAIM_NOT_FOUND: {
+            summary: 'Claim not found',
+            value: { code: 'CLAIM_NOT_FOUND', message: 'Claim not found.' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
+  async submitAppealVote(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { walletAddress: string; vote: 'Approve' | 'Reject'; signedXdr: string },
+  ): Promise<{ transactionHash: string; status: string; approve_votes: number; reject_votes: number }> {
+    return this.claimsService.submitAppealVote(id, body.walletAddress, body.vote, body.signedXdr);
   }
 }

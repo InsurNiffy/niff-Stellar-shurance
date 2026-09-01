@@ -61,6 +61,10 @@ export interface EnvironmentVariables {
   CACHE_TTL_SECONDS: number;
   QUOTE_SIMULATION_CACHE_ENABLED: 'true' | 'false' | '1' | '0';
   QUOTE_SIMULATION_CACHE_TTL_SECONDS: number;
+  APPEAL_SIMULATION_CACHE_ENABLED: 'true' | 'false' | '1' | '0';
+  APPEAL_SIMULATION_CACHE_TTL_SECONDS: number;
+  MAX_APPEALS_PER_WALLET_PER_HOUR: number;
+  MAX_APPEALS_PER_WALLET_PER_DAY: number;
   ALLOWED_ASSETS_REFRESH_INTERVAL_MS: number;
   ALLOWED_ASSETS_REFRESH_JITTER_MS: number;
   CAPTCHA_PROVIDER: CaptchaProvider;
@@ -117,6 +121,10 @@ export interface EnvironmentVariables {
   SOLVENCY_TENANT_ID: string;
   SOLVENCY_ALERT_WEBHOOK_URL: string;
   SOLVENCY_ALERT_WEBHOOK_SECRET: string;
+  APPEAL_SLA_MONITOR_ENABLED: string;
+  APPEAL_SLA_GRACE_LEDGERS: number;
+  APPEAL_SLA_ALERT_WEBHOOK_URL: string;
+  APPEAL_SLA_ALERT_WEBHOOK_SECRET: string;
   IPFS_PIN_CHECK_ENABLED: string;
   IPFS_PIN_CHECK_CRON: string;
   IPFS_PIN_CHECK_ALERT_WEBHOOK_URL: string;
@@ -150,6 +158,10 @@ export interface EnvironmentVariables {
   PAGINATION_HMAC_SECRET: string;
   DISABLE_REINDEX_WORKER: string;
   RENEWAL_REMINDER_CRON: string;
+  /** Cron for scanning REJECTED claims nearing appeal_open_deadline_ledger. */
+  APPEAL_WINDOW_REMINDER_CRON: string;
+  /** Ledgers before appeal_open_deadline_ledger to notify the claimant. */
+  APPEAL_WINDOW_REMINDER_LEDGERS: number;
   /** Maximum pending jobs in tx-submit queue before rejecting with 429 backpressure. */
   TX_SUBMIT_QUEUE_MAX_DEPTH: number;
   /** Per-queue BullMQ concurrency levels: format "queue-name=N,..." Defaults per queue if not specified. */
@@ -763,6 +775,41 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     required: 'required',
     schema: Joi.number().integer().min(1).max(600).default(30),
   },
+  APPEAL_SIMULATION_CACHE_ENABLED: {
+    key: 'APPEAL_SIMULATION_CACHE_ENABLED',
+    section: 'Caching',
+    description:
+      'Enable short-TTL Redis cache for POST /claims/:id/appeal/simulate (not build-transaction).',
+    example: 'true',
+    required: 'optional',
+    schema: Joi.string().valid('true', 'false', '1', '0').default('true'),
+  },
+  APPEAL_SIMULATION_CACHE_TTL_SECONDS: {
+    key: 'APPEAL_SIMULATION_CACHE_TTL_SECONDS',
+    section: 'Caching',
+    description: 'TTL for cached appeal simulation results in seconds (keyed by claimId + wallet).',
+    example: '30',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).max(600).default(30),
+  },
+  MAX_APPEALS_PER_WALLET_PER_HOUR: {
+    key: 'MAX_APPEALS_PER_WALLET_PER_HOUR',
+    section: 'Rate Limiting',
+    description:
+      'Dedicated appeal throttle: max appeals per wallet per hour (stricter than claim filing).',
+    example: '2',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(2),
+  },
+  MAX_APPEALS_PER_WALLET_PER_DAY: {
+    key: 'MAX_APPEALS_PER_WALLET_PER_DAY',
+    section: 'Rate Limiting',
+    description:
+      'Dedicated appeal throttle: max appeals per wallet per day (isolated from claim counters).',
+    example: '5',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(5),
+  },
   ALLOWED_ASSETS_REFRESH_INTERVAL_MS: {
     key: 'ALLOWED_ASSETS_REFRESH_INTERVAL_MS',
     section: 'Caching',
@@ -1242,6 +1289,41 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     secret: true,
     schema: Joi.string().allow('').default(''),
   },
+  APPEAL_SLA_MONITOR_ENABLED: {
+    key: 'APPEAL_SLA_MONITOR_ENABLED',
+    section: 'Operations',
+    description: 'Enable scheduled UNDER_APPEAL stuck-finalize SLA monitoring (#1348).',
+    example: 'true',
+    required: 'optional',
+    schema: Joi.string().valid('true', 'false', '1', '0').default('true'),
+  },
+  APPEAL_SLA_GRACE_LEDGERS: {
+    key: 'APPEAL_SLA_GRACE_LEDGERS',
+    section: 'Operations',
+    description:
+      'Ledgers past appeal_deadline_ledger before a UNDER_APPEAL claim is considered stuck (default ~1 day).',
+    example: '17280',
+    required: 'optional',
+    schema: Joi.number().integer().min(0).default(17280),
+  },
+  APPEAL_SLA_ALERT_WEBHOOK_URL: {
+    key: 'APPEAL_SLA_ALERT_WEBHOOK_URL',
+    section: 'Operations',
+    description: 'Webhook URL that receives stuck-appeal SLA breach alerts.',
+    example: '',
+    required: 'optional',
+    secret: true,
+    schema: Joi.string().uri().allow('').default(''),
+  },
+  APPEAL_SLA_ALERT_WEBHOOK_SECRET: {
+    key: 'APPEAL_SLA_ALERT_WEBHOOK_SECRET',
+    section: 'Operations',
+    description: 'Shared secret sent with appeal SLA alert webhooks.',
+    example: '',
+    required: 'optional',
+    secret: true,
+    schema: Joi.string().allow('').default(''),
+  },
   IPFS_PIN_CHECK_ENABLED: {
     key: 'IPFS_PIN_CHECK_ENABLED',
     section: 'Operations',
@@ -1452,6 +1534,24 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '0 * * * *',
     required: 'required',
     schema: Joi.string().default('0 * * * *'),
+  },
+  APPEAL_WINDOW_REMINDER_CRON: {
+    key: 'APPEAL_WINDOW_REMINDER_CRON',
+    section: 'Operations',
+    description:
+      'Cron expression for appeal-window closing reminder scans (REJECTED claims nearing appeal_open_deadline_ledger).',
+    example: '0 */15 * * * *',
+    required: 'optional',
+    schema: Joi.string().default('0 */15 * * * *'),
+  },
+  APPEAL_WINDOW_REMINDER_LEDGERS: {
+    key: 'APPEAL_WINDOW_REMINDER_LEDGERS',
+    section: 'Operations',
+    description:
+      'How many ledgers before appeal_open_deadline_ledger to notify the claimant (default 17280 ≈ 1 day).',
+    example: '17280',
+    required: 'optional',
+    schema: Joi.number().integer().min(1).default(17280),
   },
   TX_SUBMIT_QUEUE_MAX_DEPTH: {
     key: 'TX_SUBMIT_QUEUE_MAX_DEPTH',

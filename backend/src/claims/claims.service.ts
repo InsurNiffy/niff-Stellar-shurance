@@ -11,6 +11,8 @@ import { ReconciliationService } from '../indexer/reconciliation.service';
 import { ClaimAggregationService } from './services/claim-aggregation.service';
 import { ClaimSummaryCacheService } from './services/claim-summary-cache.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { AuditService } from '../admin/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   ClaimDetailResponseDto,
   ClaimsListResponseDto,
@@ -22,6 +24,11 @@ import {
   clampLimit,
 } from '../helpers/pagination';
 import { ClaimViewMapper } from './claim-view.mapper';
+import { AppealSimulationCacheService } from './services/appeal-simulation-cache.service';
+
+/** In-app notification type for appeal-round voter fan-out (#1321). */
+const APPEAL_ROUND_NOTIFICATION_TYPE = 'appeal_round_open';
+const APPEAL_ROUND_NOTIFICATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export interface ListClaimsParams {
   after?: string;
@@ -47,6 +54,7 @@ export class ClaimsService {
     private readonly aggregation: ClaimAggregationService,
     private readonly claimSummaryCache: ClaimSummaryCacheService,
     private readonly metrics: MetricsService,
+    private readonly appealSimulationCache: AppealSimulationCacheService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
@@ -242,6 +250,53 @@ export class ClaimsService {
     });
   }
 
+  /**
+   * List eligible voters for the current appeal round (offline mirror of
+   * on-chain snapshot_appeal_voters). Returns empty when no appeal snapshot
+   * has been persisted yet.
+   */
+  async getAppealVoters(claimId: number): Promise<ClaimVoterDto[]> {
+    const tenantId = this.tenantCtx.tenantId;
+    const readClient = this.getReadClient();
+
+    const claim = await readClient.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: claimId }),
+      select: { id: true, status: true, appealsCount: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${claimId} not found`);
+    }
+
+    if (claim.appealsCount < 1) {
+      return [];
+    }
+
+    const [snapshot, registeredVoters] = await Promise.all([
+      readClient.appealVoterSnapshot.findMany({
+        where: { claimId, appealsCount: claim.appealsCount },
+        select: { walletAddress: true },
+      }),
+      readClient.registeredVoter.findMany({
+        select: { walletAddress: true, displayName: true },
+      }),
+    ]);
+
+    const displayNameByWallet = new Map(
+      registeredVoters.map((v) => [v.walletAddress.toLowerCase(), v.displayName]),
+    );
+
+    // Appeal-round vote status is not yet indexed separately from the original
+    // round; surface eligibility only (voted=false) so the FE can list the electorate.
+    return snapshot.map((row) => ({
+      walletAddress: row.walletAddress,
+      displayName:
+        displayNameByWallet.get(row.walletAddress.toLowerCase()) ?? undefined,
+      voted: false,
+      vote: undefined,
+    }));
+  }
+
   async getClaimsByPolicyIds(
     policyIds: readonly string[],
     limitPerPolicy: number,
@@ -415,7 +470,59 @@ export class ClaimsService {
   // ── Appeal submission ─────────────────────────────────────────────────────
 
   /**
+   * Simulate file_appeal for a rejected claim (wallet pre-flight).
+   *
+   * Short-TTL Redis cache keyed by (claimId, walletAddress) avoids redundant
+   * RPC on retries (#1327). Successful responses never include unsignedXdr —
+   * callers that need signing material must hit buildAppealTransaction, which
+   * always runs a fresh simulation.
+   */
+  async simulateAppealTransaction(args: {
+    claimId: number;
+    walletAddress: string;
+    reason?: string;
+  }) {
+    const tenantId = this.tenantCtx.tenantId;
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: args.claimId }),
+      select: { id: true },
+    });
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${args.claimId} not found`);
+    }
+
+    const cached = await this.appealSimulationCache.get(args.claimId, args.walletAddress);
+    if (cached) {
+      this.logger.debug(
+        `Appeal simulate cache hit claim=${args.claimId} wallet=${args.walletAddress}`,
+      );
+      return { ...cached, cached: true as const };
+    }
+
+    const built = await this.soroban.buildAppealTransaction({
+      claimant: args.walletAddress,
+      claimId: args.claimId,
+      reason: args.reason?.trim() || 'Appeal simulation',
+    });
+
+    const payload = {
+      ok: true as const,
+      claimId: args.claimId,
+      walletAddress: args.walletAddress,
+      minResourceFee: built.minResourceFee,
+      baseFee: built.baseFee,
+      totalEstimatedFee: built.totalEstimatedFee,
+      totalEstimatedFeeXlm: built.totalEstimatedFeeXlm,
+      currentLedger: built.currentLedger,
+    };
+
+    await this.appealSimulationCache.set(args.claimId, args.walletAddress, payload);
+    return { ...payload, cached: false as const };
+  }
+
+  /**
    * Build an unsigned file_appeal transaction for a rejected claim.
+   * Always fresh RPC — never reads the appeal simulate cache (#1327).
    */
   async buildAppealTransaction(args: {
     claimant: string;
@@ -447,7 +554,13 @@ export class ClaimsService {
     // Verify the claim exists and belongs to the correct tenant
     const claim = await this.prisma.claim.findFirst({
       where: claimTenantWhere(tenantId, { id: claimId }),
-      select: { id: true, status: true, appealTxHash: true, appealsCount: true },
+      select: {
+        id: true,
+        status: true,
+        appealTxHash: true,
+        appealsCount: true,
+        creatorAddress: true,
+      },
     });
 
     if (!claim) {
@@ -476,13 +589,21 @@ export class ClaimsService {
     // Persist appeal tracking fields and set claim status to UNDER_APPEAL.
     // The indexer will later decode the appeal_approved / appeal_rejected event
     // and move the claim to APPROVED or REJECTED.
-    await this.prisma.claim.update({
+    const updated = await this.prisma.claim.update({
       where: { id: claimId },
       data: {
         status: 'UNDER_APPEAL',
         appealsCount: { increment: 1 },
         appealTxHash: txHash,
       },
+      select: { id: true, status: true, updatedAt: true },
+    });
+
+    // Push live status to GET /claims/status/stream subscribers (#1326).
+    ClaimsService.publishStatusChange({
+      claimId: String(updated.id),
+      status: updated.status.toLowerCase(),
+      updatedAt: updated.updatedAt.toISOString(),
     });
 
     // Increment appeal metrics (task #1328)
@@ -494,6 +615,51 @@ export class ClaimsService {
     this.logger.log(`Appeal submitted for claim=${claimId} txHash=${txHash}`);
 
     return { cached: false, txHash, claimId, ...result };
+  }
+
+  private async notifyAppealVoters(
+    claimId: number,
+    voterAddresses: string[],
+  ): Promise<void> {
+    for (const walletAddress of voterAddresses) {
+      try {
+        await this.notifications.createNotificationRecord({
+          userId: walletAddress,
+          type: APPEAL_ROUND_NOTIFICATION_TYPE,
+          payload: {
+            claimId,
+            message: `A new appeal voting round is open for claim ${claimId}. Cast your vote.`,
+          },
+          ttlSeconds: APPEAL_ROUND_NOTIFICATION_TTL_SECONDS,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Failed to notify appeal voter ${walletAddress} for claim=${claimId}: ${err}`,
+        );
+      }
+    }
+  }
+
+  private async writeAppealAudit(params: {
+    actor: string;
+    claimId: number;
+    txHash: string;
+    appealsCount: number;
+  }): Promise<void> {
+    try {
+      await this.audit.write({
+        actor: params.actor,
+        action: 'appeal_submitted',
+        payload: {
+          claimId: params.claimId,
+          txHash: params.txHash,
+          appealsCount: params.appealsCount,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Appeal audit write failed for claim=${params.claimId}: ${err}`);
+    }
   }
 
   // ── Claim status polling & SSE ───────────────────────────────────────────

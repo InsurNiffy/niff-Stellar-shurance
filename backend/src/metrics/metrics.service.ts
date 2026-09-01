@@ -129,11 +129,12 @@ export class MetricsService implements OnModuleInit {
   readonly appealsInFlightGauge: client.Gauge<string>;
 
   /**
-   * Total appeal-field corrections applied by the scheduled reconciliation job
-   * (backend/src/indexer/reconciliation.service.ts) when it detects drift
-   * between the stored appealsCount/appealTxHash and the indexed on-chain state.
+   * Number of UNDER_APPEAL claims past appeal_deadline_ledger + grace (#1348).
    */
-  readonly appealReconciliationCorrectionsTotal: client.Counter<string>;
+  readonly appealsSlaStuckGauge: client.Gauge<string>;
+
+  /** Appeal SLA monitor job failures. */
+  readonly appealsSlaCheckErrorsTotal: client.Counter<string>;
 
   constructor(cardinalityGuard: MetricsCardinalityGuard) {
     this.cardinalityGuard = cardinalityGuard;
@@ -404,9 +405,15 @@ export class MetricsService implements OnModuleInit {
       registers: [this.registry],
     });
 
-    this.appealReconciliationCorrectionsTotal = new client.Counter({
-      name: 'appeal_reconciliation_corrections_total',
-      help: 'Total appeal-field corrections applied by the scheduled reconciliation job',
+    this.appealsSlaStuckGauge = new client.Gauge({
+      name: 'appeals_sla_stuck',
+      help: 'UNDER_APPEAL claims past on-chain appeal deadline + grace (stuck finalize_appeal)',
+      registers: [this.registry],
+    });
+
+    this.appealsSlaCheckErrorsTotal = new client.Counter({
+      name: 'appeals_sla_check_errors_total',
+      help: 'Appeal SLA monitor job failures',
       registers: [this.registry],
     });
   }
@@ -611,13 +618,13 @@ export class MetricsService implements OnModuleInit {
     this.appealsInFlightGauge.dec();
   }
 
-  /**
-   * Call when the scheduled reconciliation job corrects an appeal field
-   * (appealsCount / appealTxHash) that drifted from the indexed on-chain state.
-   */
-  recordAppealReconciliationCorrection(claimId: number) {
-    const normalizedClaimId = this.cardinalityGuard.normalizeClaimId(claimId);
-    this.appealReconciliationCorrectionsTotal.inc({ claim_id: normalizedClaimId });
+  /** Set after each Appeal SLA monitor pass (#1348). */
+  recordAppealSlaStuckCount(count: number) {
+    this.appealsSlaStuckGauge.set(count);
+  }
+
+  recordAppealSlaCheckError() {
+    this.appealsSlaCheckErrorsTotal.inc();
   }
 
   async getMetrics(): Promise<string> {
