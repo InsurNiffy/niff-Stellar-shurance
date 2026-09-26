@@ -41,12 +41,12 @@
     "@csstools/css-tokenizer" "^3.0.3"
     lru-cache "^10.4.3"
 
-"@axe-core/playwright@^4.10.1":
-  version "4.11.1"
-  resolved "https://registry.npmjs.org/@axe-core/playwright/-/playwright-4.11.1.tgz"
-  integrity sha512-mKEfoUIB1MkVTht0BGZFXtSAEKXMJoDkyV5YZ9jbBmZCcWDz71tegNsdTkIN8zc/yMi5Gm2kx7Z5YQ9PfWNAWw==
+"@axe-core/playwright@^4.13.0":
+  version "4.13.0"
+  resolved "https://registry.yarnpkg.com/@axe-core/playwright/-/playwright-4.13.0.tgz#4826467c9622df26f0d75b4c1747c8d92ee599de"
+  integrity sha512-6YLx+kxXu5GJceG4ozFg+33a2EMTdjYwWGloJ3sb9Kta5pp+ZNS53uxGVog5JetIY8s++P5UrtX+cri+u0VAVg==
   dependencies:
-    axe-core "~4.11.1"
+    axe-core "~4.13.0"
 
 "@babel/code-frame@^7.0.0", "@babel/code-frame@^7.10.4", "@babel/code-frame@^7.12.13", "@babel/code-frame@^7.16.7", "@babel/code-frame@^7.23.5", "@babel/code-frame@^7.26.2", "@babel/code-frame@^7.27.1", "@babel/code-frame@^7.28.6", "@babel/code-frame@^7.29.0":
   version "7.29.0"
@@ -2973,6 +2973,20 @@
     aria-hidden "^1.2.4"
     react-remove-scroll "^2.7.2"
 
+"@radix-ui/react-slot@1.2.3":
+  version "1.2.3"
+  resolved "https://registry.npmjs.org/@radix-ui/react-slot/-/react-slot-1.2.3.tgz"
+  integrity sha512-aeNmHnBxbi2St0au6VBVC7JXFlhLlOnvIIlePNniyUNAClzmtAUEY8/pBiK3iHjufOlwA+c20/8jngo7xcrg8A==
+  dependencies:
+    "@radix-ui/react-compose-refs" "1.1.2"
+
+"@radix-ui/react-slot@1.2.4", "@radix-ui/react-slot@^1.2.4":
+  version "1.2.4"
+  resolved "https://registry.npmjs.org/@radix-ui/react-slot/-/react-slot-1.2.4.tgz"
+  integrity sha512-Jl+bCv8HxKnlTLVrcDE8zTMJ09R9/ukw4qBs/oZClOfoQk/cOTbDn+NceXfV7j09YPVQUryJPHurafcSg6EVKA==
+  dependencies:
+    "@radix-ui/react-compose-refs" "1.1.2"
+
 "@radix-ui/react-slot@1.3.3", "@radix-ui/react-slot@^1.2.4":
   version "1.3.3"
   resolved "https://registry.npmjs.org/@radix-ui/react-slot/-/react-slot-1.3.3.tgz"
@@ -4496,6 +4510,16 @@
   resolved "https://registry.yarnpkg.com/@swc/core-linux-arm64-gnu/-/core-linux-arm64-gnu-1.16.2.tgz#9684df59917e4b0de8f528f04cf7f6e7526ca7b1"
   integrity sha512-/jcTmK6Ktz3owM3YtiKvjofV6p3VpHnYzTIrOGwDIOsDigRAAVuZ8east33wYO/7UTdKYFlyHNnJNT0WJqOA3Q==
 
+"@swc/core-linux-arm64-gnu@1.15.32":
+  version "1.15.32"
+  resolved "https://registry.npmjs.org/@swc/core-linux-arm64-gnu/-/core-linux-arm64-gnu-1.15.32.tgz"
+  integrity sha512-oDzEkdl6D6BAWdMtU5KGO7y3HR5fJcvByNLyEk9+ugj8nP5Ovb7P4kBcStBXc4MPExFGQryehiINMlmY8HlclA==
+
+"@swc/core-linux-arm64-gnu@1.16.2":
+  version "1.16.2"
+  resolved "https://registry.yarnpkg.com/@swc/core-linux-arm64-gnu/-/core-linux-arm64-gnu-1.16.2.tgz#9684df59917e4b0de8f528f04cf7f6e7526ca7b1"
+  integrity sha512-/jcTmK6Ktz3owM3YtiKvjofV6p3VpHnYzTIrOGwDIOsDigRAAVuZ8east33wYO/7UTdKYFlyHNnJNT0WJqOA3Q==
+
 "@swc/core-linux-arm64-musl@1.15.32":
   version "1.15.32"
   resolved "https://registry.npmjs.org/@swc/core-linux-arm64-musl/-/core-linux-arm64-musl-1.15.32.tgz"
@@ -4505,6 +4529,26 @@
   version "1.16.2"
   resolved "https://registry.yarnpkg.com/@swc/core-linux-arm64-musl/-/core-linux-arm64-musl-1.16.2.tgz#36b59ed1a46795755e6d083e6693753c5ea1e7d0"
   integrity sha512-4gFarKaFnlJTSlJYKmMhV4u+3YE4uYfiydpBoYjmgQhCf9lAieOq+WilZaK9vVSHeqLuQpTEiGULZqAdsRX5Dw==
+
+"@swc/core-linux-arm64-musl@1.15.32":
+  version "1.15.32"
+  resolved "https://registry.npmjs.org/@swc/core-linux-arm64-musl/-/core-linux-arm64-musl-1.15.32.tgz"
+  integrity sha512-omcqjoZP/b8D8PuczVoRwJieC6ibj7qIxTftNYokz4/aSmKFHvsd7nIFfPk5ZvtzncbH4AY7+Dkr/Lp2gWxYeA==
+
+"@swc/core-linux-arm64-musl@1.16.2":
+  version "1.16.2"
+  resolved "https://registry.yarnpkg.com/@swc/core-linux-arm64-musl/-/core-linux-arm64-musl-1.16.2.tgz#36b59ed1a46795755e6d083e6693753c5ea1e7d0"
+  integrity sha512-4gFarKaFnlJTSlJYKmMhV4u+3YE4uYfiydpBoYjmgQhCf9lAieOq+WilZaK9vVSHeqLuQpTEiGULZqAdsRX5Dw==
+
+"@swc/core-linux-ppc64-gnu@1.15.32":
+  version "1.15.32"
+  resolved "https://registry.npmjs.org/@swc/core-linux-ppc64-gnu/-/core-linux-ppc64-gnu-1.15.32.tgz"
+  integrity sha512-KGkTMyz/Tbn3PBNu0AVZ4GTDFKnICrYcTiNPZq8DrvK42pnFsf3GNDrIG9E5AtQlTmC0YigkWKmu0eMcfTrmgA==
+
+"@swc/core-linux-ppc64-gnu@1.16.2":
+  version "1.16.2"
+  resolved "https://registry.yarnpkg.com/@swc/core-linux-ppc64-gnu/-/core-linux-ppc64-gnu-1.16.2.tgz#b0f648e760031e4674e0d07eb4991dfb468d21ee"
+  integrity sha512-syqSLGd6KlZ1PciNzs6bIUlhOuFztZufebOHaERjc4N4SqNZxyqYd4I+jj/EfOYnpe0kNjccn9HJLN1p5dz3+w==
 
 "@swc/core-linux-ppc64-gnu@1.15.32":
   version "1.15.32"
@@ -4526,6 +4570,16 @@
   resolved "https://registry.yarnpkg.com/@swc/core-linux-s390x-gnu/-/core-linux-s390x-gnu-1.16.2.tgz#7757e4999f4e236a8bb05bd04367574ce926d4cc"
   integrity sha512-ZBBLK+ewGyXLzWeMS7wbKtWBdnif6etn7xvPY/iOfbdsjX/+bgkp1pQt2lWF2wlu2hXYZuhJ/tHZE/QR8/apzg==
 
+"@swc/core-linux-s390x-gnu@1.15.32":
+  version "1.15.32"
+  resolved "https://registry.npmjs.org/@swc/core-linux-s390x-gnu/-/core-linux-s390x-gnu-1.15.32.tgz"
+  integrity sha512-G3Aa4tVS/3OGZBkoNIwUF9F6RAy+Osb4GOlo62SinLmDiErz/ykmM7KH0wkz6l9kM8jJq1HyAM6atJTUEbBk7g==
+
+"@swc/core-linux-s390x-gnu@1.16.2":
+  version "1.16.2"
+  resolved "https://registry.yarnpkg.com/@swc/core-linux-s390x-gnu/-/core-linux-s390x-gnu-1.16.2.tgz#7757e4999f4e236a8bb05bd04367574ce926d4cc"
+  integrity sha512-ZBBLK+ewGyXLzWeMS7wbKtWBdnif6etn7xvPY/iOfbdsjX/+bgkp1pQt2lWF2wlu2hXYZuhJ/tHZE/QR8/apzg==
+
 "@swc/core-linux-x64-gnu@1.15.32":
   version "1.15.32"
   resolved "https://registry.npmjs.org/@swc/core-linux-x64-gnu/-/core-linux-x64-gnu-1.15.32.tgz"
@@ -4535,6 +4589,17 @@
   version "1.16.2"
   resolved "https://registry.yarnpkg.com/@swc/core-linux-x64-gnu/-/core-linux-x64-gnu-1.16.2.tgz#a25271e8199c46e54f1042c9d98fbf38fdb4736c"
   integrity sha512-LyHJgxCA4Tje0ysBMbEb0tt/ie8kgUKoFE3JAKFhpevmTmhYEoC0H9s47WuDsqiFckF1ITUguZIXJG6K5e0dvg==
+
+"@swc/core-linux-x64-gnu@1.15.32":
+  version "1.15.32"
+  resolved "https://registry.npmjs.org/@swc/core-linux-x64-gnu/-/core-linux-x64-gnu-1.15.32.tgz"
+  integrity sha512-ERsjfGcj6CBmj3vJnGDO8m8rTvw6RqMcWo1dogOtNx3/+/0+NNpJiXDobJrr1GwInI/BHAEkvSFIH6d2LqPcUQ==
+
+"@swc/core-linux-x64-gnu@1.16.2":
+  version "1.16.2"
+  resolved "https://registry.yarnpkg.com/@swc/core-linux-x64-gnu/-/core-linux-x64-gnu-1.16.2.tgz#a25271e8199c46e54f1042c9d98fbf38fdb4736c"
+  integrity sha512-LyHJgxCA4Tje0ysBMbEb0tt/ie8kgUKoFE3JAKFhpevmTmhYEoC0H9s47WuDsqiFckF1ITUguZIXJG6K5e0dvg==
+
 
 "@swc/core-linux-x64-musl@1.15.32":
   version "1.15.32"
@@ -4617,6 +4682,29 @@
     "@swc/core-win32-arm64-msvc" "1.16.2"
     "@swc/core-win32-ia32-msvc" "1.16.2"
     "@swc/core-win32-x64-msvc" "1.16.2"
+  dependencies:
+    "@swc/counter" "^0.1.3"
+    "@swc/types" "^0.1.28"
+  optionalDependencies:
+    "@swc/core-darwin-arm64" "1.16.2"
+    "@swc/core-darwin-x64" "1.16.2"
+    "@swc/core-linux-arm-gnueabihf" "1.16.2"
+    "@swc/core-linux-arm64-gnu" "1.16.2"
+    "@swc/core-linux-arm64-musl" "1.16.2"
+    "@swc/core-linux-ppc64-gnu" "1.16.2"
+    "@swc/core-linux-s390x-gnu" "1.16.2"
+    "@swc/core-linux-x64-gnu" "1.16.2"
+    "@swc/core-linux-x64-musl" "1.16.2"
+    "@swc/core-win32-arm64-msvc" "1.16.2"
+    "@swc/core-win32-ia32-msvc" "1.16.2"
+    "@swc/core-win32-x64-msvc" "1.16.2"
+  version "1.16.2"
+  resolved "https://registry.yarnpkg.com/@swc/core/-/core-1.16.2.tgz#6cc0c7f27938bea7208467a18ab518fa23b78367"
+  integrity sha512-95I4kiSMeveI/Mhi+tE4fiWcWLUMfzfKrk0jtr8LRMqHgOgq+xHS+zExkDqoO4b5OeeuXHMWVdD5MeP3X6sULw==
+  dependencies:
+    "@swc/counter" "^0.1.3"
+    "@swc/types" "^0.1.28"
+  optionalDependencies:
 
 "@swc/counter@^0.1.3":
   version "0.1.3"
@@ -4762,29 +4850,29 @@
     postcss "^8.5.6"
     tailwindcss "4.2.2"
 
-"@tanstack/query-core@5.95.2":
-  version "5.95.2"
-  resolved "https://registry.npmjs.org/@tanstack/query-core/-/query-core-5.95.2.tgz"
-  integrity sha512-o4T8vZHZET4Bib3jZ/tCW9/7080urD4c+0/AUaYVpIqOsr7y0reBc1oX3ttNaSW5mYyvZHctiQ/UOP2PfdmFEQ==
+"@tanstack/query-core@5.102.8":
+  version "5.102.8"
+  resolved "https://registry.yarnpkg.com/@tanstack/query-core/-/query-core-5.102.8.tgz#c55c31b4f99124054805ce8ec8137c84108f3252"
+  integrity sha512-ZNjkJ33CqvPNec/6lZBnHqLc3EVGPZ9ySLhYahU9TcuRFdmwXewuj0c4hwSWcGHqEUwcSrKeZ+oGcvPBqXcQcg==
 
-"@tanstack/query-devtools@5.95.2":
-  version "5.95.2"
-  resolved "https://registry.npmjs.org/@tanstack/query-devtools/-/query-devtools-5.95.2.tgz"
-  integrity sha512-QfaoqBn9uAZ+ICkA8brd1EHj+qBF6glCFgt94U8XP5BT6ppSsDBI8IJ00BU+cAGjQzp6wcKJL2EmRYvxy0TWIg==
+"@tanstack/query-devtools@5.102.8":
+  version "5.102.8"
+  resolved "https://registry.yarnpkg.com/@tanstack/query-devtools/-/query-devtools-5.102.8.tgz#4582472097e9ca944f5c4ea3a96ac29a2221e993"
+  integrity sha512-ZgeMKuF5d/zOE+tgWm3cSbD6Zcbr6IugVsnbHzUcSismqLZDSUPBKM6ILUxExgwe6rPAOox2x5bA5T+PSOQG0Q==
 
-"@tanstack/react-query-devtools@^5.80.7":
-  version "5.95.2"
-  resolved "https://registry.npmjs.org/@tanstack/react-query-devtools/-/react-query-devtools-5.95.2.tgz"
-  integrity sha512-AFQFmbznVkbtfpx8VJ2DylW17wWagQel/qLstVLkYmNRo2CmJt3SNej5hvl6EnEeljJIdC3BTB+W7HZtpsH+3g==
+"@tanstack/react-query-devtools@^5.102.8":
+  version "5.102.8"
+  resolved "https://registry.yarnpkg.com/@tanstack/react-query-devtools/-/react-query-devtools-5.102.8.tgz#b95a73f250974728b2298aabb52c487dc30386c6"
+  integrity sha512-QKb7A44BZOU7nxsGA4gFN1fofjYovar5O0T83Ff4Y+2eRq09RGFrAzzutVdF/6/emfSaMDohp6e759BjB3fxEw==
   dependencies:
-    "@tanstack/query-devtools" "5.95.2"
+    "@tanstack/query-devtools" "5.102.8"
 
-"@tanstack/react-query@^5.80.7":
-  version "5.95.2"
-  resolved "https://registry.npmjs.org/@tanstack/react-query/-/react-query-5.95.2.tgz"
-  integrity sha512-/wGkvLj/st5Ud1Q76KF1uFxScV7WeqN1slQx5280ycwAyYkIPGaRZAEgHxe3bjirSd5Zpwkj6zNcR4cqYni/ZA==
+"@tanstack/react-query@^5.102.8":
+  version "5.102.8"
+  resolved "https://registry.yarnpkg.com/@tanstack/react-query/-/react-query-5.102.8.tgz#bdc5c24485258e6ae2e7ecac0a4cf58c59937839"
+  integrity sha512-TYBea4OuXWD7MhaSHq069TWbFe7rcwWN6kzT7JF0OKi1K6c1gTv2IzD6A6ExJsCMozdkqBWeuIUZmu4KQg0O5A==
   dependencies:
-    "@tanstack/query-core" "5.95.2"
+    "@tanstack/query-core" "5.102.8"
 
 "@testing-library/dom@^10.4.1":
   version "10.4.1"
@@ -6576,10 +6664,10 @@ axe-core@^3.5.5:
   resolved "https://registry.npmjs.org/axe-core/-/axe-core-3.5.6.tgz"
   integrity sha512-LEUDjgmdJoA3LqklSTwKYqkjcZ4HKc4ddIYGSAiSkr46NTjzg2L9RNB+lekO9P7Dlpa87+hBtzc2Fzn/+GUWMQ==
 
-axe-core@^4.10.0, axe-core@~4.11.1:
-  version "4.11.1"
-  resolved "https://registry.npmjs.org/axe-core/-/axe-core-4.11.1.tgz"
-  integrity sha512-BASOg+YwO2C+346x3LZOeoovTIoTrRqEsqMa6fmfAV0P+U9mFr9NsyOEpiYvFjbc64NMrSswhV50WdXzdb/Z5A==
+axe-core@^4.10.0, axe-core@~4.13.0:
+  version "4.13.0"
+  resolved "https://registry.yarnpkg.com/axe-core/-/axe-core-4.13.0.tgz#f868ecb1bd61d982321760e51d841ab497ab86d0"
+  integrity sha512-UzGt8zg7Ny8djbYMhxl2zuEevVa7r2gJjYY5Lwr1xM7+XU2nd6CkIWFTVcCIbAP63vSz71NaVyyuSk9lHKcy0A==
 
 axios-retry@^4.5.0:
   version "4.5.0"
@@ -14831,6 +14919,21 @@ tailwindcss@4.2.2, tailwindcss@^4.2.2:
   version "4.2.2"
   resolved "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.2.2.tgz"
   integrity sha512-KWBIxs1Xb6NoLdMVqhbhgwZf2PGBpPEiwOqgI4pFIYbNTfBXiKYyWoTsXgBQ9WFg/OlhnvHaY+AEpW7wSmFo2Q==
+
+tailwindcss@^4.3.3:
+  version "4.3.3"
+  resolved "https://registry.yarnpkg.com/tailwindcss/-/tailwindcss-4.3.3.tgz#c006861611c213c1877893ab5b23daa16be2bb55"
+  integrity sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==
+
+tapable@^2.0.0, tapable@^2.2.1
+  version "4.2.2"
+  resolved "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.2.2.tgz"
+  integrity sha512-KWBIxs1Xb6NoLdMVqhbhgwZf2PGBpPEiwOqgI4pFIYbNTfBXiKYyWoTsXgBQ9WFg/OlhnvHaY+AEpW7wSmFo2Q==
+
+tailwindcss@^4.3.3:
+  version "4.3.3"
+  resolved "https://registry.yarnpkg.com/tailwindcss/-/tailwindcss-4.3.3.tgz#c006861611c213c1877893ab5b23daa16be2bb55"
+  integrity sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==
 
 tapable@^2.0.0, tapable@^2.2.1, tapable@^2.3.0:
   version "2.3.2"
