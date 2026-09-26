@@ -46,6 +46,16 @@ pub fn transfer_from_contract(env: &Env, to: &Address, amount: i128) {
     client.transfer(&env.current_contract_address(), to, &amount);
 }
 
+/// Refund a previously-collected claim filing fee back to `to` in `asset`.
+/// Draws from the contract's own balance, mirroring the outgoing-transfer
+/// pattern used by claim payouts (`claim::payout`), since fee collection
+/// deposits into the configured treasury which is expected to route back
+/// through the contract's holdings for this asset.
+pub fn refund_fee(env: &Env, to: &Address, asset: &Address, amount: i128) {
+    let client = token::TokenClient::new(env, asset);
+    client.transfer(&env.current_contract_address(), to, &amount);
+}
+
 /// Low-level SEP-41 `transfer` invocation for a specific allowlisted asset.
 ///
 /// Defence-in-depth: verifies `token` is on the allowlist before invoking.
@@ -74,6 +84,15 @@ pub fn check_balance(env: &Env, asset: &Address, amount: i128) -> bool {
 pub fn get_balance(env: &Env, asset: &Address) -> i128 {
     let client = token::TokenClient::new(env, asset);
     client.balance(&env.current_contract_address())
+}
+
+/// Pre-flight check: how much of `asset` has `owner` approved this contract
+/// to spend via `transfer_from`. Used to surface a friendly
+/// `InsufficientAllowance` error at `initiate_policy` instead of letting the
+/// SEP-41 `transfer_from` call trap with an opaque host error.
+pub fn get_allowance(env: &Env, asset: &Address, owner: &Address) -> i128 {
+    let client = token::TokenClient::new(env, asset);
+    client.allowance(owner, &env.current_contract_address())
 }
 
 /// Get the current balance of `asset` held by the configured treasury address.

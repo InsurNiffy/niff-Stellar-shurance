@@ -41,12 +41,16 @@ model Claim {
   appealsCount      Int       @default(0) @map("appeals_count")
   /// The tx hash of the most recent appeal submission. Used to detect duplicate submissions.
   appealTxHash      String?   @map("appeal_tx_hash")
+  /// Ledger by which the claimant must open an appeal (mirrors on-chain appeal_open_deadline_ledger).
+  /// Set when the claim becomes REJECTED; null if never rejected or deadline unknown.
+  appealOpenDeadlineLedger Int? @map("appeal_open_deadline_ledger")
 
   // Relations
   policy            Policy    @relation(fields: [policyId], references: [id])
   votes             Vote[]
   comments          ClaimComment[]
   evidenceMetadata  EvidenceMetadata?
+  appealVoterSnapshots AppealVoterSnapshot[]
 
   @@index([status])
   @@index([severity])
@@ -58,7 +62,25 @@ model Claim {
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([tenantId, createdAt, id]) // tenant-scoped keyset pagination
+  @@index([status, appealOpenDeadlineLedger])
   @@map("claims")
+}
+
+/// Offline mirror of on-chain snapshot_appeal_voters for a claim's current appeal round.
+/// Written when submitAppealTransaction succeeds; used by GET /claims/:id/appeal/voters.
+model AppealVoterSnapshot {
+  id             Int      @id @default(autoincrement())
+  claimId        Int      @map("claim_id")
+  walletAddress  String   @map("wallet_address")
+  /// Appeal round number this snapshot belongs to (matches Claim.appealsCount after open).
+  appealsCount   Int      @map("appeals_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  claim          Claim    @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId, walletAddress, appealsCount])
+  @@index([claimId, appealsCount])
+  @@map("appeal_voter_snapshots")
 }
 
 model Vote {
@@ -187,6 +209,8 @@ enum ClaimStatus {
   PAID
   REJECTED
   UNDER_APPEAL
+  APPEAL_APPROVED
+  APPEAL_REJECTED
 }
 
 enum ClaimSeverity {

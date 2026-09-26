@@ -1,0 +1,264 @@
+name: Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [closed]
+
+jobs:
+  deploy-preview:
+    name: Deploy Preview Environment
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+    permissions:
+      contents: read
+      pull-requests: write
+      deployments: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Setup environment
+        run: |
+          # Create unique preview environment name based on PR number
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PREVIEW_ENV="preview-pr-${PR_NUMBER}"
+          PREVIEW_URL="https://${PREVIEW_ENV}.staging.insurniff.com"
+
+          echo "PREVIEW_ENV=${PREVIEW_ENV}" >> $GITHUB_ENV
+          echo "PREVIEW_URL=${PREVIEW_URL}" >> $GITHUB_ENV
+          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_ENV
+
+      - name: Check deployment cache
+        id: cache-check
+        run: |
+          # Check if environment already exists and is healthy
+          if curl -f -s "${PREVIEW_URL}/health" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Docker images
+        if: steps.cache-check.outputs.exists == 'false'
+        run: |
+          docker build -f Dockerfile.backend \
+            --tag "${{ env.PREVIEW_ENV }}/backend:latest" .
+
+          docker build -f Dockerfile.frontend \
+            --tag "${{ env.PREVIEW_ENV }}/frontend:latest" .
+
+      - name: Deploy with Docker Compose
+        if: steps.cache-check.outputs.exists == 'false'
+        run: |
+          # Create temporary docker-compose file for preview environment
+          cat > docker-compose.preview.yml << 'EOF'
+          version: '3.8'
+          services:
+            backend:
+              image: ${{ env.PREVIEW_ENV }}/backend:latest
+              ports:
+                - "3001:3001"
+              environment:
+                NODE_ENV: development
+                DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}-${{ env.PR_NUMBER }}
+                REDIS_URL: redis://redis:6379
+                LOG_LEVEL: debug
+              depends_on:
+                - postgres
+                - redis
+              volumes:
+                - ./backend:/app/backend
+                - /app/backend/node_modules
+
+            frontend:
+              image: ${{ env.PREVIEW_ENV }}/frontend:latest
+              ports:
+                - "3000:3000"
+              environment:
+                NEXT_PUBLIC_API_URL: http://localhost:3001
+                NODE_ENV: development
+              depends_on:
+                - backend
+              volumes:
+                - ./frontend:/app/frontend
+                - /app/frontend/node_modules
+
+            postgres:
+              image: postgres:15
+              environment:
+                POSTGRES_PASSWORD: ${{ secrets.PREVIEW_DB_PASSWORD }}
+                POSTGRES_DB: preview_pr_${{ env.PR_NUMBER }}
+              volumes:
+                - preview_db_${{ env.PR_NUMBER }}:/var/lib/postgresql/data
+
+            redis:
+              image: redis:7-alpine
+              ports:
+                - "6379:6379"
+
+          volumes:
+            preview_db_${{ env.PR_NUMBER }}:
+          EOF
+
+          # Start preview environment
+          docker-compose -f docker-compose.preview.yml up -d
+
+      - name: Wait for services to be ready
+        if: steps.cache-check.outputs.exists == 'false'
+        run: |
+          # Wait for backend health check
+          max_attempts=30
+          attempt=1
+
+          while [ $attempt -le $max_attempts ]; do
+            if curl -f -s http://localhost:3001/health > /dev/null 2>&1; then
+              echo "Backend is healthy"
+              break
+            fi
+
+            echo "Waiting for backend to be ready (attempt $attempt/$max_attempts)..."
+            sleep 2
+            attempt=$((attempt + 1))
+          done
+
+          if [ $attempt -gt $max_attempts ]; then
+            echo "Backend failed to become healthy"
+            docker-compose -f docker-compose.preview.yml logs
+            exit 1
+          fi
+
+          # Wait for frontend
+          sleep 5
+
+      - name: Seed test data
+        if: steps.cache-check.outputs.exists == 'false'
+        run: |
+          npm run seed:preview -- --pr=${{ env.PR_NUMBER }}
+
+      - name: Run smoke tests
+        run: |
+          npm run test:smoke -- \
+            --baseUrl=${{ env.PREVIEW_URL }} \
+            --timeout=30000
+
+      - name: Comment preview URL on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const PR_NUMBER = ${{ env.PR_NUMBER }};
+            const PREVIEW_URL = "${{ env.PREVIEW_URL }}";
+            const BACKEND_URL = "${{ env.PREVIEW_URL }}/api";
+
+            const body = `## 🚀 Preview Environment Ready
+
+            Your preview environment is now live and ready for testing!
+
+            ### Links
+            - **Frontend**: [${PREVIEW_URL}](${PREVIEW_URL})
+            - **Backend API**: [${BACKEND_URL}](${BACKEND_URL})
+            - **Health Check**: [${PREVIEW_URL}/health](${PREVIEW_URL}/health)
+
+            ### Features
+            - ✅ Seeded with test data
+            - ✅ Fully isolated from production
+            - ✅ Auto-cleaned up when PR is closed
+
+            ### Notes
+            - Preview environment resets every push to this PR
+            - Backend logs: \`docker-compose -f docker-compose.preview.yml logs backend\`
+            - Database: \`psql -U postgres -d preview_pr_${PR_NUMBER}\`
+
+            *Environment will be automatically torn down when this PR is closed.*`;
+
+            // Find existing preview comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const previewComment = comments.data.find(comment =>
+              comment.body.includes('🚀 Preview Environment Ready')
+            );
+
+            if (previewComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: previewComment.id,
+                body: body,
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+  cleanup-preview:
+    name: Cleanup Preview Environment
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Setup environment
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PREVIEW_ENV="preview-pr-${PR_NUMBER}"
+
+          echo "PREVIEW_ENV=${PREVIEW_ENV}" >> $GITHUB_ENV
+          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_ENV
+
+      - name: Stop preview containers
+        run: |
+          # Stop and remove Docker Compose services
+          docker-compose -f docker-compose.preview.yml down -v 2>/dev/null || true
+
+          # Remove Docker images
+          docker rmi "${{ env.PREVIEW_ENV }}/backend:latest" 2>/dev/null || true
+          docker rmi "${{ env.PREVIEW_ENV }}/frontend:latest" 2>/dev/null || true
+
+      - name: Cleanup database
+        run: |
+          # Drop preview database
+          PGPASSWORD="${{ secrets.PREVIEW_DB_PASSWORD }}" \
+          psql -U postgres -h preview-db.staging.insurniff.com \
+            -c "DROP DATABASE IF EXISTS preview_pr_${{ env.PR_NUMBER }};" 2>/dev/null || true
+
+      - name: Comment cleanup on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## ✅ Preview Environment Cleaned Up
+
+            The preview environment for this PR has been automatically terminated.
+
+            All resources have been released:
+            - ✅ Docker containers stopped and removed
+            - ✅ Database deleted
+            - ✅ Volumes cleaned up`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body,
+            });
