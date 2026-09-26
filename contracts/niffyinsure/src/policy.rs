@@ -7,7 +7,7 @@ use crate::{
     validate::{self, Error},
 };
 pub use ledger::QUOTE_TTL_LEDGERS;
-use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env, String};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, BytesN, Env, String};
 
 /// Current event schema version.
 pub const POLICY_EVENT_VERSION: u32 = 1;
@@ -66,6 +66,14 @@ pub enum PolicyError {
     InvalidDeductible = 123,
     /// Treasury balance is insufficient to cover projected claim obligations.
     InsufficientSolvency = 124,
+    /// Terms hash is all-zero (uninitialized). A non-zero SHA-256 digest is required at bind time.
+    InvalidTermsHash = 125,
+    /// Supplied address is the zero address, which cannot hold funds or authorize transactions.
+    ZeroAddress = 126,
+    /// Holder already has an active policy covering the same asset type and
+    /// region with an overlapping ledger window. See `initiate_policy`'s
+    /// "Overlap definition" doc comment for the exact rule.
+    DuplicateCoverageActive = 127,
 }
 
 #[contracttype]
@@ -92,6 +100,23 @@ pub struct PolicyInitiated {
     pub deductible: Option<i128>,
     pub start_ledger: u32,
     pub end_ledger: u32,
+    /// SHA-256 hash of the insurance terms document bound at policy initiation.
+    /// Non-zero; uniquely identifies the exact terms version in effect.
+    pub terms_hash: BytesN<32>,
+}
+
+/// Emitted right before `initiate_policy` reverts with
+/// `PolicyError::InsufficientAllowance`. Carries the exact required and
+/// actual allowance so a frontend can prompt the user to call
+/// `token.approve(contract_address, required)` and retry.
+#[contractevent(topics = ["niffyinsure", "insufficient_allowance"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsufficientAllowanceDetail {
+    #[topic]
+    pub holder: Address,
+    pub asset: Address,
+    pub required: i128,
+    pub actual: i128,
 }
 
 /// Emitted when a protocol fee is collected from a premium payment.
@@ -250,6 +275,7 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::DetailsTooLong => "claim details exceed maximum length",
         Error::TooManyImageUrls => "too many image URLs supplied",
         Error::ImageUrlTooLong => "image URL exceeds maximum length",
+        Error::EvidenceUrlTooLong => "evidence URL exceeds maximum byte limit",
         Error::ReasonTooLong => "termination reason exceeds maximum length",
         Error::ClaimAlreadyTerminal => {
             "claim already terminal, or withdrawal blocked (voting started or not Processing)"
@@ -321,7 +347,7 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::InsufficientEvidence => "claim evidence count is below the minimum requirement",
         Error::CooldownActive => "policy claim cooldown window has not elapsed",
         Error::CalculatorVersionMismatch => {
-            "premium calculator config version is incompatible with this contract"
+            "premium calculator ABI version is incompatible with this contract"
         }
         Error::CommitRevealNotSet => "commit-reveal voting phases are not configured for this claim",
         Error::CommitPhaseEnded => "commit phase has ended for this claim",
@@ -329,11 +355,45 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::RevealPhaseEnded => "reveal phase has ended for this claim",
         Error::CommitmentNotFound => "no vote commitment found for this voter",
         Error::CommitmentMismatch => "revealed vote does not match the prior commitment",
+        Error::DuplicateEvidence => "evidence array contains a duplicate url/hash pair",
+        Error::SelfVoteNotAllowed => "claimant cannot vote on their own claim",
+        Error::PageSizeTooLarge => "requested page size exceeds the hard query cap",
+        Error::EscalationDeadlineNotFuture => "escalation deadline must be in the future",
+        Error::EscalationDeadlineNotEarlier => {
+            "escalation deadline must be earlier than the current voting deadline"
+        }
+        Error::ClaimIdOverflow => "claim ID counter overflowed u64::MAX",
+        Error::InsufficientAllowanceForFee => {
+            "claimant's token allowance is insufficient to cover the claim filing fee"
+        }
+        Error::VoterCapReached => "claim has already reached the maximum number of unique voters",
+        Error::VoterRegistryCapExceeded => {
+            "batch would push the global voter registry past its configured maximum"
+        }
     };
+
     QuoteFailure {
         code: err as u32,
         message: String::from_str(env, message),
     }
+}
+
+/// Reject the zero address early, before any auth or storage writes.
+/// The zero address cannot authorize transactions and would permanently lock funds.
+///
+/// In Soroban a "zero" Stellar account is a 32-byte all-zero Ed25519 key encoded
+/// as `GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF`.
+/// This helper is a cheap, allocation-free guard that should be called at every
+/// entrypoint that accepts a `holder`, `beneficiary`, or `admin` address.
+pub fn require_non_zero(env: &Env, addr: &Address) -> Result<(), PolicyError> {
+    let zero = Address::from_string(&soroban_sdk::String::from_str(
+        env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
+    if *addr == zero {
+        return Err(PolicyError::ZeroAddress);
+    }
+    Ok(())
 }
 
 /// Returns true when treasury balance covers approved obligations plus `new_coverage`
@@ -386,9 +446,16 @@ pub fn initiate_policy(
     expected_nonce: Option<u64>,
     metadata_uri: String,
     region_code: Option<String>,
+    terms_hash: BytesN<32>,
 ) -> Result<Policy, PolicyError> {
     // Check granular pause: policy binding should be blocked if bind_paused
     storage::assert_bind_not_paused(env);
+
+    // Zero-address guard: reject all-zero holder or beneficiary before any state changes.
+    require_non_zero(env, &holder)?;
+    if let Some(ref b) = beneficiary {
+        require_non_zero(env, b)?;
+    }
 
     // Policy type registry check: if the registry is enabled, the requested type
     // must be registered and active. If the registry has never been used, all types
@@ -444,6 +511,15 @@ pub fn initiate_policy(
     if base_amount <= 0 {
         return Err(PolicyError::InvalidCoverage);
     }
+    // Coverage floor check (issue #787)
+    let min_coverage = storage::get_min_coverage_amount(env);
+    if base_amount < min_coverage {
+        return Err(PolicyError::InvalidCoverage);
+    }
+    // Terms hash must be non-zero: all-zero digest is rejected as uninitialized.
+    if terms_hash == BytesN::from_array(env, &[0u8; 32]) {
+        return Err(PolicyError::InvalidTermsHash);
+    }
     if !check_solvency_ratio(env, &asset, base_amount) {
         return Err(PolicyError::InsufficientSolvency);
     }
@@ -498,11 +574,63 @@ pub fn initiate_policy(
         .checked_sub(fee_amount)
         .ok_or(PolicyError::PremiumOverflow)?;
 
+    // Pre-flight allowance check (before any state changes): surface a
+    // friendly `InsufficientAllowance` error instead of letting the
+    // downstream SEP-41 `transfer_from` call trap with an opaque host error
+    // when the holder has not approved this contract as a spender.
+    let allowance = token::get_allowance(env, &asset, &holder);
+    if allowance < premium_amount {
+        InsufficientAllowanceDetail {
+            holder: holder.clone(),
+            asset: asset.clone(),
+            required: premium_amount,
+            actual: allowance,
+        }
+        .publish(env);
+        return Err(PolicyError::InsufficientAllowance);
+    }
+
     // Allocate unique per-holder policy_id.
     let policy_id = storage::next_policy_id(env, &holder);
 
     if storage::has_policy(env, &holder, policy_id) {
         return Err(PolicyError::DuplicatePolicyId);
+    }
+
+    // ── Overlapping active coverage check ─────────────────────────────────
+    //
+    // Overlap definition: a new policy conflicts with an existing one when
+    // ALL of the following hold:
+    //   1. Same holder (implicit — we only scan this holder's own policies).
+    //   2. Same asset type: `policy_type` matches (e.g. both `Auto`).
+    //   3. Same `region`.
+    //   4. The existing policy is still active (`is_active == true`, i.e.
+    //      not terminated and not lapsed).
+    //   5. Ledger windows overlap: `existing.start_ledger < new_end_ledger`
+    //      AND `new_start_ledger < existing.end_ledger`. This is a
+    //      half-open `[start, end)` interval overlap test, so two policies
+    //      whose windows merely touch at a boundary (one ends exactly when
+    //      the other begins) are NOT considered overlapping.
+    //
+    // Without this check a holder could open two simultaneous policies on
+    // the same asset/region and file duplicate claims against both for a
+    // single loss event (double-payout risk).
+    let new_start_ledger = env.ledger().sequence();
+    let new_end_ledger = new_start_ledger
+        .checked_add(ledger::POLICY_DURATION_LEDGERS)
+        .ok_or(PolicyError::LedgerOverflow)?;
+    let existing_count = storage::get_policy_counter(env, &holder);
+    for existing_id in 1..=existing_count {
+        if let Some(existing) = storage::get_policy(env, &holder, existing_id) {
+            if existing.is_active
+                && existing.policy_type == policy_type
+                && existing.region == region
+                && existing.start_ledger < new_end_ledger
+                && new_start_ledger < existing.end_ledger
+            {
+                return Err(PolicyError::DuplicateCoverageActive);
+            }
+        }
     }
 
     // Premium transfer: holder -> treasury and fee recipient using the policy's bound asset.
@@ -520,6 +648,13 @@ pub fn initiate_policy(
     let end_ledger = current_ledger
         .checked_add(ledger::POLICY_DURATION_LEDGERS)
         .ok_or(PolicyError::LedgerOverflow)?;
+
+    // Issue #782: query token decimals at bind time and cache for payout math.
+    let token_decimals = storage::get_asset_decimals(env, &asset).unwrap_or_else(|| {
+        let args = soroban_sdk::vec![env];
+        env.invoke_contract::<u32>(&asset, &soroban_sdk::Symbol::new(env, "decimals"), args)
+    });
+    storage::set_asset_decimals(env, &asset, token_decimals);
 
     let policy = Policy {
         holder: holder.clone(),
@@ -539,6 +674,8 @@ pub fn initiate_policy(
         terminated_by_admin: false,
         strike_count: 0,
         metadata_uri,
+        terms_hash: terms_hash.clone(),
+        token_decimals,
     };
 
     validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
@@ -568,6 +705,7 @@ pub fn initiate_policy(
         deductible: deductible_stored,
         start_ledger: current_ledger,
         end_ledger,
+        terms_hash,
     }
     .publish(env);
 
@@ -594,6 +732,11 @@ pub fn set_beneficiary(
     new_beneficiary: Option<Address>,
 ) -> Result<(), PolicyError> {
     holder.require_auth();
+
+    // Zero-address guard: reject all-zero beneficiary before any state changes.
+    if let Some(ref b) = new_beneficiary {
+        require_non_zero(env, b)?;
+    }
 
     let mut policy = storage::get_policy(env, &holder, policy_id).ok_or(PolicyError::NotFound)?;
 
@@ -665,6 +808,7 @@ pub struct GracePeriodUpdated {
 
 pub fn set_grace_period_ledgers(env: &Env, ledgers: u32) -> Result<(), RenewalError> {
     let admin = crate::admin::require_admin(env);
+    crate::admin::check_and_update_gov_cooldown(env);
     if !ledger::is_valid_grace_period_ledgers(ledgers) {
         return Err(RenewalError::GracePeriodOutOfBounds);
     }
@@ -771,7 +915,11 @@ pub fn renew_policy(
     let now = env.ledger().sequence();
     let grace = storage::get_grace_period_ledgers(env);
 
-    if ledger::is_expired(now, policy.end_ledger.saturating_add(grace)) {
+    let lapse_ledger = policy
+        .end_ledger
+        .checked_add(grace)
+        .ok_or(PolicyError::LedgerOverflow)?;
+    if ledger::is_expired(now, lapse_ledger) {
         publish_policy_expired_if_due(env, &policy, now);
         return Ok(crate::types::RenewPolicyOutcome::Lapsed);
     }
@@ -854,6 +1002,9 @@ pub fn renew_policy(
     validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
 
     storage::set_policy(env, &holder, policy_id, &policy);
+
+    // Rolling claim cap resets for the renewed policy term (see rolling_claim_cap module docs).
+    crate::rolling_claim_cap::reset_on_renewal(env, &holder, policy_id, now);
 
     PolicyRenewed {
         version: POLICY_EVENT_VERSION,

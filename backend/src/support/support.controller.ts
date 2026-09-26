@@ -6,23 +6,31 @@ import {
   HttpCode,
   HttpStatus,
   Ip,
+  MessageEvent,
   Param,
   Patch,
   Post,
+  Sse,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { Observable, map, merge, of } from 'rxjs';
 import { SupportService } from './support.service';
+import { TypingService } from './typing.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { CreateFaqItemDto, UpdateFaqItemDto, ReorderFaqItemsDto } from './dto/faq.dto';
+import { SetTypingDto } from './dto/typing.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminRoleGuard } from '../admin/guards/admin-role.guard';
 
 @ApiTags('Support')
 @Controller('support')
 export class SupportController {
-  constructor(private readonly supportService: SupportService) {}
+  constructor(
+    private readonly supportService: SupportService,
+    private readonly typingService: TypingService,
+  ) {}
 
   /**
    * POST /api/support/tickets
@@ -38,6 +46,74 @@ export class SupportController {
   @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
   async submitTicket(@Body() dto: CreateTicketDto, @Ip() ip: string) {
     return this.supportService.submitTicket(dto, ip);
+  }
+
+  /**
+   * GET /api/support/tickets/:id
+   * Public ticket lookup (customer thread view).
+   */
+  @Get('tickets/:id')
+  @ApiOperation({ summary: 'Get a support ticket by id' })
+  @ApiResponse({ status: 200, description: 'Ticket found' })
+  async getTicket(@Param('id') id: string) {
+    return this.supportService.getTicket(id);
+  }
+
+  /**
+   * GET /api/support/tickets/:id/typing
+   * Snapshot of whether staff is currently composing a reply.
+   */
+  @Get('tickets/:id/typing')
+  @ApiOperation({ summary: 'Get current staff typing indicator for a ticket' })
+  async getTyping(@Param('id') id: string) {
+    return this.typingService.getTyping(id);
+  }
+
+  /**
+   * SSE /api/support/tickets/:id/events
+   * Realtime typing-indicator channel for the ticket thread UI.
+   */
+  @Sse('tickets/:id/events')
+  @ApiOperation({ summary: 'SSE stream for ticket typing updates' })
+  ticketEvents(@Param('id') id: string): Observable<MessageEvent> {
+    const subject = this.typingService.subscribe(id);
+    const initial = of({
+      data: this.typingService.getTyping(id),
+    } as MessageEvent);
+    const live = subject.pipe(map((payload) => ({ data: payload }) as MessageEvent));
+    return merge(initial, live);
+  }
+
+  /**
+   * POST /api/support/tickets/:id/typing
+   * Staff heartbeat: set or clear the typing indicator (JWT admin).
+   */
+  @Post('tickets/:id/typing')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, AdminRoleGuard)
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Set staff typing indicator (admin)' })
+  async setTyping(@Param('id') id: string, @Body() dto: SetTypingDto) {
+    // Ensure the ticket exists before publishing a signal.
+    await this.supportService.getTicket(id);
+    if (dto.isTyping) {
+      return this.typingService.setTyping(id, dto.staffId ?? 'staff');
+    }
+    return this.typingService.clearTyping(id, 'explicit');
+  }
+
+  /**
+   * DELETE /api/support/tickets/:id/typing
+   * Clear typing (e.g. after sending a reply or navigating away).
+   */
+  @Delete('tickets/:id/typing')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, AdminRoleGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Clear staff typing indicator (admin)' })
+  async clearTyping(@Param('id') id: string) {
+    return this.typingService.clearTyping(id, 'reply');
   }
 
   /**

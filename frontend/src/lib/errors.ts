@@ -56,6 +56,13 @@ export const ERROR_MESSAGES: Record<string, string> = {
   NOT_A_VOTER: 'You are not eligible to vote on this claim.',
   VOTING_CLOSED: 'Voting for this claim has closed.',
 
+  // Appeals — registered in backend/src/common/errors/error-catalog.ts
+  NOT_CLAIMANT: 'Only the claimant can appeal this claim.',
+  CLAIM_NOT_REJECTED: 'Only rejected claims can be appealed.',
+  APPEAL_ALREADY_SUBMITTED: 'An appeal has already been submitted for this claim.',
+  APPEAL_WINDOW_CLOSED: 'The appeal window for this claim has closed.',
+  CLAIMS_PAUSED: 'Claim operations are currently paused by the contract admin.',
+
   // Stellar / Soroban
   TRANSACTION_FAILED: 'Transaction failed. Please try again.',
   TRANSACTION_REJECTED: 'Transaction was rejected by the network.',

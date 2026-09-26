@@ -210,3 +210,74 @@ test('policy detail interactive elements have accessible labels', async ({ page 
       labelViolations.map((v) => `[${v.id}] ${v.nodes.map((n) => n.html).join(', ')}`).join('\n'),
   ).toHaveLength(0);
 });
+
+// ---------------------------------------------------------------------------
+// Appeal UI — WCAG 2.1 AA (#1363)
+// Conformance record: docs/appeal-accessibility-conformance.md
+// ---------------------------------------------------------------------------
+test('appeal confirm modal has no critical/serious axe violations when opened', async ({
+  page,
+}) => {
+  await page.goto(`${BASE_URL}/claims/1`);
+
+  const appealBtn = page.getByRole('button', { name: /appeal/i });
+  if (!(await appealBtn.isVisible().catch(() => false))) {
+    test.skip();
+    return;
+  }
+
+  await appealBtn.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .include('[role="dialog"]')
+    .analyze();
+
+  const blocking = results.violations.filter(
+    (v) => v.impact === 'critical' || v.impact === 'serious',
+  );
+  expect(
+    blocking,
+    `Appeal modal axe violations: ${JSON.stringify(blocking, null, 2)}`,
+  ).toHaveLength(0);
+});
+
+test('appeal confirm modal closes on ESC', async ({ page }) => {
+  await page.goto(`${BASE_URL}/claims/1`);
+
+  const appealBtn = page.getByRole('button', { name: /appeal/i });
+  if (!(await appealBtn.isVisible().catch(() => false))) {
+    test.skip();
+    return;
+  }
+
+  await appealBtn.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+});
+
+test('appeal confirm modal traps focus', async ({ page }) => {
+  await page.goto(`${BASE_URL}/claims/1`);
+
+  const appealBtn = page.getByRole('button', { name: /appeal/i });
+  if (!(await appealBtn.isVisible().catch(() => false))) {
+    test.skip();
+    return;
+  }
+
+  await appealBtn.click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('Tab');
+    const focused = await page.evaluate(
+      () => document.activeElement?.closest('[role="dialog"]') !== null,
+    );
+    expect(focused, `Focus escaped the appeal modal after ${i + 1} Tab presses`).toBe(true);
+  }
+});

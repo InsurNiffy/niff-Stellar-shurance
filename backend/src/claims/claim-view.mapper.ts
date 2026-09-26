@@ -20,6 +20,7 @@ const SECONDS_PER_LEDGER = 5;
 export type ClaimWithVotes = Prisma.ClaimGetPayload<{
   include: {
     votes: { select: { vote: true } };
+    evidenceMetadata: true;
   };
 }>;
 
@@ -141,6 +142,9 @@ export class ClaimViewMapper {
       evidence: {
         gatewayUrl: sanitizedHash ? `${this.ipfsGateway}/ipfs/${sanitizedHash}` : '',
         hash: sanitizedHash,
+        cid: claim.evidenceMetadata?.cid ?? null,
+        fileSizeBytes: claim.evidenceMetadata?.fileSizeBytes ?? null,
+        mimeType: claim.evidenceMetadata?.mimeType ?? null,
       } as SanitizedEvidenceDto,
       consistency: {
         isFinalized: claim.isFinalized,

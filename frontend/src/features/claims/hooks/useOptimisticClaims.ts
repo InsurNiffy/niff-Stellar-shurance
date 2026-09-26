@@ -16,6 +16,7 @@
 
 import { useCallback } from 'react';
 import { useOptimisticState, useConfirmationPoller } from '@/lib/optimistic';
+import { toast } from '@/components/ui/use-toast';
 import type { ClaimBoard } from '@/lib/schemas/claims-board';
 
 // ---------------------------------------------------------------------------
@@ -53,6 +54,12 @@ export interface UseOptimisticClaimsReturn {
   mergeWithOptimistic: (serverClaims: ClaimBoard[]) => ClaimBoard[];
   /** Get the optimistic status for a single claim (for badge rendering). */
   getOptimisticStatus: (claimId: string) => { status: 'pending' | 'confirmed' | 'failed'; error?: string } | undefined;
+  /**
+   * Roll back an optimistic entry and show a user-facing toast.
+   * Pass this as the `onRollback` prop of ClaimConfirmationPoller so users
+   * are notified when a mutation is reverted.
+   */
+  rollbackWithToast: (key: string, error: string) => void;
 }
 
 export function useOptimisticClaims(): UseOptimisticClaimsReturn {
@@ -122,7 +129,18 @@ export function useOptimisticClaims(): UseOptimisticClaimsReturn {
     [optimistic.entries],
   );
 
-  return { applyOptimisticClaim, applyOptimisticVote, mergeWithOptimistic, getOptimisticStatus };
+  // Wrap rollback to show a user-facing toast notification when an optimistic
+  // update is reverted due to a failed or timed-out API confirmation.
+  const rollbackWithToast = useCallback((key: string, error: string) => {
+    optimistic.rollback(key, error);
+    toast.error(
+      'Action reverted',
+      error || 'The on-chain update could not be confirmed. Your previous state has been restored.',
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { applyOptimisticClaim, applyOptimisticVote, mergeWithOptimistic, getOptimisticStatus, rollbackWithToast };
 }
 
 // ---------------------------------------------------------------------------

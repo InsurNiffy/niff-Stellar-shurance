@@ -8,6 +8,7 @@ import { useForm } from 'react-hook-form'
 import { Label } from '@/components/ui/label'
 import { QuoteFormSchema, type QuoteFormData } from '@/lib/schemas/quote'
 import { useWallet } from '@/features/wallet'
+import { PolicyTypeSelector } from '@/components/policy/PolicyTypeSelector'
 
 interface Props {
   onChange: (data: Partial<QuoteFormData>, isValid: boolean) => void
@@ -52,14 +53,12 @@ export function QuoteForm({ onChange }: Props) {
   return (
     <form aria-label="Insurance quote form" noValidate className="space-y-5">
       <div className="space-y-1">
-        <Label htmlFor="policy_type">Policy Type</Label>
-        <select id="policy_type" className={selectClass(errors.policy_type?.message)} {...register('policy_type')}>
-          <option value="">Select a policy type…</option>
-          <option value="Auto">Auto</option>
-          <option value="Health">Health</option>
-          <option value="Property">Property</option>
-        </select>
-        <FieldError message={errors.policy_type?.message} />
+        <Label>Policy Type</Label>
+        <PolicyTypeSelector
+          value={watch('policy_type')}
+          onChange={(val) => setValue('policy_type', val as QuoteFormData['policy_type'], { shouldValidate: true })}
+          error={errors.policy_type?.message}
+        />
       </div>
 
       <div className="space-y-1">

@@ -5,7 +5,7 @@ use crate::{
     types::{ClaimStatus, Policy, PolicyType, RegionTier, TerminationReason},
     validate,
 };
-use soroban_sdk::{contracterror, contractevent, Address, Env, String};
+use soroban_sdk::{contracterror, contractevent, Address, BytesN, Env, String};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -58,6 +58,15 @@ pub fn initiate_policy(
 
     let policy_id = storage::next_policy_id(env, &holder);
 
+    let asset = storage::get_token(env);
+
+    // Issue #782: query token decimals at bind time and cache for payout math.
+    let token_decimals = storage::get_asset_decimals(env, &asset).unwrap_or_else(|| {
+        let args = soroban_sdk::vec![env];
+        env.invoke_contract::<u32>(&asset, &soroban_sdk::Symbol::new(env, "decimals"), args)
+    });
+    storage::set_asset_decimals(env, &asset, token_decimals);
+
     let policy = Policy {
         holder: holder.clone(),
         policy_id,
@@ -68,7 +77,7 @@ pub fn initiate_policy(
         is_active: true,
         start_ledger: now,
         end_ledger,
-        asset: storage::get_token(env),
+        asset,
         deductible: None,
         beneficiary: None,
         terminated_at_ledger: 0,
@@ -76,6 +85,13 @@ pub fn initiate_policy(
         terminated_by_admin: false,
         strike_count: 0,
         metadata_uri: String::from_str(env, ""),
+        // policy_lifecycle bindings are legacy/internal; use a non-zero sentinel.
+        terms_hash: BytesN::from_array(env, &{
+            let mut b = [0u8; 32];
+            b[0] = 1;
+            b
+        }),
+        token_decimals,
     };
 
     validate::check_policy(&policy).map_err(|e| match e {

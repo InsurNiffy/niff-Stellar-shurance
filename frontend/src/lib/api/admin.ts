@@ -22,6 +22,11 @@ export interface QuorumSettings {
   quorum_bps: number
 }
 
+export interface QuorumUpdateResult {
+  quorum_bps: number
+  unsignedXdr: string
+}
+
 export interface QuorumImpact {
   totalActiveClaims: number
   affectedClaims: Array<{
@@ -34,6 +39,15 @@ export interface QuorumImpact {
     status: string
   }>
   quorumBps: number | null
+}
+
+export interface OperatorDelegation {
+  id: string
+  delegate: string
+  expiryLedger: number
+  ledgersRemaining: number
+  grantedBy: string
+  grantedAt: string
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -112,6 +126,48 @@ export interface AddAssetParams {
   contractId: string
   symbol: string
   decimals: number
+}
+
+// ── Governance Proposal Types ─────────────────────────────────────────────────
+
+export type ProposalStatus = 'active' | 'passed' | 'rejected' | 'executed'
+
+export interface GovernanceProposal {
+  id: string
+  title: string
+  description: string
+  proposer: string
+  status: ProposalStatus
+  parameterKey: string
+  currentValue: string
+  proposedValue: string
+  yesVotes: number
+  noVotes: number
+  quorumRequired: number
+  createdAt: string
+  votingDeadline: string
+}
+
+export interface CreateProposalParams {
+  title: string
+  description: string
+  parameterKey: string
+  proposedValue: string
+}
+
+export interface EvidenceLimits {
+  minEvidenceCount: number
+  maxEvidenceCount: number
+}
+
+export interface KeeperActionResult {
+  success: boolean
+  message: string
+  txHash: string
+}
+
+export interface TransactionBuildResult {
+  unsignedXdr: string
 }
 
 // ── API calls ──────────────────────────────────────────────────────────────
@@ -205,5 +261,82 @@ export const adminApi = {
     apiFetch<void>(`${base()}/assets/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers: authHeaders(jwt),
+    }),
+
+  listProposals: (jwt: string) =>
+    apiFetch<GovernanceProposal[]>(`${base()}/governance/proposals`, {
+      headers: authHeaders(jwt),
+    }),
+
+  createProposal: (jwt: string, params: CreateProposalParams) =>
+    apiFetch<GovernanceProposal>(`${base()}/governance/proposals`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify(params),
+    }),
+
+  getQuorum: (jwt: string) =>
+    apiFetch<QuorumSettings>(`${base()}/governance/quorum`, {
+      headers: authHeaders(jwt),
+    }),
+
+  getQuorumImpact: (jwt: string, quorumBps: number) =>
+    apiFetch<QuorumImpact>(`${base()}/governance/quorum/impact?quorum_bps=${quorumBps}`, {
+      headers: authHeaders(jwt),
+    }),
+
+  setQuorum: (jwt: string, quorumBps: number) =>
+    apiFetch<QuorumUpdateResult>(`${base()}/governance/quorum`, {
+      method: 'PUT',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ quorum_bps: quorumBps }),
+    }),
+
+  listVoters: (jwt: string) =>
+    apiFetch<RegisteredVoter[]>(`${base()}/governance/voters`, {
+      headers: authHeaders(jwt),
+    }),
+
+  removeVoter: (jwt: string, walletAddress: string) =>
+    apiFetch<void>(`${base()}/governance/voters/${encodeURIComponent(walletAddress)}`, {
+      method: 'DELETE',
+      headers: authHeaders(jwt),
+    }),
+
+  batchRegisterVoters: (jwt: string, addresses: string[]) =>
+    apiFetch<TransactionBuildResult>(`${base()}/governance/voters/batch`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ addresses }),
+    }),
+
+  listDelegations: (jwt: string) =>
+    apiFetch<OperatorDelegation[]>(`${base()}/delegations`, {
+      headers: authHeaders(jwt),
+    }),
+
+  grantDelegation: (jwt: string, params: { delegate: string; expiryLedger: number }) =>
+    apiFetch<OperatorDelegation>(`${base()}/delegations`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify(params),
+    }),
+
+  revokeDelegation: (jwt: string, id: string) =>
+    apiFetch<void>(`${base()}/delegations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: authHeaders(jwt),
+    }),
+
+  getEvidenceLimits: (jwt: string) =>
+    apiFetch<EvidenceLimits>(`${base()}/evidence/limits`, {
+      headers: authHeaders(jwt),
+    }),
+
+  setEvidenceLimits: (jwt: string, minEvidenceCount: number, maxEvidenceCount: number) =>
+    apiFetch<KeeperActionResult>(`${base()}/evidence/limits`, {
+      method: 'PUT',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ minEvidenceCount, maxEvidenceCount }),
     }),
 }

@@ -45,9 +45,14 @@ Thumbs.db
 # Test artifacts
 **/test_snapshots/
 **/__snapshots__/
+!frontend/.storybook/__snapshots__/
+frontend/.storybook/__snapshots__/__diff_output__/
 proptest-regressions/
 *.snap
 *.snap.new
+
+# Storybook build output
+frontend/storybook-static/
 
 # Logs
 *.log

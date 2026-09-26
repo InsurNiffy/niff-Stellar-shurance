@@ -15,21 +15,25 @@ import {
   HttpStatus,
   NotFoundException,
   Logger,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsArray, IsEnum, IsInt, IsOptional, IsString, Max, Min, ArrayNotEmpty, Matches } from 'class-validator';
+import { IsArray, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, ArrayNotEmpty, Matches, IsIn } from 'class-validator';
+import { ClaimSeverity } from '@prisma/client';
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminRoleGuard } from './guards/admin-role.guard';
+import { MinAdminRole } from './decorators/admin.decorator';
 import { AdminService } from './admin.service';
 import { AdminPoliciesService } from './admin-policies.service';
+import { AdminClaimsExportService } from './admin-claims-export.service';
 import { AuditService } from './audit.service';
 import { ReindexDto } from './dto/reindex.dto';
 import { BackfillDto } from './dto/backfill.dto';
 import { AuditQueryDto } from './dto/audit-query.dto';
-import { FeatureFlagDto } from './dto/feature-flag.dto';
+import { BulkFeatureFlagDto, FeatureFlagDto } from './dto/feature-flag.dto';
 import { SetRateLimitDto, EnableOverrideDto } from './dto/rate-limit.dto';
 import { PrivacyService, PrivacyRequestType } from '../maintenance/privacy.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
@@ -37,8 +41,14 @@ import { QueueMonitorService } from '../queues/queue-monitor.service';
 import { SolvencyMonitoringService } from '../maintenance/solvency-monitoring.service';
 import { AdminTenantsService } from './admin-tenants.service';
 import { AdminStatsService } from './admin-stats.service';
+import { AdminAnalyticsService } from './admin-analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
+import { TokenBlacklistService } from '../auth/token-blacklist.service';
+import { SupportService } from '../support/support.service';
+import { CommentRepository } from '../claims/comments/comment.repository';
+import { TenantConfigAuditService } from '../tenant/tenant-config-audit.service';
+import { TenantConfigAuditHistoryDto } from '../tenant/dto/tenant-config-audit.dto';
 
 class BatchRegisterVotersDto {
   @IsArray()
@@ -67,6 +77,27 @@ class PrivacyRequestDto {
   @IsOptional() @IsString() notes?: string;
 }
 
+class SetClaimSeverityDto {
+  @IsIn(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
+  severity!: ClaimSeverity;
+}
+
+class RevokeTokenDto {
+  @IsString() jti!: string;
+  @IsInt() expiresAt!: number;
+}
+
+class AdminDeleteCommentDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+class AssignTicketDto {
+  @IsOptional() @IsString() assignee?: string | null;
+}
+
 type AdminRequest = Request & {
   user?: {
     walletAddress?: string;
@@ -91,6 +122,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly adminPoliciesService: AdminPoliciesService,
+    private readonly adminClaimsExportService: AdminClaimsExportService,
     private readonly auditService: AuditService,
     private readonly privacyService: PrivacyService,
     private readonly rateLimitService: RateLimitService,
@@ -99,8 +131,13 @@ export class AdminController {
     private readonly solvencyMonitoringService: SolvencyMonitoringService,
     private readonly tenantsService: AdminTenantsService,
     private readonly adminStatsService: AdminStatsService,
+    private readonly adminAnalyticsService: AdminAnalyticsService,
     private readonly prisma: PrismaService,
     private readonly sorobanService: SorobanService,
+    private readonly tokenBlacklist: TokenBlacklistService,
+    private readonly supportService: SupportService,
+    private readonly commentRepository: CommentRepository,
+    private readonly tenantConfigAuditService: TenantConfigAuditService,
   ) {}
 
   // ── Governance: Voters ────────────────────────────────────────────
@@ -111,6 +148,7 @@ export class AdminController {
    * List all registered voters from the local tracking table.
    */
   @Get('governance/voters')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'List registered voters' })
   async listVoters() {
     return this.prisma.registeredVoter.findMany({
@@ -176,6 +214,7 @@ export class AdminController {
    * Returns the current quorum_bps value from the contract (via simulation).
    */
   @Get('governance/quorum')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Get current quorum_bps value' })
   async getQuorum() {
     const result = await this.sorobanService.simulateGetQuorumBps();
@@ -214,8 +253,9 @@ export class AdminController {
    * affected by changing quorum_bps to the given value.
    */
   @Get('governance/quorum/impact')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Preview impact of quorum change on active claims' })
-  async getQuorumImpact(@Query('bps') bps?: string, @Req() req?: AdminRequest) {
+  async getQuorumImpact(@Query('bps') bps?: string) {
     const targetBps = bps ? parseInt(bps, 10) : null;
     if (targetBps !== null && (isNaN(targetBps) || targetBps < 1 || targetBps > 10000)) {
       throw new BadRequestException('bps must be between 1 and 10000');
@@ -251,6 +291,53 @@ export class AdminController {
   }
 
   /**
+   * GET /admin/users
+   *
+   * Lists all holder profiles ordered by lastSeenAt descending.
+   * Useful for dormant account detection: accounts with null or stale
+   * lastSeenAt have not made an authenticated call in the tracked window.
+   *
+   * Supports optional query params:
+   *   - dormantDays (number): only return users not seen in X days
+   *   - limit (number, default 100, max 500)
+   *   - cursor (walletAddress): keyset pagination
+   */
+  @Get('users')
+  @ApiOperation({ summary: 'List holder profiles with last-active timestamp for dormant account detection' })
+  async listUsers(
+    @Query('dormantDays') dormantDays?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const take = Math.min(Number(limit) || 100, 500);
+    const where: Record<string, unknown> = {};
+    if (dormantDays) {
+      const days = parseInt(dormantDays, 10);
+      if (!isNaN(days) && days > 0) {
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        where['OR'] = [
+          { lastSeenAt: null },
+          { lastSeenAt: { lt: cutoff } },
+        ];
+      }
+    }
+    return this.prisma.holderProfile.findMany({
+      where,
+      orderBy: [{ lastSeenAt: 'desc' }, { walletAddress: 'asc' }],
+      take,
+      ...(cursor ? { skip: 1, cursor: { walletAddress: cursor } } : {}),
+      select: {
+        walletAddress: true,
+        displayName: true,
+        email: true,
+        locale: true,
+        createdAt: true,
+        lastSeenAt: true,
+      },
+    });
+  }
+
+  /**
    * GET /admin/stats
    *
    * Aggregated platform metrics: policy counts, claim counts by status,
@@ -258,6 +345,7 @@ export class AdminController {
    * Response is cached in Redis with a short TTL (default: 30s).
    */
   @Get('stats')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Aggregated platform metrics (cached)' })
   async getStats(@Req() req: AdminRequest) {
     const tenantId = (req as unknown as { tenantId?: string }).tenantId;
@@ -338,6 +426,7 @@ export class AdminController {
    * Returns the current BullMQ state of a backfill job.
    */
   @Get('indexer/backfill/:jobId')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Get backfill job status' })
   async getBackfillJob(@Param('jobId') jobId: string) {
     const job = await this.adminService.getBackfillJob(jobId);
@@ -355,6 +444,7 @@ export class AdminController {
    * Requires: admin role + valid JWT.
    */
   @Get('audits')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Cursor-paginated admin audit log with filters' })
   async getAudits(@Query() query: AuditQueryDto, @Req() req: AdminRequest) {
     const actor = req.user?.walletAddress ?? 'unknown';
@@ -376,6 +466,7 @@ export class AdminController {
    * Requires: admin role + valid JWT.
    */
   @Get('audits/export')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Streaming CSV export of the audit log' })
   async exportAudits(
     @Query() query: AuditQueryDto,
@@ -396,11 +487,63 @@ export class AdminController {
   }
 
   /**
+   * GET /admin/claims/export?status=PENDING&from=2024-01-01&to=2024-12-31
+   *
+   * Streaming CSV export of claims matching filters.
+   * Rate limited: one export per minute per admin.
+   *
+   * CSV Columns:
+   * id, policyId, creatorAddress, amount, asset, description, status, severity,
+   * isFinalized, approveVotes, rejectVotes, paidAt, createdAt, updatedAt, txHash, tenantId
+   *
+   * Query Parameters:
+   * - status: filter by claim status (PENDING, APPROVED, PAID, REJECTED)
+   * - from: ISO 8601 start date (inclusive)
+   * - to: ISO 8601 end date (inclusive)
+   */
+  @Get('claims/export')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'Streaming CSV export of claims with pagination (no memory load)' })
+  async exportClaims(
+    @Req() req: AdminRequest,
+    @Res() res: Response,
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const admin = req.user?.walletAddress ?? 'unknown';
+    const rateLimitKey = `admin_claims_export:${admin}`;
+
+    const isAllowed = await this.rateLimitService.checkLimit(rateLimitKey, 1, 60);
+    if (!isAllowed) {
+      throw new BadRequestException({
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Claims export is limited to one per minute per admin.',
+      });
+    }
+
+    await this.auditService.write({
+      actor: admin,
+      action: 'claims_export',
+      payload: { status, from, to } as Prisma.InputJsonObject,
+      ipAddress: req.ip,
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=claims-export.csv');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    const stream = this.adminClaimsExportService.createClaimsExportStream({ status, from, to });
+    stream.pipe(res);
+  }
+
+  /**
    * GET /admin/policies
    *
    * Indexed policies. Omit soft-deleted rows unless `include_deleted=true`.
    */
   @Get('policies')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'List indexed policies (optional include_deleted for compliance)' })
   async getAdminPolicies(@Query('include_deleted') includeDeleted?: string) {
     const inc = includeDeleted === 'true' || includeDeleted === '1';
@@ -449,6 +592,7 @@ export class AdminController {
    * Lists all feature flags and their current state.
    */
   @Get('feature-flags')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'List all feature flags' })
   async listFeatureFlags() {
     return this.adminService.getFeatureFlags();
@@ -476,12 +620,39 @@ export class AdminController {
   }
 
   /**
+   * POST /admin/feature-flags/bulk
+   *
+   * Applies an array of {key, enabled} updates atomically within a single DB
+   * transaction. All keys must be in the predefined allowlist — the request is
+   * rejected in full if any key is unknown. One audit row is written for the
+   * entire batch.
+   */
+  @Post('feature-flags/bulk')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Bulk-update feature flags atomically (allowlisted keys only)' })
+  async bulkSetFeatureFlags(@Body() dto: BulkFeatureFlagDto, @Req() req: AdminRequest) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    const results = await this.adminService.bulkSetFeatureFlags(dto.updates, actor);
+    await this.auditService.write({
+      actor,
+      action: 'feature_flag_bulk_update',
+      payload: {
+        updates: dto.updates as unknown as Prisma.InputJsonValue,
+        count: dto.updates.length,
+      },
+      ipAddress: req.ip,
+    });
+    return { updated: results };
+  }
+
+  /**
    * GET /admin/solvency
    *
    * Latest snapshot from Redis only (no live Soroban call). Populated by the
    * scheduled solvency job; may be null before the first successful run.
    */
   @Get('solvency')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Cached solvency snapshot for dashboard (Redis only)' })
   async getSolvencySnapshot() {
     const snapshot = await this.solvencyMonitoringService.getLatestSnapshot();
@@ -517,6 +688,7 @@ export class AdminController {
 
   /** GET /admin/privacy/requests — list all privacy requests. */
   @Get('privacy/requests')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'List privacy requests' })
   async listPrivacyRequests(@Query('page') page = 1, @Query('limit') limit = 20) {
     return this.privacyService.listRequests(Number(page), Number(limit));
@@ -570,6 +742,7 @@ export class AdminController {
    * Get rate limit status for a policy.
    */
   @Get('rate-limits/:policyId')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Get rate limit status for a policy' })
   async getRateLimitStatus(@Param('policyId') policyId: string) {
     return this.rateLimitService.getCounterState(policyId);
@@ -643,17 +816,56 @@ export class AdminController {
   }
 
   /**
+   * GET /admin/analytics/renewals
+   *
+   * Renewal rate, lapsed count, and average time-to-renewal grouped by policy type
+   * and region. Response is cached in Redis with a 10-minute TTL.
+   */
+  @Get('analytics/renewals')
+  @ApiOperation({ summary: 'Renewal analytics grouped by policy type and region (10-min cache)' })
+  async getRenewalAnalytics() {
+    return this.adminAnalyticsService.getRenewalAnalytics();
+  }
+
+  /**
+   * GET /admin/analytics/support
+   *
+   * Average first-response time and SLA breach count for support tickets.
+   */
+  @Get('analytics/support')
+  @ApiOperation({ summary: 'Support ticket first-response and SLA analytics' })
+  async getSupportAnalytics() {
+    return this.adminAnalyticsService.getSupportAnalytics();
+  }
+
+  /**
+   * GET /admin/analytics/policies
+   *
+   * Aggregated policy statistics by policyType, region, coverageAmount bucket,
+   * and isActive. Response is cached in Redis with a 5-minute TTL.
+   */
+  @Get('analytics/policies')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'Policy analytics grouped by type, region, and coverage (5-min cache)' })
+  async getPolicyAnalytics(@Req() req: AdminRequest) {
+    const tenantId = req.user?.scope ?? (req.adminIdentity?.scopes?.[0] ?? undefined);
+    return this.adminAnalyticsService.getPolicyAnalytics(tenantId);
+  }
+
+  /**
    * GET /admin/claims/search
    *
    * Search claims with full-text search and filtering.
-   * Supports: q (text search), status, claimant, policyId, dateFrom, dateTo
+   * Supports: q (text search), status, severity, claimant, policyId, dateFrom, dateTo
    * Returns cursor-paginated results with total count.
    */
   @Get('claims/search')
+  @MinAdminRole('viewer')
   @ApiOperation({ summary: 'Search claims with filters and full-text search' })
   async searchClaims(
     @Query('q') q?: string,
     @Query('status') status?: string,
+    @Query('severity') severity?: string,
     @Query('claimant') claimant?: string,
     @Query('policyId') policyId?: string,
     @Query('dateFrom') dateFrom?: string,
@@ -664,12 +876,85 @@ export class AdminController {
     return this.adminService.searchClaims({
       q,
       status,
+      severity,
       claimant,
       policyId,
       dateFrom,
       dateTo,
       after,
       limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
+  /**
+   * PATCH /admin/claims/:id/severity
+   *
+   * Set the triage severity level (LOW/MEDIUM/HIGH/CRITICAL) on a claim.
+   * Writes an immutable audit row.
+   */
+  @Patch('claims/:id/severity')
+  @ApiOperation({ summary: 'Set triage severity on a claim' })
+  async setClaimSeverity(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetClaimSeverityDto,
+    @Req() req: AdminRequest,
+  ) {
+    const claim = await this.prisma.claim.findFirst({ where: { id, deletedAt: null } });
+    if (!claim) throw new NotFoundException(`Claim ${id} not found`);
+
+    const updated = await this.prisma.claim.update({
+      where: { id },
+      data: { severity: dto.severity },
+    });
+
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'claim_severity_set',
+      payload: { claimId: id, severity: dto.severity },
+      ipAddress: req.ip,
+    });
+
+    return { claimId: id, severity: updated.severity };
+  }
+
+  /**
+   * GET /admin/claims/:id/comments
+   *
+   * List all comments for a claim, including soft-deleted ones (admin view).
+   */
+  @Get('claims/:id/comments')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'List all comments for a claim including soft-deleted (admin view)' })
+  async listClaimCommentsAdmin(@Param('id', ParseIntPipe) claimId: number) {
+    return this.commentRepository.findAll(claimId);
+  }
+
+  /**
+   * DELETE /admin/claims/:id/comments/:commentId
+   *
+   * Admin soft-delete of a comment. Records an audit log entry with the reason.
+   */
+  @Delete('claims/:id/comments/:commentId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Admin soft-delete a claim comment with audit log' })
+  async adminDeleteComment(
+    @Param('id', ParseIntPipe) claimId: number,
+    @Param('commentId') commentId: string,
+    @Body() dto: AdminDeleteCommentDto,
+    @Req() req: AdminRequest,
+  ): Promise<void> {
+    const comment = await this.commentRepository.findById(commentId);
+    if (!comment || comment.deletedAt !== null) {
+      throw new NotFoundException('Comment not found');
+    }
+    await this.commentRepository.softDelete(commentId);
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'admin_delete_comment',
+      payload: { commentId, claimId, reason: dto.reason ?? null },
+      ipAddress: req.ip,
     });
   }
 
@@ -714,5 +999,238 @@ export class AdminController {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="policies.csv"');
     res.send(csv);
+  }
+
+  // ── #929 Evidence limits ───────────────────────────────────────────────────
+
+  /**
+   * GET /admin/governance/evidence-limits
+   *
+   * Reads min_evidence_count and max_evidence_count from the contract via
+   * Soroban simulation. Requires SOLVENCY_SIMULATION_SOURCE_ACCOUNT to be set.
+   */
+  @Get('governance/evidence-limits')
+  @ApiOperation({ summary: 'Read evidence count limits from the contract (simulation)' })
+  async getEvidenceLimits() {
+    const source =
+      this.configService.get<string>('SOLVENCY_SIMULATION_SOURCE_ACCOUNT') ||
+      this.configService.get<string>('CLAIM_KEEPER_SOURCE_ACCOUNT');
+    if (!source) {
+      throw new BadRequestException({
+        code: 'SIMULATION_SOURCE_NOT_CONFIGURED',
+        message: 'SOLVENCY_SIMULATION_SOURCE_ACCOUNT is not set.',
+      });
+    }
+    return this.sorobanService.simulateGetEvidenceLimits({ sourceAccount: source });
+  }
+
+  /**
+   * PATCH /admin/governance/evidence-limits
+   *
+   * Updates min_evidence_count and max_evidence_count on-chain.
+   * Validation: min >= 0, max > 0, min <= max.
+   * Writes an immutable audit row.
+   */
+  @Patch('governance/evidence-limits')
+  @ApiOperation({ summary: 'Update evidence count limits on-chain' })
+  async setEvidenceLimits(
+    @Body() body: { min: number; max: number },
+    @Req() req: AdminRequest,
+  ) {
+    const min = Number(body.min);
+    const max = Number(body.max);
+    if (!Number.isInteger(min) || min < 0) {
+      throw new BadRequestException('min must be a non-negative integer');
+    }
+    if (!Number.isInteger(max) || max <= 0) {
+      throw new BadRequestException('max must be a positive integer');
+    }
+    if (min > max) {
+      throw new BadRequestException('min must not exceed max');
+    }
+    const result = await this.sorobanService.invokeAdminSetEvidenceLimits({ min, max });
+    const actor = req.user?.walletAddress ?? 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'admin_set_evidence_limits',
+      payload: { min, max, txHash: result.txHash },
+      ipAddress: req.ip,
+    });
+    return result;
+  }
+
+  // ── Auth: Token Management ─────────────────────────────────────────
+
+  /**
+   * POST /admin/auth/revoke
+   *
+   * Revoke a JWT token immediately by adding to Redis blacklist.
+   * Token remains blacklisted until its expiry time.
+   */
+  @Post('auth/revoke')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a JWT token' })
+  async revokeToken(@Body() dto: RevokeTokenDto, @Req() req: AdminRequest) {
+    if (!dto.jti || dto.jti.length === 0) {
+      throw new BadRequestException('jti must be a non-empty string');
+    }
+    if (!Number.isInteger(dto.expiresAt) || dto.expiresAt <= 0) {
+      throw new BadRequestException('expiresAt must be a positive integer (Unix timestamp)');
+    }
+
+    await this.tokenBlacklist.revokeToken(dto.jti, dto.expiresAt);
+
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'auth_token_revoke',
+      payload: { jti: dto.jti },
+      ipAddress: req.ip,
+    });
+  }
+
+  // ── Support: Ticket Management ─────────────────────────────────────
+
+  /**
+   * GET /admin/support/tickets
+   *
+   * List all support tickets with optional filtering.
+   */
+  @Get('support/tickets')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'List support tickets' })
+  async listSupportTickets(
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
+    @Query('assignedTo') assignedTo?: string,
+  ) {
+    return this.supportService.listTickets(limit || 50, offset || 0, assignedTo);
+  }
+
+  /**
+   * PATCH /admin/support/tickets/:id/assign
+   *
+   * Assign a support ticket to a staff member or unassign it.
+   */
+  @Patch('support/tickets/:id/assign')
+  @ApiOperation({ summary: 'Assign support ticket to staff member' })
+  async assignSupportTicket(
+    @Param('id') ticketId: string,
+    @Body() dto: AssignTicketDto,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    return this.supportService.assignTicket(ticketId, dto.assignee ?? null, actor, req.ip);
+  }
+
+  // ── Tenant Config Audit ────────────────────────────────────────────
+
+  /**
+   * GET /admin/tenants/:tenantId/config-audit
+   *
+   * Retrieve the configuration change audit history for a tenant.
+   * Returns entries in chronological order (oldest first).
+   * Supports optional filtering by config key and actor.
+   * Pagination via limit (default 50) and offset (default 0).
+   */
+  @Get('tenants/:tenantId/config-audit')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'Retrieve tenant configuration change audit history' })
+  async getTenantConfigAuditHistory(
+    @Param('tenantId') tenantId: string,
+    @Query('key') key?: string,
+    @Query('actor') actor?: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
+  ): Promise<TenantConfigAuditHistoryDto> {
+    const { entries, total } = await this.tenantConfigAuditService.getAuditHistory({
+      tenantId,
+      key,
+      actor,
+      limit: limit || 50,
+      offset: offset || 0,
+    });
+
+    return {
+      entries,
+      total,
+      count: entries.length,
+    };
+  }
+
+  // ── Appeal management ─────────────────────────────────────────────────────
+
+  /**
+   * POST /admin/claims/:id/finalize-appeal
+   *
+   * Admin-only safety valve: force-finalize a stalled appeal whose deadline has
+   * passed but no keeper has called finalize_appeal on-chain yet.
+   *
+   * Calls `SorobanService.finalizeAppeal(claimId)` which signs and submits the
+   * keeper transaction using CLAIM_KEEPER_SECRET_KEY, then waits for confirmation.
+   *
+   * Writes an immutable audit row with the actor, claimId, txHash, and outcome.
+   *
+   * Returns: { claimId, txHash, ledger, onChainStatus }
+   *
+   * Errors:
+   *  - 400 if the claim does not exist or is not in UNDER_APPEAL status.
+   *  - 503 if the keeper account is not configured.
+   */
+  @Post('claims/:id/finalize-appeal')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Force-finalize a stalled appeal whose deadline has passed (admin safety valve)',
+  })
+  async finalizeAppeal(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+
+    // Verify the claim exists and is actually under appeal
+    const claim = await this.prisma.claim.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, status: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim ${id} not found`);
+    }
+
+    if (claim.status !== 'UNDER_APPEAL') {
+      throw new BadRequestException({
+        code: 'CLAIM_NOT_UNDER_APPEAL',
+        message: `Claim ${id} is not in UNDER_APPEAL status (current: ${claim.status}). ` +
+          'finalize-appeal is only applicable to claims with an open appeal.',
+      });
+    }
+
+    // Invoke the on-chain finalize_appeal entrypoint via the keeper account
+    const result = await this.sorobanService.finalizeAppeal(id);
+
+    // Immutable audit trail (required by task spec)
+    await this.auditService.write({
+      actor,
+      action: 'admin_finalize_appeal',
+      payload: {
+        claimId: id,
+        txHash: result.txHash,
+        ledger: result.ledger,
+        onChainStatus: result.onChainStatus,
+      },
+      ipAddress: req.ip,
+    });
+
+    this.logger.log(
+      `Admin ${actor} force-finalized appeal for claim=${id} txHash=${result.txHash}`,
+    );
+
+    return {
+      claimId: id,
+      txHash: result.txHash,
+      ledger: result.ledger,
+      onChainStatus: result.onChainStatus,
+    };
   }
 }

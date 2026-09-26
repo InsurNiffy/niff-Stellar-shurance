@@ -77,8 +77,9 @@ export function assertWalletJwt(config: ConfigService, authorization?: string): 
         const graphqlPath = graphqlEnabled
           ? config.get<string>('GRAPHQL_PATH', '/graphql')
           : '/__graphql_disabled__';
-        const allowIntrospection = !isProduction ||
-          config.get<boolean>('GRAPHQL_INTROSPECTION_IN_PRODUCTION', false);
+        // Disable introspection in production by default. Non-production environments
+        // enable introspection for developer experience (schema exploration, testing).
+        const allowIntrospection = !isProduction;
         const slowOperationMs = config.get<number>('GRAPHQL_SLOW_OPERATION_MS', 750);
         const { maxDepth } = resolveGraphqlLimits(config);
         const logger = new AppLoggerService(config);
@@ -87,6 +88,7 @@ export function assertWalletJwt(config: ConfigService, authorization?: string): 
           createGraphqlSecurityPlugin(operationGuard, metrics, logger, slowOperationMs),
         ];
 
+        // Enable landing page (Apollo Sandbox) only in non-production environments
         if (!isProduction) {
           plugins.push(ApolloServerPluginLandingPageLocalDefault());
         }

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Pre-commit hook: scan staged changes for secrets using gitleaks.
+# Install via: bash scripts/install-hooks.sh
+set -euo pipefail
+
+if ! command -v gitleaks &>/dev/null; then
+  echo "[pre-commit] gitleaks not found. Install it: https://github.com/gitleaks/gitleaks#installing"
+  echo "[pre-commit] Skipping secret scan — install gitleaks to enforce locally."
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CONFIG="$REPO_ROOT/.gitleaks.toml"
+
+CONFIG_ARG=""
+if [[ -f "$CONFIG" ]]; then
+  CONFIG_ARG="--config $CONFIG"
+fi
+
+# Scan only the staged diff so the hook is fast on large repos
+if ! gitleaks protect --staged $CONFIG_ARG --verbose; then
+  echo ""
+  echo "[pre-commit] Secret(s) detected. Commit blocked."
+  echo "  Fix the issue or add a false-positive allowlist entry in .gitleaks.toml"
+  exit 1
+fi

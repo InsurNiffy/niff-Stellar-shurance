@@ -102,6 +102,9 @@ pub fn submit_trigger(
 ///   - Event type is covered by policy
 ///   - Source is in whitelist
 ///   - Timestamp is within acceptable window
+///
+/// Returns `Err(OracleError::TriggerNotFound)` — the documented "no data"
+/// response — when no trigger record exists for `trigger_id`.
 pub fn validate_trigger(
     env: &Env,
     trigger_id: u64,
@@ -109,7 +112,7 @@ pub fn validate_trigger(
 ) -> Result<(), OracleError> {
     // 1. Get the trigger
     let trigger =
-        storage::get_oracle_trigger(env, trigger_id).ok_or(OracleError::PolicyNotFound)?;
+        storage::get_oracle_trigger(env, trigger_id).ok_or(OracleError::TriggerNotFound)?;
 
     // 2. Check current status
     let current_status =
@@ -147,6 +150,9 @@ pub fn validate_trigger(
 /// ⚠️  LEGAL NOTE: Automatic trigger-to-payout flow requires legal review
 /// to ensure compliance with insurance regulations.  Parametric insurance
 /// may have different regulatory requirements than indemnity insurance.
+///
+/// Returns `Err(OracleError::TriggerNotFound)` — the documented "no data"
+/// response — when no trigger record exists for `trigger_id`.
 pub fn execute_trigger(
     env: &Env,
     trigger_id: u64,
@@ -154,7 +160,7 @@ pub fn execute_trigger(
 ) -> Result<TriggerStatus, OracleError> {
     // 1. Get the trigger
     let _trigger =
-        storage::get_oracle_trigger(env, trigger_id).ok_or(OracleError::PolicyNotFound)?;
+        storage::get_oracle_trigger(env, trigger_id).ok_or(OracleError::TriggerNotFound)?;
 
     // 2. Check current status
     let current_status =
@@ -188,6 +194,25 @@ pub fn get_trigger_status(env: &Env, trigger_id: u64) -> Option<TriggerStatus> {
 /// Get the full trigger record.
 pub fn get_trigger(env: &Env, trigger_id: u64) -> Option<OracleTrigger> {
     storage::get_oracle_trigger(env, trigger_id)
+}
+
+/// Query a trigger, returning `Err(OracleError::TriggerNotFound)` when the oracle
+/// stub has no data for the requested `trigger_id`.
+///
+/// # No-data behaviour
+///
+/// The oracle stub stores triggers only after a successful `submit_trigger` call.
+/// Querying any `trigger_id` that was never submitted — or where the storage
+/// entry has expired — returns `Err(OracleError::TriggerNotFound)`.
+///
+/// This is the **documented safe-failure mode**: callers must not interpret a
+/// missing trigger as an implicit approval or default value; they must treat it
+/// as an explicit "no data available" signal and surface it to the user.
+///
+/// Dependent entrypoints (e.g., `execute_trigger`, `validate_trigger`) also
+/// return this error when called with an unknown `trigger_id`.
+pub fn query_trigger(env: &Env, trigger_id: u64) -> Result<OracleTrigger, OracleError> {
+    storage::get_oracle_trigger(env, trigger_id).ok_or(OracleError::TriggerNotFound)
 }
 
 /// Enable or disable oracle trigger processing.

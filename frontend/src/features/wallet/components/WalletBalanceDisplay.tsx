@@ -1,15 +1,16 @@
 'use client'
 
+import { useLocale } from 'next-intl'
 import { Loader2 } from 'lucide-react'
 import { useWallet } from '../hooks/useWallet'
 import { useWalletBalances } from '../hooks/useWalletBalances'
+import { formatDecimalNumber } from '@/lib/format-number'
 
 /** Format a Horizon balance string (e.g. "1234.5678900") to a readable value. */
-function formatBalance(balance: string): string {
+function formatBalance(balance: string, locale: string): string {
   const n = parseFloat(balance)
   if (isNaN(n)) return balance
-  // Show up to 2 decimal places, strip trailing zeros
-  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+  return formatDecimalNumber(n, locale)
 }
 
 /** Extract a short display label from an asset string like "TOKEN:GISSUER..." */
@@ -19,6 +20,7 @@ function assetLabel(asset: string): string {
 }
 
 export function WalletBalanceDisplay() {
+  const locale = useLocale()
   const { address, connectionStatus } = useWallet()
   const { data: balances, isLoading, isError } = useWalletBalances(address)
 
@@ -47,12 +49,12 @@ export function WalletBalanceDisplay() {
     >
       {xlm && (
         <span className="text-foreground" data-testid="balance-XLM">
-          {formatBalance(xlm.balance)} <span className="text-muted-foreground">XLM</span>
+          {formatBalance(xlm.balance, locale)} <span className="text-muted-foreground">XLM</span>
         </span>
       )}
       {tokens.map((t) => (
         <span key={t.asset} className="text-foreground" data-testid={`balance-${assetLabel(t.asset)}`}>
-          {formatBalance(t.balance)} <span className="text-muted-foreground">{assetLabel(t.asset)}</span>
+          {formatBalance(t.balance, locale)} <span className="text-muted-foreground">{assetLabel(t.asset)}</span>
         </span>
       ))}
     </div>

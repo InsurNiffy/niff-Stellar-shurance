@@ -40,7 +40,15 @@ src/components/ui/button.stories.tsx   ← same directory
 - Use static mock addresses and ledger numbers.
 - Wrap components that need React Query in a `QueryClientProvider` decorator if needed (see `.storybook/preview.ts`).
 
-## CI
+## Coverage Expectation
 
-`npm run build-storybook` runs on every push/PR to `main` via `.github/workflows/storybook.yml`. A failing build blocks merge.
+New shared components under `src/components/` must ship with a baseline
+`.stories.tsx` covering the default state plus key variants (e.g.
+loading/error/empty) alongside the component in the same PR.
+
+### Excluding a story from the visual check
+
+Add the `skip-visual-test` tag to a story's `meta.tags` if it cannot render
+in isolation (e.g. it throws without a provider it can't be given in
+Storybook). See `PolicyCard.stories.tsx` for an example.
 

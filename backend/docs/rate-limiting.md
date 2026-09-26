@@ -19,6 +19,29 @@ This means authenticated users behind a shared corporate NAT are not penalised c
 > Limits for claim submission (`POST /api/claims/submit`) are additionally governed by
 > a per-policy ledger-window counter (see claim rate limiting docs).
 
+## Appeal Submission Rate Limits (#1322)
+
+`POST /api/claims/:id/appeal` (and related appeal write paths) use a **dedicated**
+`AppealRateLimitGuard`, not the shared `ClaimRateLimitGuard`.
+
+| Limit | Window | Rationale |
+|---|---|---|
+| 2 appeals | 1 hour | Appeals are rarer and higher-stakes than claim filing; a tight hourly cap blocks spray-and-pray appeal spam without touching claim budgets. |
+| 5 appeals | 1 day | Isolates abuse from the claim-filing daily window (20/day). Legitimate claimants almost never need more than one appeal per claim. |
+
+Redis keys are namespaced (`appeal:hour:…`, `appeal:day:…`) so they never share
+counters with `claim:*` keys. Responses include `X-RateLimit-Policy: appeal`.
+
+Environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_APPEALS_PER_WALLET_PER_HOUR` | 2 | Appeals per wallet per hour |
+| `MAX_APPEALS_PER_WALLET_PER_DAY` | 5 | Appeals per wallet per day |
+
+Nest `@Throttle` on the appeal route (5 req / 60s) remains as a coarse IP/route
+safety net on top of the wallet-scoped appeal guard.
+
 ## Claim Submission Rate Limits
 
 Claim submission (`POST /api/claims/submit`) is protected by **three layers** of rate limiting:

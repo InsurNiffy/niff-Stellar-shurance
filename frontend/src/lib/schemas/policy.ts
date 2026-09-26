@@ -2,9 +2,14 @@ import { z } from 'zod'
 
 export const PolicyInitiationSchema = z.object({
   quoteId: z.string().min(1, 'Quote ID is required'),
+  coverageTier: z.enum(['Basic', 'Standard', 'Premium'], { message: 'Please select a coverage tier' }),
   walletAddress: z.string()
     .min(1, 'Wallet address is required')
     .regex(/^G[A-Z0-9]{55}$/, 'Invalid Stellar address format'),
+  beneficiaryAddress: z.string()
+    .regex(/^G[A-Z0-9]{55}$/, 'Invalid Stellar address format')
+    .optional()
+    .or(z.literal('')),
   acceptTerms: z.boolean().refine(val => val === true, 'You must accept the terms and conditions'),
 })
 

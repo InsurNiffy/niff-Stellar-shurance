@@ -12,7 +12,8 @@
 
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { RedisPubSub } from 'graphql-redis-subscriptions';
-import { getBullMQConnection } from '../redis/client';
+import Redis from 'ioredis';
+import { buildRedisConfig } from '../redis/config';
 
 export interface VoteEvent {
   claimId: number;
@@ -30,10 +31,20 @@ export class VotePubSubService implements OnModuleDestroy {
   readonly pubSub: RedisPubSub;
 
   constructor() {
+    const cfg = buildRedisConfig();
+    const createConnection = () => new Redis({
+      host: cfg.host,
+      port: cfg.port,
+      password: cfg.password,
+      tls: cfg.tls ? {} : undefined,
+      db: cfg.db,
+      maxRetriesPerRequest: null,
+    });
+
     // Two separate connections: one for publish, one for subscribe
     this.pubSub = new RedisPubSub({
-      publisher: getBullMQConnection(),
-      subscriber: getBullMQConnection(),
+      publisher: createConnection(),
+      subscriber: createConnection(),
     });
   }
 

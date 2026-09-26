@@ -23,6 +23,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
 import Redis from "ioredis";
 import { ConfigService } from "@nestjs/config";
+import { buildRedisConfig } from "../redis/config";
 import { SseConnectionRegistry } from "./sse-connection.registry";
 
 export interface ClaimStatusChangedEvent {
@@ -46,17 +47,27 @@ export class ClaimEventsService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const redisUrl = this.config.get<string>("REDIS_URL", "redis://localhost:6379");
+    const cfg = buildRedisConfig();
 
     // Dedicated subscriber connection — subscribe() blocks the connection for
     // pub/sub mode, so it cannot be shared with the general RedisService client.
-    this.subscriber = new Redis(redisUrl, {
+    this.subscriber = new Redis({
+      host: cfg.host,
+      port: cfg.port,
+      password: cfg.password,
+      tls: cfg.tls ? {} : undefined,
+      db: cfg.db,
       lazyConnect: true,
       retryStrategy: (times) => (times > 5 ? null : Math.min(times * 200, 3000)),
     });
 
     // Dedicated publisher connection
-    this.publisher = new Redis(redisUrl, {
+    this.publisher = new Redis({
+      host: cfg.host,
+      port: cfg.port,
+      password: cfg.password,
+      tls: cfg.tls ? {} : undefined,
+      db: cfg.db,
       lazyConnect: true,
       retryStrategy: (times) => (times > 5 ? null : Math.min(times * 200, 3000)),
     });

@@ -15,6 +15,8 @@ import { PrismaService } from "../prisma/prisma.service";
 
 const CACHE_TTL_SECONDS = 15;
 const CACHE_PREFIX = "horizon:txcache:";
+const ACCOUNT_CACHE_PREFIX = "horizon:account:";
+const LEDGER_CACHE_PREFIX = "horizon:ledger:";
 const RL_KEY_PREFIX = "horizon:rl:";
 const RL_WINDOW_MS = 60_000;
 const RL_MAX_REQUESTS = 30;
@@ -33,6 +35,7 @@ const STELLAR_ADDRESS_RE = /^G[A-Z0-9]{55}$/;
 export class HorizonService {
   private readonly logger = new Logger(HorizonService.name);
   private readonly horizonUrl: string;
+  private readonly horizonFallbackUrl: string | undefined;
   private readonly maxRequests: number;
   private readonly windowMs: number;
   private readonly circuitBreakerThreshold: number;
@@ -46,6 +49,7 @@ export class HorizonService {
   ) {
     const networkConfig = getNetworkConfig();
     this.horizonUrl = networkConfig.horizonUrl;
+    this.horizonFallbackUrl = networkConfig.horizonFallbackUrl;
     this.maxRequests = this.config.get<number>("HORIZON_RATE_LIMIT_MAX", RL_MAX_REQUESTS);
     this.windowMs = this.config.get<number>("HORIZON_RATE_LIMIT_WINDOW_MS", RL_WINDOW_MS);
     this.circuitBreakerThreshold = this.config.get<number>(
@@ -238,7 +242,9 @@ export class HorizonService {
         throw error;
       }
 
-      return (await res.json()) as Record<string, unknown>;
+      const data = (await res.json()) as Record<string, unknown>;
+      this.logger.debug(`Horizon request succeeded from ${new URL(url).hostname}`);
+      return data;
     } catch (err) {
       const statusCode = (err as HttpStatusError).statusCode;
       if (statusCode === 429) {
@@ -246,6 +252,39 @@ export class HorizonService {
         error.statusCode = 429;
         throw error;
       }
+
+      const primaryHostname = new URL(url).hostname;
+      if (this.horizonFallbackUrl && !url.includes(new URL(this.horizonFallbackUrl).hostname)) {
+        this.logger.warn(
+          `Primary Horizon (${primaryHostname}) failed, attempting fallback: ${err}`,
+        );
+        try {
+          const fallbackUrl = url.replace(
+            new URL(this.horizonUrl).hostname,
+            new URL(this.horizonFallbackUrl).hostname,
+          );
+          const fallbackRes = await fetch(fallbackUrl, {
+            headers,
+            signal: AbortSignal.timeout(10_000),
+          });
+
+          if (!fallbackRes.ok) {
+            const fallbackError = new Error(
+              `Fallback Horizon returned HTTP ${fallbackRes.status}`,
+            ) as HttpStatusError;
+            fallbackError.statusCode = fallbackRes.status;
+            throw fallbackError;
+          }
+
+          const data = (await fallbackRes.json()) as Record<string, unknown>;
+          this.logger.log(`Horizon request succeeded from fallback endpoint`);
+          return data;
+        } catch (fallbackErr) {
+          this.logger.error(`Both primary and fallback Horizon endpoints failed: ${fallbackErr}`);
+          throw fallbackErr;
+        }
+      }
+
       throw err;
     }
   }
@@ -276,5 +315,100 @@ export class HorizonService {
     } catch {
       return undefined;
     }
+  }
+
+  private async fetchWithSingleFlightLock(
+    cacheKey: string,
+    fn: () => Promise<Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
+    const client = this.redis.getClient();
+    const lockKey = `lock:${cacheKey}`;
+    const lockTtl = 30;
+
+    try {
+      const lockAcquired = (await client.set(lockKey, '1', 'EX', lockTtl, 'NX')) === 'OK';
+
+      if (lockAcquired) {
+        try {
+          const data = await fn();
+          await this.redis.set(cacheKey, data, CACHE_TTL_SECONDS);
+          return data;
+        } finally {
+          await client.del(lockKey).catch(() => {
+            // Ignore lock release errors
+          });
+        }
+      } else {
+        const maxWaitMs = 5000;
+        const pollIntervalMs = 50;
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < maxWaitMs) {
+          const cached = await this.redis.get<Record<string, unknown>>(cacheKey);
+          if (cached) {
+            this.logger.debug(`Single-flight lock: obtained result from cache`);
+            return cached;
+          }
+
+          const lockExists = await client.exists(lockKey);
+          if (lockExists === 0) {
+            this.logger.debug(`Single-flight lock: holder released, checking cache`);
+            const retryData = await this.redis.get<Record<string, unknown>>(cacheKey);
+            if (retryData) {
+              return retryData;
+            }
+            const data = await fn();
+            await this.redis.set(cacheKey, data, CACHE_TTL_SECONDS);
+            return data;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        }
+
+        this.logger.warn(`Single-flight lock timeout for ${cacheKey}, computing anyway`);
+        const data = await fn();
+        await this.redis.set(cacheKey, data, CACHE_TTL_SECONDS);
+        return data;
+      }
+    } catch (err) {
+      this.logger.warn(`Single-flight lock failed, degrading to unprotected: ${err}`);
+      return await fn();
+    }
+  }
+
+  async getAccount(account: string): Promise<Record<string, unknown>> {
+    if (!STELLAR_ADDRESS_RE.test(account)) {
+      throw new BadRequestException("Invalid Stellar account address");
+    }
+
+    const cacheKey = `${ACCOUNT_CACHE_PREFIX}${account}`;
+    const cached = await this.redis.get<Record<string, unknown>>(cacheKey);
+    if (cached) {
+      this.logger.debug(`Account cache hit for ${account}`);
+      return cached;
+    }
+
+    return await this.fetchWithSingleFlightLock(cacheKey, () => {
+      const url = `${this.horizonUrl}/accounts/${encodeURIComponent(account)}`;
+      return this.fetchFromHorizonWithCircuitBreaker(url);
+    });
+  }
+
+  async getLedger(ledgerSequence: number): Promise<Record<string, unknown>> {
+    if (!Number.isInteger(ledgerSequence) || ledgerSequence < 0) {
+      throw new BadRequestException("Ledger sequence must be a non-negative integer");
+    }
+
+    const cacheKey = `${LEDGER_CACHE_PREFIX}${ledgerSequence}`;
+    const cached = await this.redis.get<Record<string, unknown>>(cacheKey);
+    if (cached) {
+      this.logger.debug(`Ledger cache hit for sequence ${ledgerSequence}`);
+      return cached;
+    }
+
+    return await this.fetchWithSingleFlightLock(cacheKey, () => {
+      const url = `${this.horizonUrl}/ledgers/${ledgerSequence}`;
+      return this.fetchFromHorizonWithCircuitBreaker(url);
+    });
   }
 }

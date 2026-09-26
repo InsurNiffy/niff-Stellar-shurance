@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Query,
+  Param,
   HttpCode,
   HttpStatus,
   HttpException,
@@ -70,5 +71,21 @@ export class HorizonController {
       }
       throw err;
     }
+  }
+
+  @Get("accounts/:account")
+  @HttpCode(HttpStatus.OK)
+  async getAccount(@Param("account") account: string): Promise<Record<string, unknown>> {
+    return await this.horizonService.getAccount(account);
+  }
+
+  @Get("ledgers/:sequence")
+  @HttpCode(HttpStatus.OK)
+  async getLedger(@Param("sequence") sequenceStr: string): Promise<Record<string, unknown>> {
+    const sequence = parseInt(sequenceStr, 10);
+    if (isNaN(sequence)) {
+      throw new HttpException("sequence must be a number", HttpStatus.BAD_REQUEST);
+    }
+    return await this.horizonService.getLedger(sequence);
   }
 }

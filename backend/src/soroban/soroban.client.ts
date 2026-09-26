@@ -22,7 +22,19 @@ import {
 import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { config } from '../config/env';
 import { getRuntimeEnv } from '../config/runtime-env';
-import { BadGatewayException, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, GatewayTimeoutException, ServiceUnavailableException } from '@nestjs/common';
+
+/** Thrown when simulateTransaction exceeds SOROBAN_SIMULATE_TIMEOUT_MS (issue #895). */
+export class SimulationTimeoutError extends GatewayTimeoutException {
+  constructor(timeoutMs: number) {
+    super({
+      statusCode: 504,
+      error: 'SIMULATION_TIMEOUT',
+      message: `Soroban simulate_transaction timed out after ${timeoutMs}ms`,
+      i18nKey: 'errors.tx.simulationTimeout',
+    });
+  }
+}
 
 // Convenience aliases
 const { Api, assembleTransaction } = SorobanRpc;
@@ -112,6 +124,28 @@ async function loadAccount(
   }
 }
 
+/** Resolves SOROBAN_SIMULATE_TIMEOUT_MS from env (default 30 s). */
+function getSimulateTimeoutMs(): number {
+  const raw = process.env['SOROBAN_SIMULATE_TIMEOUT_MS'];
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30_000;
+}
+
+/** Race a simulate call against a deadline; throws SimulationTimeoutError on expiry. */
+async function withSimulationTimeout(promise: Promise<SimResult>): Promise<SimResult> {
+  const timeoutMs = getSimulateTimeoutMs();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new SimulationTimeoutError(timeoutMs)), timeoutMs);
+  });
+  try {
+    const result = await Promise.race([promise, timeout]);
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function mapSimulationError(error: string): BadRequestException | ServiceUnavailableException {
   if (
     error.includes('WasmVm') ||
@@ -167,7 +201,7 @@ export async function simulateGeneratePremium(args: {
     .setTimeout(30)
     .build();
 
-  const simulation: SimResult = await server.simulateTransaction(tx);
+  const simulation: SimResult = await withSimulationTimeout(server.simulateTransaction(tx));
 
   if (Api.isSimulationError(simulation)) {
     // Graceful fallback to local computation
@@ -268,7 +302,7 @@ export async function buildInitiatePolicyTransaction(args: {
     .setTimeout(30)
     .build();
 
-  const simulation: SimResult = await server.simulateTransaction(tx);
+  const simulation: SimResult = await withSimulationTimeout(server.simulateTransaction(tx));
 
   if (Api.isSimulationError(simulation)) {
     const errSim = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;

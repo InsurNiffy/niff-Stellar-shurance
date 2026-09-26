@@ -71,9 +71,27 @@ export function PolicyMetadataUriViewer({
         {termsHash && (
           <div className="flex items-start gap-2">
             <Hash className="h-4 w-4 mt-0.5 text-gray-400 flex-shrink-0" aria-hidden="true" />
-            <code className="text-xs bg-gray-100 px-2 py-1 rounded break-all font-mono">
-              {termsHash}
-            </code>
+            <div className="space-y-1 min-w-0">
+              <p className="text-xs font-medium text-gray-600">
+                Terms Hash (SHA-256){' '}
+                <a
+                  href={resolvedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-800 hover:underline"
+                  aria-label="view document"
+                  title={`Verify SHA-256 hash against: ${metadataUri}`}
+                >
+                  (view document)
+                </a>
+              </p>
+              <code
+                className="block text-xs bg-gray-100 px-2 py-1 rounded break-all font-mono"
+                aria-label="Terms hash"
+              >
+                {termsHash}
+              </code>
+            </div>
           </div>
         )}
 

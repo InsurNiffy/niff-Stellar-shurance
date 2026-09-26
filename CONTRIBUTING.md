@@ -15,6 +15,8 @@ Welcome. This guide takes you from a fresh clone to a passing CI run and an open
 7. [PR review process](#7-pr-review-process)
 8. [Good first issues](#8-good-first-issues)
 9. [Security rules](#9-security-rules)
+10. [On-call operations](#10-on-call-operations)
+11. [Dependency update policy](#11-dependency-update-policy)
 
 ---
 
@@ -64,6 +66,10 @@ This checks `backend/.env` and `frontend/.env.local` for all required variables 
 ## 3. Contract development (Rust / Soroban)
 
 The Soroban smart contract lives in `contracts/niffyinsure/`.
+
+Domain terms that are easy to mix up — in particular **appeal** vs. **dispute**
+vs. **escalation**, which have different triggering actors and different claim
+status preconditions — are defined in [`docs/GLOSSARY.md`](docs/GLOSSARY.md).
 
 ### Setup
 
@@ -119,6 +125,15 @@ If the contract ABI changed, bump `_meta.contractSemver` in the JSON to match th
 | `cargo audit` fails | Run `cargo audit` and update or patch the flagged dependency |
 | WASM build fails | Run `make build` and resolve the compiler error |
 
+### Adding a new contract event variant
+
+When you add a new `#[contractevent]` struct to `events.rs`:
+
+1. Add the new event's `EventKey` to `backend/src/events/events.schema.ts` (`EventKey` union + `EVENT_PARSERS` entry + typed interface).
+2. Add a decode test in `backend/src/events/events.test.ts` that constructs the raw payload and asserts `parseEvent` returns the correct typed result.
+3. Update `docs/EVENT_DICTIONARY.md` with the new event's topic layout and payload schema.
+4. If any field is **removed or its type changes**, bump `SCHEMA_VERSION` in `events.schema.ts` and add a new versioned parser entry — backward-compatible additions do not require a bump.
+
 ---
 
 ## 4. Backend development (NestJS)
@@ -170,9 +185,21 @@ npm run test:e2e
 ```bash
 npm run env:example:generate   # regenerate .env.example from env.definitions.ts
 npm run env:example:check      # verify .env.example is not drifted
-npm run export-spec            # regenerate backend/openapi.json
+npm run export-spec            # regenerate backend/openapi.json from DTOs
 npm run error-catalog:check    # verify error codes are consistent
 ```
+
+### OpenAPI spec drift
+
+If you modify a backend DTO (request/response body), the OpenAPI spec must be regenerated:
+
+```bash
+cd backend
+npm run export-spec
+git add openapi.json
+```
+
+CI will fail if the spec drifts from the committed version. Always regenerate and commit the updated file when DTOs change.
 
 ### Fixing CI: `unit-tests` job
 
@@ -180,8 +207,14 @@ npm run error-catalog:check    # verify error codes are consistent
 |---|---|
 | `npm test` fails | Run `npm test` locally and fix the failing test |
 | `.env.example` drift | Run `npm run env:example:generate` and commit the updated file |
-| `openapi.json` stale | Run `make generate-client` and commit the updated file |
+| OpenAPI spec drift | Run `npm run export-spec` and commit the updated `backend/openapi.json` |
 | `npm audit` high/critical | Update or patch the flagged dependency |
+
+### Fixing CI: `address-normalization` job
+
+| Failure | Fix |
+|---|---|
+| Denormalized addresses detected | Run `cd backend && npx ts-node -r tsconfig-paths/register src/scripts/normalize-addresses.ts` to normalize all addresses in the database, then verify the fix with `--dry-run` |
 
 ### Fixing CI: `migrations` job
 
@@ -283,6 +316,7 @@ Every PR to `main` runs these jobs. All must pass (except `e2e-tests` which is a
 | `frontend` | lint, typecheck, build, unit tests, generated types | `cd frontend && npm run lint -- --max-warnings=0 && npm run typecheck && npm run build && npm test` |
 | `contract` | Rust tests, cargo audit, WASM build | `cargo test --workspace --features testutils && cargo audit && make build` |
 | `unit-tests` | Backend unit tests, `.env.example` drift, OpenAPI spec drift | `cd backend && npm test && npm run env:example:check && npm run export-spec` |
+| `address-normalization` | Tracked address data must be canonical (no denormalized M-addresses) | `cd backend && npx ts-node -r tsconfig-paths/register src/scripts/normalize-addresses.ts --dry-run` |
 | `golden-vectors` | Soroban ABI encoding (runs on contract/backend changes) | `cd backend && npm run refresh-vectors` |
 | `migrations` | Prisma migration history and schema validity | `cd backend && npx prisma migrate deploy` |
 | `accessibility` | axe/Playwright — no critical violations | `cd frontend && npx playwright test tests/accessibility.spec.ts` |
@@ -302,6 +336,7 @@ cargo test --workspace --features testutils
 cd backend
 npm run env:example:check
 npm run export-spec
+npx ts-node -r tsconfig-paths/register src/scripts/normalize-addresses.ts --dry-run
 npm test
 
 # Frontend
@@ -378,6 +413,13 @@ Look for issues labelled **`good first issue`** on GitHub. These are scoped to b
 1. Comment on the issue to claim it — avoids duplicate work.
 2. Ask questions in the issue thread before writing code.
 3. Open a draft PR early so reviewers can give early feedback.
+
+### Cross-stack features
+
+If your issue is one part of a feature that spans contract, backend, and/or
+frontend, follow the
+[cross-stack issue linking convention](docs/issues/cross-stack-linking-convention.md)
+to keep the related issues discoverable.
 4. Reference the issue in your PR description: `Closes #<issue-number>`.
 
 ---
@@ -467,6 +509,8 @@ Every page must have at minimum: `<main>`, `<nav>` (if navigation present), and 
 
 All text must meet WCAG AA contrast ratios (4.5:1 normal text, 3:1 large text). Claim outcomes (Approved / Rejected / Pending) must not rely on color alone — shape indicators and text labels are required.
 
+Appeal UI (`AppealButton`, `AppealConfirmModal`) conformance against **WCAG 2.1 AA** is recorded in [`docs/appeal-accessibility-conformance.md`](docs/appeal-accessibility-conformance.md) (#1363).
+
 ### Adding new UI
 
 When adding new interactive components:
@@ -485,3 +529,65 @@ See [section 3](#3-contract-development-rust--soroban) for the refresh workflow.
 
 - A second engineer must review and approve any vector changes before merge.
 - Before tagging a release: run `npm run refresh-vectors` and confirm the diff is empty (or intentional), confirm `_meta.contractSemver` matches `Cargo.toml`, and update `contracts/deployment-registry.json` with the new wasm hash.
+
+---
+
+## 10. On-call operations
+
+If you are on-call for production incidents, refer to the **[On-Call Runbook Index](docs/ops/README.md)** for step-by-step procedures covering:
+
+- **Database & data loss** — PostgreSQL restore, GDPR data deletion, retention policies
+- **Job queue issues** — Failed BullMQ job replay, queue depth alerts
+- **Smart contract incidents** — WASM drift, testnet resets, contract upgrades, emergency pause
+- **API & error handling** — Error code lookup, log correlation, Stellar transaction debugging
+- **Operational maintenance** — Secret rotation, dependency audits, indexer reindex
+
+When an incident is declared, open the runbook index and scan by symptom to find the matching runbook. Each runbook includes detection signals, step-by-step procedures, smoke tests, and escalation paths.
+
+---
+
+## 11. Dependency update policy
+
+### Cadence and automation
+
+Dependabot is configured to open automated PRs on a **weekly schedule** (every Monday). It targets the following ecosystems:
+
+| Ecosystem | Config location | Update scope |
+|-----------|----------------|--------------|
+| npm (backend) | `backend/package.json` | patch and minor |
+| npm (frontend) | `frontend/package.json` | patch and minor |
+| GitHub Actions | `.github/workflows/` | patch and minor |
+| Cargo (contracts / backend Rust) | `Cargo.toml` | patch and minor |
+
+Dependabot PRs that touch only patch or minor versions of non-contract dependencies are reviewed and merged by any team member without a formal review gate, provided all CI jobs pass.
+
+### Major version review gate
+
+Major version bumps (`X.0.0`) require:
+
+1. A dedicated PR titled `chore(deps): bump <package> from vN to vN+1`.
+2. Manual review of the package's migration guide and changelog.
+3. At least **one approving review** from a team member with ownership of the affected area (backend, frontend, or contracts).
+4. Confirmation that all CI jobs pass — especially the `golden-vectors` job if the bump touches any Soroban SDK.
+
+Do not batch multiple major bumps into a single PR; each major version upgrade must be independently reviewable and revertable.
+
+### Contract SDK pin policy
+
+The Soroban contract SDK and CLI are pinned to **exact versions** to prevent mid-sprint breakage from upstream changes to the WASM ABI or XDR encoding:
+
+- **`stellar-sdk` (npm):** pinned to an exact version in `frontend/package.json` and `backend/package.json` (no `^` or `~` prefix). Update only via a deliberate PR that also refreshes the golden vectors (`npm run refresh-vectors`) and updates `_meta.contractSemver` in `backend/src/soroban/golden-vectors.json`.
+- **`stellar-cli` (Cargo / CI):** pinned via `cargo install --locked stellar-cli --features opt`. The locked version is recorded in `Cargo.lock`; do not run `cargo update` on this crate without a corresponding golden-vector refresh.
+- **Rust toolchain:** `rust-toolchain.toml` (or `rustup override`) pins the channel to `stable` at a specific date. Update together with any contract SDK upgrade.
+
+Any PR that changes a pinned SDK version must include a golden-vector diff review (two approvals required — see [PR review process](#7-pr-review-process)).
+
+### Security patches
+
+`npm audit` and `cargo audit` run in CI. If a **high or critical** vulnerability is reported:
+
+1. Open a fix PR immediately, even outside the weekly window.
+2. If a non-breaking patch is available, merge it the same day.
+3. If the fix requires a major bump or a workaround, open a tracking issue and document the interim mitigation in `audit.toml` (Cargo) or via `npm audit fix --force` with a justification comment in the PR description.
+
+Never merge an `npm audit` or `cargo audit` suppression without a documented reason and an expiry date in the suppression entry.

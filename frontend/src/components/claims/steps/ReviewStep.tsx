@@ -9,6 +9,7 @@ export interface PolicyCoverageDetails {
   currency: string;
   status: string;
   expiresAt: string;
+  deductible?: string;
 }
 
 interface ReviewStepProps {
@@ -19,6 +20,7 @@ interface ReviewStepProps {
   };
   policyId: string;
   policyCoverage?: PolicyCoverageDetails;
+  deductible?: string;
   onEdit?: (step: number) => void;
   decimals?: number;
   currency?: string;
@@ -29,12 +31,16 @@ export function ReviewStep({
   data,
   policyId,
   policyCoverage,
+  deductible = '0',
   onEdit,
   decimals = 7,
   currency = 'XLM',
   locale = 'en-US',
 }: ReviewStepProps) {
   const displayCurrency = policyCoverage?.currency ?? currency;
+  const claimAmount = BigInt(data.amount || '0');
+  const deductibleAmount = BigInt(deductible);
+  const netPayout = claimAmount > deductibleAmount ? claimAmount - deductibleAmount : 0n;
 
   return (
     <div className="space-y-6 py-4">
@@ -82,7 +88,7 @@ export function ReviewStep({
               <div className="rounded-full bg-primary/10 p-2 text-primary">
                 <Wallet className="h-5 w-5" />
               </div>
-              <div className="flex-1">
+              <div className="flex-1 space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-medium text-muted-foreground">Claim Amount</p>
                   {onEdit && (
@@ -95,9 +101,24 @@ export function ReviewStep({
                     </button>
                   )}
                 </div>
-                <p className="text-lg font-bold">
-                  {formatTokenAmount(data.amount || '0', decimals, locale)} {displayCurrency}
-                </p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <span className="text-muted-foreground">Claim Amount</span>
+                  <span className="font-semibold">
+                    {formatTokenAmount(data.amount || '0', decimals, locale)} {displayCurrency}
+                  </span>
+                  {deductibleAmount > 0n && (
+                    <>
+                      <span className="text-muted-foreground">Deductible</span>
+                      <span className="font-medium text-amber-600">
+                        -{formatTokenAmount(deductible, decimals, locale)} {displayCurrency}
+                      </span>
+                      <span className="text-muted-foreground font-medium">Estimated Net Payout</span>
+                      <span className="text-lg font-bold text-green-600">
+                        {formatTokenAmount(netPayout.toString(), decimals, locale)} {displayCurrency}
+                      </span>
+                    </>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground">Policy ID: #{policyId}</p>
               </div>
             </div>

@@ -172,6 +172,10 @@ export function QuoteReviewStep({ coverageData, cachedQuote, cachedQuoteExpiresA
               <dt className="text-muted-foreground">Min Resource Fee</dt>
               <dd className="font-medium">{quote.minResourceFee} stroops</dd>
             </div>
+            <div>
+              <dt className="text-muted-foreground">Protocol Fee</dt>
+              <dd className="font-medium">{((quote.protocolFeeBps ?? 500) / 100).toFixed(2)}%</dd>
+            </div>
           </dl>
 
           <Badge variant={quote.source === 'simulation' ? 'success' : 'secondary'}>

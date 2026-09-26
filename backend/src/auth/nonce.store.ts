@@ -10,7 +10,7 @@
  */
 
 import Redis from 'ioredis';
-import { config } from '../config/env';
+import { buildRedisConfig } from '../redis/config';
 
 export interface NonceStore {
   set(nonce: string, data: string, ttlSeconds: number): Promise<void>;
@@ -76,7 +76,14 @@ export async function getNonceStore(): Promise<NonceStore> {
   if (_store) return _store;
 
   try {
-    const redis = new Redis(config.redis.url, {
+    const cfg = buildRedisConfig();
+    const redis = new Redis({
+      host: cfg.host,
+      port: cfg.port,
+      password: cfg.password,
+      tls: cfg.tls ? {} : undefined,
+      db: cfg.db,
+      keyPrefix: cfg.keyPrefix,
       lazyConnect: true,
       enableOfflineQueue: false,
       connectTimeout: 2000,

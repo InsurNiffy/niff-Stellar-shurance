@@ -1,0 +1,143 @@
+# Production Docker Compose stack for NiffyInsure.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml down
+#
+# Secrets must be pre-created with Docker secrets before starting:
+#   printf 'supersecret' | docker secret create redis_password -
+#
+# No bind-mounts, no .env files — all config via environment variables
+# and Docker secrets. Resource limits are tuned for a 2-vCPU / 4 GB node;
+# adjust deploy.resources for larger instances.
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: niffyinsure-redis-prod
+    restart: always
+    command: >
+      sh -c 'redis-server
+        --requirepass "$$(cat /run/secrets/redis_password)"
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+        --save ""
+        --appendonly no
+        --loglevel warning'
+    secrets:
+      - redis_password
+    networks:
+      - internal
+    ports: []
+    healthcheck:
+      test:
+        - CMD
+        - sh
+        - -c
+        - 'redis-cli -a "$$(cat /run/secrets/redis_password)" ping | grep -q PONG'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 640M
+        reservations:
+          cpus: "0.10"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: ghcr.io/insur-niffy/niff-stellar-shurance/backend:${IMAGE_TAG:-latest}
+    container_name: niffyinsure-backend-prod
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      PORT: "3001"
+    secrets:
+      - redis_password
+      - backend_jwt_secret
+    networks:
+      - internal
+      - external
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  frontend:
+    image: ghcr.io/insur-niffy/niff-stellar-shurance/frontend:${IMAGE_TAG:-latest}
+    container_name: niffyinsure-frontend-prod
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      PORT: "3000"
+    networks:
+      - external
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  external:
+    driver: bridge
+
+secrets:
+  redis_password:
+    external: true
+  backend_jwt_secret:
+    external: true

@@ -252,6 +252,83 @@ describe('Claim Comments (E2E)', () => {
     });
   });
 
+  // ── Admin comment moderation ─────────────────────────────────────────────
+
+  describe('DELETE /api/admin/claims/:id/comments/:commentId', () => {
+    async function createComment(wallet: string): Promise<string> {
+      const token = mintUserToken(wallet);
+      const res = await request(app.getHttpServer())
+        .post(`/api/claims/${claimId}/comments`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ body: 'moderation test comment' });
+      return res.body.id as string;
+    }
+
+    it('admin can soft-delete any comment (204)', async () => {
+      const commentId = await createComment(WALLET_A);
+      const adminToken = mintAdminToken(WALLET_B);
+      const res = await request(app.getHttpServer())
+        .delete(`/api/admin/claims/${claimId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ reason: 'spam' });
+      expect(res.status).toBe(204);
+    });
+
+    it('deleted comment is excluded from regular user GET', async () => {
+      const commentId = await createComment(WALLET_A);
+      const adminToken = mintAdminToken(WALLET_B);
+      await request(app.getHttpServer())
+        .delete(`/api/admin/claims/${claimId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      const listRes = await request(app.getHttpServer()).get(
+        `/api/claims/${claimId}/comments`,
+      );
+      expect(listRes.body.find((c: { id: string }) => c.id === commentId)).toBeUndefined();
+    });
+
+    it('admin view includes deleted comments', async () => {
+      const commentId = await createComment(WALLET_A);
+      const adminToken = mintAdminToken(WALLET_B);
+      await request(app.getHttpServer())
+        .delete(`/api/admin/claims/${claimId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      const adminListRes = await request(app.getHttpServer())
+        .get(`/api/admin/claims/${claimId}/comments`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(adminListRes.status).toBe(200);
+      const found = adminListRes.body.find((c: { id: string }) => c.id === commentId);
+      expect(found).toBeDefined();
+      expect(found.deletedAt).not.toBeNull();
+    });
+
+    it('non-admin gets 403', async () => {
+      const commentId = await createComment(WALLET_A);
+      const userToken = mintUserToken(WALLET_B);
+      const res = await request(app.getHttpServer())
+        .delete(`/api/admin/claims/${claimId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${userToken}`);
+      expect(res.status).toBe(403);
+    });
+
+    it('returns 401 without token', async () => {
+      const commentId = await createComment(WALLET_A);
+      const res = await request(app.getHttpServer()).delete(
+        `/api/admin/claims/${claimId}/comments/${commentId}`,
+      );
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 404 for non-existent comment', async () => {
+      const adminToken = mintAdminToken(WALLET_B);
+      const res = await request(app.getHttpServer())
+        .delete(`/api/admin/claims/${claimId}/comments/nonexistent-id`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(res.status).toBe(404);
+    });
+  });
+
   // ── Rate limit ───────────────────────────────────────────────────────────
 
   describe('Rate limiting on POST /api/claims/:id/comments', () => {

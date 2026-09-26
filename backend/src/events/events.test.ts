@@ -16,6 +16,9 @@ import {
   VoteCastEvent,
   ClaimFinalizedEvent,
   ClaimPaidEvent,
+  ClaimStatusChangedEvent,
+  AppealOpenedEvent,
+  AppealResolvedEvent,
   PolicyInitiatedEvent,
   PolicyRenewedEvent,
   PolicyTerminatedEvent,
@@ -25,6 +28,13 @@ import {
   TokenUpdatedEvent,
   PauseToggledEvent,
   DrainedEvent,
+  PayoutAssetOverrideAppliedEvent,
+  AssetPremiumTableSetEvent,
+  InstallmentDisbursedEvent,
+  ClaimFullyPaidEvent,
+  PolicyTransferredEvent,
+  ClaimEvidenceUpdatedEvent,
+  PayoutRecipientWarningEvent,
 } from '../events/events.schema';
 
 const LEDGER = 1_234_567;
@@ -316,5 +326,274 @@ describe('parseEvent', () => {
 
   it('returns null for topics shorter than 2', () => {
     expect(parseEvent(['niffyins'], {}, LEDGER, TX)).toBeNull();
+  });
+});
+
+// ── Additional events (Issue #1163) ──────────────────────────────────────────
+
+describe('claim_status_changed', () => {
+  const topics = ['niffyins', 'claim_status_changed', 1n];
+  const payload: ClaimStatusChangedEvent = {
+    version: SCHEMA_VERSION,
+    old_status: 'Processing',
+    new_status: 'Approved',
+    at_ledger: LEDGER,
+  };
+
+  it('routes correctly', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyins:claim_status_changed');
+  });
+
+  it('preserves status fields', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    const p = ev?.payload as ClaimStatusChangedEvent;
+    expect(p.old_status).toBe('Processing');
+    expect(p.new_status).toBe('Approved');
+    expect(p.at_ledger).toBe(LEDGER);
+  });
+});
+
+// ── Appeal event sequence (#1318) ────────────────────────────────────────────
+
+describe('appeal event sequence (AppealOpened → status → AppealResolved)', () => {
+  const CLAIM_ID = 42n;
+
+  const openedTopics = ['niffyinsure', 'appeal_opened', CLAIM_ID];
+  const openedPayload: AppealOpenedEvent = {
+    policy_id: 3,
+    claimant: HOLDER,
+    appeal_deadline_ledger: LEDGER + 100,
+    quorum_bps: 7500,
+    at_ledger: LEDGER,
+  };
+
+  const underAppealStatusTopics = ['niffyins', 'claim_status_changed', CLAIM_ID];
+  const underAppealStatusPayload: ClaimStatusChangedEvent = {
+    version: SCHEMA_VERSION,
+    old_status: 'Rejected',
+    new_status: 'UnderAppeal',
+    at_ledger: LEDGER,
+  };
+
+  const approvedStatusPayload: ClaimStatusChangedEvent = {
+    version: SCHEMA_VERSION,
+    old_status: 'UnderAppeal',
+    new_status: 'AppealApproved',
+    at_ledger: LEDGER + 50,
+  };
+
+  const resolvedTopics = ['niffyinsure', 'appeal_resolved', CLAIM_ID];
+  const resolvedPayload: AppealResolvedEvent = {
+    policy_id: 3,
+    claimant: HOLDER,
+    outcome: 'AppealApproved',
+    approve_votes: 5,
+    reject_votes: 1,
+    at_ledger: LEDGER + 50,
+  };
+
+  it('decodes AppealOpened', () => {
+    const ev = parseEvent(openedTopics, openedPayload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:appeal_opened');
+    expect(ev?.ids[0]).toBe(CLAIM_ID);
+    const p = ev?.payload as AppealOpenedEvent;
+    expect(p.appeal_deadline_ledger).toBe(LEDGER + 100);
+    expect(p.quorum_bps).toBe(7500);
+    expect(p.claimant).toBe(HOLDER);
+  });
+
+  it('decodes appeal-open ClaimStatusChanged (UnderAppeal)', () => {
+    const ev = parseEvent(underAppealStatusTopics, underAppealStatusPayload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyins:claim_status_changed');
+    const p = ev?.payload as ClaimStatusChangedEvent;
+    expect(p.old_status).toBe('Rejected');
+    expect(p.new_status).toBe('UnderAppeal');
+  });
+
+  it('decodes appeal-outcome ClaimStatusChanged (AppealApproved)', () => {
+    const ev = parseEvent(underAppealStatusTopics, approvedStatusPayload, LEDGER + 50, TX);
+    expect(ev?.key).toBe('niffyins:claim_status_changed');
+    const p = ev?.payload as ClaimStatusChangedEvent;
+    expect(p.new_status).toBe('AppealApproved');
+  });
+
+  it('decodes AppealResolved', () => {
+    const ev = parseEvent(resolvedTopics, resolvedPayload, LEDGER + 50, TX);
+    expect(ev?.key).toBe('niffyinsure:appeal_resolved');
+    expect(ev?.ids[0]).toBe(CLAIM_ID);
+    const p = ev?.payload as AppealResolvedEvent;
+    expect(p.outcome).toBe('AppealApproved');
+    expect(p.approve_votes).toBe(5);
+    expect(p.reject_votes).toBe(1);
+  });
+
+  it('fixture sequence preserves claim_id across open → resolve', () => {
+    const openEv = parseEvent(openedTopics, openedPayload, LEDGER, TX);
+    const statusEv = parseEvent(underAppealStatusTopics, underAppealStatusPayload, LEDGER, TX);
+    const resolveEv = parseEvent(resolvedTopics, resolvedPayload, LEDGER + 50, TX);
+    expect(openEv?.ids[0]).toBe(CLAIM_ID);
+    expect(statusEv?.ids[0]).toBe(CLAIM_ID);
+    expect(resolveEv?.ids[0]).toBe(CLAIM_ID);
+  });
+});
+
+describe('payout_asset_override_applied', () => {
+  const NEW_ASSET = 'CABC9999999999999999999999999999999999999999999999999999';
+  const topics = ['niffyinsure', 'payout_asset_override_applied', 1n];
+  const payload: PayoutAssetOverrideAppliedEvent = {
+    version: SCHEMA_VERSION,
+    policy_type: 'Health',
+    premium_asset: ASSET,
+    payout_asset: NEW_ASSET,
+  };
+
+  it('routes correctly', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:payout_asset_override_applied');
+  });
+
+  it('preserves asset override fields', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    const p = ev?.payload as PayoutAssetOverrideAppliedEvent;
+    expect(p.policy_type).toBe('Health');
+    expect(p.premium_asset).toBe(ASSET);
+    expect(p.payout_asset).toBe(NEW_ASSET);
+  });
+});
+
+describe('asset_premium_table_set', () => {
+  const topics = ['niffyinsure', 'asset_premium_table_set', ASSET];
+
+  it('table stored (cleared=0)', () => {
+    const payload: AssetPremiumTableSetEvent = {
+      version: SCHEMA_VERSION,
+      table_version: 3,
+      cleared: 0,
+    };
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:asset_premium_table_set');
+    expect((ev?.payload as AssetPremiumTableSetEvent).cleared).toBe(0);
+    expect((ev?.payload as AssetPremiumTableSetEvent).table_version).toBe(3);
+  });
+
+  it('table cleared (cleared=1)', () => {
+    const payload: AssetPremiumTableSetEvent = {
+      version: SCHEMA_VERSION,
+      table_version: 0,
+      cleared: 1,
+    };
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect((ev?.payload as AssetPremiumTableSetEvent).cleared).toBe(1);
+  });
+});
+
+describe('installment_disbursed', () => {
+  const topics = ['niffyinsure', 'installment_disbursed', 1n];
+  const payload: InstallmentDisbursedEvent = {
+    version: SCHEMA_VERSION,
+    recipient: HOLDER,
+    amount: '1000000',
+    paid_amount: '1000000',
+    total_amount: '5000000',
+    installment_count: 1,
+    asset: ASSET,
+    at_ledger: LEDGER,
+  };
+
+  it('routes correctly', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:installment_disbursed');
+  });
+
+  it('preserves installment fields', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    const p = ev?.payload as InstallmentDisbursedEvent;
+    expect(p.amount).toBe('1000000');
+    expect(p.paid_amount).toBe('1000000');
+    expect(p.total_amount).toBe('5000000');
+    expect(p.installment_count).toBe(1);
+  });
+});
+
+describe('claim_fully_paid', () => {
+  const topics = ['niffyinsure', 'claim_fully_paid', 1n];
+  const payload: ClaimFullyPaidEvent = {
+    version: SCHEMA_VERSION,
+    recipient: HOLDER,
+    total_paid: '5000000',
+    installment_count: 3,
+    at_ledger: LEDGER,
+  };
+
+  it('routes correctly', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:claim_fully_paid');
+  });
+
+  it('preserves total_paid and installment_count', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    const p = ev?.payload as ClaimFullyPaidEvent;
+    expect(p.total_paid).toBe('5000000');
+    expect(p.installment_count).toBe(3);
+  });
+});
+
+describe('policy_transferred', () => {
+  const NEW_HOLDER = 'GABC7777777777777777777777777777777777777777777777777777';
+  const topics = ['niffyinsure', 'policy_transferred', 1, HOLDER, NEW_HOLDER];
+  const payload: PolicyTransferredEvent = {
+    version: SCHEMA_VERSION,
+    at_ledger: LEDGER,
+  };
+
+  it('routes and exposes ids', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:policy_transferred');
+    expect(ev?.ids[0]).toBe(1);
+    expect(ev?.ids[1]).toBe(HOLDER);
+    expect(ev?.ids[2]).toBe(NEW_HOLDER);
+  });
+});
+
+describe('claim_evidence_updated', () => {
+  const topics = ['niffyinsure', 'claim_evidence_updated', 1n];
+  const payload: ClaimEvidenceUpdatedEvent = {
+    policy_id: 3,
+    evidence_hashes: ['0100000000000000000000000000000000000000000000000000000000000000'],
+    at_ledger: LEDGER,
+  };
+
+  it('routes correctly', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:claim_evidence_updated');
+  });
+
+  it('preserves evidence_hashes', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    const p = ev?.payload as ClaimEvidenceUpdatedEvent;
+    expect(p.evidence_hashes).toHaveLength(1);
+    expect(p.policy_id).toBe(3);
+  });
+});
+
+describe('payout_recipient_warning', () => {
+  const topics = ['niffyinsure', 'payout_recipient_warning', 1n];
+  const payload: PayoutRecipientWarningEvent = {
+    recipient: HOLDER,
+    asset: ASSET,
+    at_ledger: LEDGER,
+  };
+
+  it('routes correctly', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    expect(ev?.key).toBe('niffyinsure:payout_recipient_warning');
+  });
+
+  it('preserves recipient and asset', () => {
+    const ev = parseEvent(topics, payload, LEDGER, TX);
+    const p = ev?.payload as PayoutRecipientWarningEvent;
+    expect(p.recipient).toBe(HOLDER);
+    expect(p.asset).toBe(ASSET);
   });
 });

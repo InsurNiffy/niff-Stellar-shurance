@@ -59,6 +59,11 @@
     "i18nKey": "errors.tx.insufficientFee",
     "description": "Transaction fee is below the network minimum."
   },
+  "SIMULATION_TIMEOUT": {
+    "httpStatus": 504,
+    "i18nKey": "errors.tx.simulationTimeout",
+    "description": "Soroban simulate_transaction timed out."
+  },
   "SIMULATION_FAILED": {
     "httpStatus": 400,
     "i18nKey": "errors.tx.simulationFailed",
@@ -123,6 +128,31 @@
     "httpStatus": 409,
     "i18nKey": "errors.claim.alreadyFinalized",
     "description": "Claim has already been finalized and cannot be modified."
+  },
+  "CLAIMS_PAUSED": {
+    "httpStatus": 503,
+    "i18nKey": "errors.claim.claimsPaused",
+    "description": "Claim operations (including appeals) are paused by the contract admin."
+  },
+  "NOT_CLAIMANT": {
+    "httpStatus": 403,
+    "i18nKey": "errors.appeal.notClaimant",
+    "description": "Only the original claimant may appeal a claim; the calling wallet is a different address."
+  },
+  "CLAIM_NOT_REJECTED": {
+    "httpStatus": 409,
+    "i18nKey": "errors.appeal.claimNotRejected",
+    "description": "Appeals are only permitted on rejected claims; this claim is in a different status."
+  },
+  "APPEAL_ALREADY_SUBMITTED": {
+    "httpStatus": 409,
+    "i18nKey": "errors.appeal.alreadySubmitted",
+    "description": "An appeal has already been recorded for this claim (contract allows one appeal per claim)."
+  },
+  "APPEAL_WINDOW_CLOSED": {
+    "httpStatus": 409,
+    "i18nKey": "errors.appeal.windowClosed",
+    "description": "The appeal window closed; the current ledger is past the claim appeal_open_deadline_ledger."
   },
   "RATE_LIMIT_EXCEEDED": {
     "httpStatus": 429,

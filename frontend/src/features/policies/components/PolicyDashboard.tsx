@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/hooks/use-wallet';
 import { useLatestLedger } from '@/hooks/use-latest-ledger';
@@ -9,6 +9,7 @@ import { useOptimisticPolicies, PolicyConfirmationPoller } from '../hooks/useOpt
 import { groupPoliciesByExpiry } from '../utils/policyGrouping';
 import { PolicyCard, PolicyRow } from './PolicyItem';
 import { PolicyListSkeleton, PolicyEmptyState, PolicyErrorState } from './PolicyStates';
+import { LastSyncedIndicator } from './LastSyncedIndicator';
 import { RenewModal } from './RenewModal';
 import { TerminateModal } from './TerminateModal';
 import type { PolicyDto, PolicyStatusFilter, PolicySortField } from '../api';
@@ -32,8 +33,11 @@ export function PolicyDashboard() {
   const [renewTarget, setRenewTarget] = useState<PolicyDto | null>(null);
   const [terminateTarget, setTerminateTarget] = useState<PolicyDto | null>(null);
 
-  const { total, pageIndex, hasNextPage, hasPrevPage, loading, error, goToPage, retry, applyOptimisticPolicy, mergedPolicies, entries: optimisticEntries, confirm: confirmOptimistic, rollback: rollbackOptimistic } =
+  const { total, pageIndex, hasNextPage, hasPrevPage, loading, error, lastSyncedAt, goToPage, retry, refresh, applyOptimisticPolicy, mergedPolicies, entries: optimisticEntries, confirm: confirmOptimistic, rollback: rollbackOptimistic } =
     useOptimisticPolicies(address, network, status, sort);
+
+  const hasLoadedOnce = useRef(false);
+  if (!loading && !error) hasLoadedOnce.current = true;
 
   const policyGroups = useMemo(() => groupPoliciesByExpiry(mergedPolicies), [mergedPolicies]);
   const hasPolicies = mergedPolicies.length > 0;
@@ -96,16 +100,23 @@ export function PolicyDashboard() {
         </div>
       </div>
 
-      {/* ── Count ───────────────────────────────────────────────────── */}
+      {/* ── Count + last synced ─────────────────────────────────────── */}
       {!loading && !error && (
-        <p className="text-xs text-gray-500" aria-live="polite">
-          {total} {total === 1 ? 'policy' : 'policies'}
-          {status !== 'all' ? ` · ${status}` : ''}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-gray-500" aria-live="polite">
+            {total} {total === 1 ? 'policy' : 'policies'}
+            {status !== 'all' ? ` · ${status}` : ''}
+          </p>
+          <LastSyncedIndicator
+            syncedAt={lastSyncedAt}
+            onRefresh={refresh}
+            isRefreshing={loading}
+          />
+        </div>
       )}
 
       {/* ── Content ─────────────────────────────────────────────────── */}
-      {loading ? (
+      {loading || (!hasLoadedOnce.current && !error) ? (
         <PolicyListSkeleton layout={layout} />
       ) : error ? (
         <PolicyErrorState message={error} onRetry={retry} />

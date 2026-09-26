@@ -1,5 +1,9 @@
 # GraphQL API
 
+> Consumer-facing REST/GraphQL changes are tracked in the
+> [public API changelog](../../docs/api/API_CHANGELOG.md), published alongside this
+> documentation. See that file for what belongs there vs. the internal `CHANGELOG.md`.
+
 The backend exposes GraphQL through NestJS Apollo using a code-first schema in [`src/graphql`](../src/graphql).
 Resolvers stay intentionally thin:
 

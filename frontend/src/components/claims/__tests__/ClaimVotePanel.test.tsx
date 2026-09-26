@@ -11,7 +11,8 @@ import { ClaimVotePanel } from '../claim-vote-panel'
 import type { Claim, Eligibility } from '@/lib/schemas/vote'
 import { useWallet } from '@/features/wallet'
 import { useLatestLedger } from '@/hooks/use-latest-ledger'
-import { fetchClaim, fetchEligibility, simulateVote, submitVote } from '@/lib/api/vote'
+import { checkAppealStatus, fetchClaim, fetchEligibility, simulateVote, submitVote } from '@/lib/api/vote'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 
 jest.mock('@/features/wallet', () => ({
   __esModule: true,
@@ -21,6 +22,13 @@ jest.mock('@/features/wallet', () => ({
 jest.mock('@/hooks/use-latest-ledger', () => ({
   __esModule: true,
   useLatestLedger: jest.fn(),
+}))
+
+// #1355: the appeal flow is gated behind `claims_appeal_enabled`. These tests
+// exercise the flag-on behaviour; the flag-off case is covered separately below.
+jest.mock('@/hooks/use-feature-flag', () => ({
+  __esModule: true,
+  useFeatureFlag: jest.fn(() => ({ enabled: true, loading: false })),
 }))
 
 jest.mock('@/lib/api/vote', () => ({
@@ -44,6 +52,7 @@ const mockFetchClaim = fetchClaim as jest.MockedFunction<typeof fetchClaim>
 const mockFetchEligibility = fetchEligibility as jest.MockedFunction<typeof fetchEligibility>
 const mockSimulateVote = simulateVote as jest.MockedFunction<typeof simulateVote>
 const mockSubmitVote = submitVote as jest.MockedFunction<typeof submitVote>
+const mockUseFeatureFlag = useFeatureFlag as jest.MockedFunction<typeof useFeatureFlag>
 
 const VENUS_WALLET = 'GABCD1234ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234'
 
@@ -73,6 +82,7 @@ describe('ClaimVotePanel', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockUseLatestLedger.mockReturnValue(140)
+    mockUseFeatureFlag.mockReturnValue({ enabled: true, loading: false })
     mockUseWallet.mockReturnValue({
       address: VENUS_WALLET,
       signTransaction: mockSignTransaction,
@@ -113,7 +123,7 @@ describe('ClaimVotePanel', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(screen.getByText(/confirm approval vote/i)).toBeInTheDocument()
     expect(screen.getByText(/this action is irreversible/i)).toBeInTheDocument()
-    expect(screen.getByText(/claim id:.*CLAIM-123/i)).toBeInTheDocument()
+    expect(screen.getByText('CLAIM-123')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /sign & approve/i }))
 
@@ -145,5 +155,31 @@ describe('ClaimVotePanel', () => {
       'The voting window for this claim has closed',
     )
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
+  })
+
+  // ── Appeal feature flag (#1355) ───────────────────────────────────────────
+
+  const rejectedClaim: Claim = { ...claimFixture, status: 'Rejected' }
+
+  it('renders the appeal button on a rejected claim when the appeal flag is on', async () => {
+    mockFetchClaim.mockResolvedValue(rejectedClaim)
+    renderWithQueryClient(<ClaimVotePanel claimId="CLAIM-123" />)
+
+    expect(
+      await screen.findByRole('button', { name: /appeal this rejected claim/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('hides the appeal button entirely when the appeal flag is off', async () => {
+    mockUseFeatureFlag.mockReturnValue({ enabled: false, loading: false })
+    mockFetchClaim.mockResolvedValue(rejectedClaim)
+    renderWithQueryClient(<ClaimVotePanel claimId="CLAIM-123" />)
+
+    await waitFor(() => expect(mockFetchClaim).toHaveBeenCalled())
+    expect(
+      screen.queryByRole('button', { name: /appeal this rejected claim/i }),
+    ).not.toBeInTheDocument()
+    // The gate must also skip the appeal-status round-trip.
+    expect(checkAppealStatus).not.toHaveBeenCalled()
   })
 })

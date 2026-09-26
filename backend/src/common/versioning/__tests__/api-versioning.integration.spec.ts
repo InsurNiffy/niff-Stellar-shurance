@@ -1,5 +1,5 @@
 /**
- * API URI versioning integration tests (issue #649).
+ * API URI versioning integration tests (issue #649, #890).
  */
 import { Controller, Get, INestApplication, Module, VersioningType } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
@@ -7,6 +7,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { DeprecatedApi } from '../deprecated-api.decorator';
 import { DeprecationHeadersInterceptor } from '../deprecation-headers.interceptor';
+import { V1SunsetInterceptor } from '../v1-sunset.interceptor';
 import { RejectUnversionedApiMiddleware } from '../reject-unversioned-api.middleware';
 import {
   DEPRECATION_HEADER,
@@ -37,6 +38,10 @@ class LegacyExperimentalController {
     {
       provide: APP_INTERCEPTOR,
       useClass: DeprecationHeadersInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: V1SunsetInterceptor,
     },
   ],
 })
@@ -81,6 +86,15 @@ describe('API versioning (integration)', () => {
     const response = await request(app.getHttpServer()).get(
       '/api/v1/experimental/legacy',
     );
+    expect(response.status).toBe(200);
+    expect(response.headers[DEPRECATION_HEADER.toLowerCase()]).toBe('true');
+    expect(response.headers[SUNSET_HEADER.toLowerCase()]).toBe(
+      DEPRECATED_API_SUNSET_HTTP_DATE,
+    );
+  });
+
+  it('adds Sunset and Deprecation headers to all v1 endpoints (#890)', async () => {
+    const response = await request(app.getHttpServer()).get('/api/v1/health');
     expect(response.status).toBe(200);
     expect(response.headers[DEPRECATION_HEADER.toLowerCase()]).toBe('true');
     expect(response.headers[SUNSET_HEADER.toLowerCase()]).toBe(

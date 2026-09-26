@@ -103,13 +103,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
 
     response.status(status).json({
-      statusCode: status,
-      timestamp: new Date().toISOString(),
-      path: request.url,
-      requestId: request.requestId,
-      ...(errorCode ? { error: errorCode } : {}),
-      ...(i18nKey ? { i18nKey } : {}),
-      message,
+      data: null,
+      meta: {
+        statusCode: status,
+        timestamp: new Date().toISOString(),
+        path: request.url,
+        ...(request.requestId ? { requestId: request.requestId } : {}),
+      },
+      errors: [
+        {
+          code: errorCode || 'INTERNAL_SERVER_ERROR',
+          message: String(message),
+          ...(i18nKey ? { i18nKey } : {}),
+        },
+      ],
     });
   }
 }

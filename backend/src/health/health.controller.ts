@@ -1,4 +1,4 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Res, Optional } from '@nestjs/common';
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PrismaHealthIndicator } from './prisma.health';
@@ -8,6 +8,7 @@ import { HorizonHealthIndicator } from './horizon.health';
 import { IndexerHealthIndicator } from './indexer.health';
 import { runProbe, ComponentStatus, ProbeResult } from './probes';
 import { checkRedisHealth } from '../redis/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 interface ComponentResult extends ProbeResult {
   lagLedgers?: number;
@@ -21,6 +22,7 @@ interface HealthResponse {
     rpc: ComponentResult;
     horizon: ComponentResult;
     indexer: ComponentResult;
+    ramp?: ComponentResult;
   };
 }
 
@@ -33,6 +35,7 @@ export class HealthController {
     private readonly rpcHealth: SorobanRpcHealthIndicator,
     private readonly horizonHealth: HorizonHealthIndicator,
     private readonly indexerHealth: IndexerHealthIndicator,
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   @Get()
@@ -41,7 +44,7 @@ export class HealthController {
   @ApiResponse({ status: 207, description: 'One or more components degraded' })
   @ApiResponse({ status: 503, description: 'One or more critical components down' })
   async check(@Res() res: Response): Promise<void> {
-    const [db, redis, rpc, horizon, indexer] = await Promise.all([
+    const [db, redis, rpc, horizon, indexer, ramp] = await Promise.all([
       runProbe(async () => {
         await this.prismaHealth.isHealthy('db');
         return { status: 'up' as const };
@@ -56,9 +59,14 @@ export class HealthController {
       }, 5_000),
       this.horizonHealth.check(),
       this.indexerHealth.check(),
+      this.checkRampProviderHealth(),
     ]);
 
-    const components = { db, redis, rpc, horizon, indexer };
+    const components: HealthResponse['components'] = { db, redis, rpc, horizon, indexer };
+    if (ramp) {
+      components.ramp = ramp;
+    }
+
     const statuses = Object.values(components).map((c) => c.status);
 
     let overallStatus: ComponentStatus = 'up';
@@ -72,5 +80,23 @@ export class HealthController {
 
     const httpStatus = overallStatus === 'up' ? 200 : overallStatus === 'degraded' ? 207 : 503;
     res.status(httpStatus).json(body);
+  }
+
+  private async checkRampProviderHealth(): Promise<ComponentResult | undefined> {
+    const prisma = this.prisma;
+    if (!prisma) return undefined;
+
+    return runProbe(async () => {
+      const lastHealth = await prisma.rampProviderHealth.findFirst({
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      });
+
+      if (!lastHealth) {
+        return { status: 'down' as const, reason: 'No health data available' };
+      }
+
+      return { status: lastHealth.status as ComponentStatus };
+    }, 3_000);
   }
 }

@@ -4,7 +4,7 @@ VERSION    := $(shell cargo metadata --no-deps --format-version 1 | python -c "i
 GIT_TAG    := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
 ARTIFACT   := artifacts/niffyinsure-$(VERSION)-$(GIT_TAG).wasm
 
-.PHONY: build test fmt lint sha clean wasm-release wasm-opt-check check-env audit
+.PHONY: build test fmt lint sha clean wasm-release wasm-opt-check check-env audit install-hooks
 
 build:
 	cargo build --target wasm32-unknown-unknown --release
@@ -52,6 +52,10 @@ wasm-opt-check: build
 	@wasm-opt -Oz --strip-debug $(WASM_RAW) -o /tmp/niffyinsure_check.wasm
 	@echo "raw:  $$(wc -c < $(WASM_RAW)) bytes"
 	@echo "opt:  $$(wc -c < /tmp/niffyinsure_check.wasm) bytes"
+
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo "Git hooks installed from .githooks/"
 
 clean:
 	cargo clean

@@ -5,6 +5,7 @@
 import type { Metadata } from "next";
 
 import { ClaimsBoard } from "@/components/claims/ClaimsBoard";
+import { ScrollToTop } from "@/components/ui/scroll-to-top";
 
 export const metadata: Metadata = {
   title: "Claims Board",
@@ -23,6 +24,7 @@ export default function ClaimsPage() {
         Claims Board
       </h1>
       <ClaimsBoard />
+      <ScrollToTop />
     </main>
   );
 }

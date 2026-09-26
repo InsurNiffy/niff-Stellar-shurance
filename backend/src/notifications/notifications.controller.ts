@@ -180,6 +180,26 @@ export class NotificationsController {
   }
 
   /**
+   * POST /api/notifications/:id/ack
+   * Mark a notification as delivered. Called by the frontend on render.
+   * Idempotent — repeat calls for an already-acknowledged notification are no-ops.
+   */
+  @Post(':id/ack')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Acknowledge a notification (mark as delivered)' })
+  @ApiResponse({ status: 204, description: 'Notification acknowledged' })
+  @ApiResponse({ status: 404, description: 'Notification not found or not owned by caller' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async acknowledgeNotification(
+    @Param('id') id: string,
+    @WalletAddress() userId: string,
+  ) {
+    await this.service.acknowledgeNotification(id, userId);
+  }
+
+  /**
    * POST /api/notifications/trigger
    * Trigger a test claim finalization event. Restrict to internal traffic in production.
    */

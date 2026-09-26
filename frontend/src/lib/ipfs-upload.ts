@@ -27,7 +27,8 @@ export async function computeFileSha256Hex(file: File): Promise<string> {
   }
 
   const fileBuffer = await file.arrayBuffer();
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', fileBuffer);
+  const bytes = new Uint8Array(fileBuffer);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
   return bytesToHex(new Uint8Array(digest));
 }
 

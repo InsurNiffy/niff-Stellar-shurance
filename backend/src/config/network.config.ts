@@ -20,6 +20,7 @@ export interface NetworkConfig {
   network: StellarNetwork;
   rpcUrl: string;
   horizonUrl: string;
+  horizonFallbackUrl?: string;
   networkPassphrase: string;
   contractIds: {
     niffyinsure: string;
@@ -74,6 +75,9 @@ export function loadNetworkConfig(): NetworkConfig {
     env('HORIZON_URL') ??
     KNOWN_HORIZON_URLS[network];
 
+  const horizonFallbackUrl =
+    env(`HORIZON_FALLBACK_URL_${suffix}`) ?? env('HORIZON_FALLBACK_URL');
+
   const networkPassphrase =
     env('STELLAR_NETWORK_PASSPHRASE') ?? KNOWN_PASSPHRASES[network];
 
@@ -106,6 +110,7 @@ export function loadNetworkConfig(): NetworkConfig {
     network,
     rpcUrl,
     horizonUrl,
+    horizonFallbackUrl,
     networkPassphrase,
     contractIds: {
       niffyinsure: contractId,

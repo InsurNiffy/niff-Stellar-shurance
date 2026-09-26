@@ -23,6 +23,7 @@
 
 import { Queue, JobsOptions } from "bullmq";
 import { getBullMQConnection } from "../redis/client";
+import { getQueueRetryConfig } from "./queue-config";
 
 export interface ClaimEventJobData {
   /** Raw Soroban event type: "claim:filed" | "vote:logged" | "claim:settled" */
@@ -33,9 +34,10 @@ export interface ClaimEventJobData {
   payload: string;
 }
 
+const retryConfig = getQueueRetryConfig("claim-events");
 const DEFAULT_JOB_OPTIONS: JobsOptions = {
-  attempts: 5,
-  backoff: { type: "exponential", delay: 1_000 },
+  attempts: retryConfig.maxAttempts,
+  backoff: retryConfig.backoff,
   removeOnComplete: { count: 100 },
   removeOnFail: { count: 500 },
 };

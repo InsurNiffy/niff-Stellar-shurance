@@ -1,0 +1,130 @@
+---
+# Prometheus alerting & recording rules for the NiffyInsure API.
+#
+# Load via --rule.files in prometheus.yml, or mount into a Prometheus
+# Operator PrometheusRule CRD.
+#
+# All alerts use the `niffyinsure-api` app label set by MetricsService
+# (collectDefaultMetrics default labels).
+
+groups:
+  - name: niffyinsure_http_sla
+    interval: 60s
+    rules:
+      # ── Recording rules — pre-aggregate for dashboard performance ──────────
+
+      # p95 latency per route (5-minute window)
+      - record: job:http_request_duration_seconds:p95_5m
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket{app="niffyinsure-api"}[5m]))
+            by (le, route)
+          )
+
+      # p99 latency per route (5-minute window)
+      - record: job:http_request_duration_seconds:p99_5m
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{app="niffyinsure-api"}[5m]))
+            by (le, route)
+          )
+
+      # SLA compliance ratio: fraction of requests completing within 1 s per route
+      - record: job:http_request_sla_1s:ratio_5m
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{app="niffyinsure-api", le="1"}[5m])) by (route)
+          /
+          sum(rate(http_request_duration_seconds_count{app="niffyinsure-api"}[5m])) by (route)
+
+      # ── Alerting rules ─────────────────────────────────────────────────────
+
+      # Alert when p95 latency exceeds 1 s for any route for 5 consecutive minutes.
+      - alert: HighP95Latency
+        expr: job:http_request_duration_seconds:p95_5m > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "p95 latency > 1 s on route {{ $labels.route }}"
+          description: >
+            Route {{ $labels.route }} has a p95 latency of {{ $value | humanizeDuration }}
+            (threshold: 1 s). Investigate slow queries, RPC calls, or cache misses.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/high-latency"
+
+      # Alert when p95 latency exceeds 3 s (critical — SLA breach).
+      - alert: CriticalP95Latency
+        expr: job:http_request_duration_seconds:p95_5m > 3
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "CRITICAL: p95 latency > 3 s on route {{ $labels.route }}"
+          description: >
+            Route {{ $labels.route }} p95 latency is {{ $value | humanizeDuration }},
+            exceeding the critical SLA threshold of 3 s.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/high-latency"
+
+      # Alert when SLA compliance (requests ≤ 1 s) drops below 99 %.
+      - alert: SLAComplianceBelow99Pct
+        expr: job:http_request_sla_1s:ratio_5m < 0.99
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "SLA compliance below 99% on route {{ $labels.route }}"
+          description: >
+            Only {{ $value | humanizePercentage }} of requests on route {{ $labels.route }}
+            are completing within 1 s (SLA target: 99%).
+          runbook_url: "https://docs.niffyinsure.com/runbooks/sla-breach"
+
+  - name: niffyinsure_rpc_cost
+    interval: 60s
+    rules:
+      # ── Recording rules — RPC / simulation cost attribution ────────────────
+      #
+      # Every Soroban RPC call is labelled with a distinct `rpc_method` by
+      # SorobanService.trackRpc. The appeal feature owns two of those labels:
+      #   - build_file_appeal: one simulate_transaction per
+      #     POST /claims/:id/appeal/build-transaction
+      #   - finalize_appeal:   keeper-driven finalize of a stalled appeal
+      # Keep this matcher in sync with the trackRpc labels in
+      # backend/src/rpc/soroban.service.ts when appeal RPC calls are added.
+
+      # Appeal-attributable RPC call rate, broken out per method.
+      - record: job:appeal_rpc_calls:rate5m
+        expr: |
+          sum(rate(rpc_calls_total{app="niffyinsure-api",
+                                   rpc_method=~"build_file_appeal|finalize_appeal"}[5m]))
+          by (rpc_method)
+
+      # Appeal share of total RPC cost (0–1).
+      - record: job:appeal_rpc_calls:ratio5m
+        expr: |
+          sum(rate(rpc_calls_total{app="niffyinsure-api",
+                                   rpc_method=~"build_file_appeal|finalize_appeal"}[5m]))
+          /
+          sum(rate(rpc_calls_total{app="niffyinsure-api"}[5m]))
+
+  - name: niffyinsure_http_errors
+    interval: 60s
+    rules:
+      # Alert when 5xx error rate exceeds 1 % of total requests.
+      - alert: High5xxErrorRate
+        expr: |
+          sum(rate(http_5xx_errors_total{app="niffyinsure-api"}[5m])) by (route)
+          /
+          sum(rate(http_requests_total{app="niffyinsure-api"}[5m])) by (route)
+          > 0.01
+        for: 3m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "5xx error rate > 1% on route {{ $labels.route }}"
+          description: >
+            Route {{ $labels.route }} has a 5xx error rate of
+            {{ $value | humanizePercentage }} over the past 5 minutes.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/5xx-errors"

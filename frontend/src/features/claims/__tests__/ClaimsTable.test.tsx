@@ -47,10 +47,8 @@ describe('ClaimsTable', () => {
   describe('loading state', () => {
     it('renders skeleton rows when isLoading is true', () => {
       render(<ClaimsTable {...defaultProps} isLoading />);
-      // SkeletonRow renders aria-hidden divs; table body should have rows
-      const rows = screen.getAllByRole('row');
-      // header row + 5 skeleton rows
-      expect(rows.length).toBe(6);
+      expect(screen.getByTestId('claims-list-skeleton')).toBeInTheDocument();
+      expect(screen.queryByText('CLM-001')).not.toBeInTheDocument();
     });
 
     it('does not render claim data while loading', () => {

@@ -11,6 +11,7 @@ const mockTicket = {
   message: 'Test message body here',
   status: 'OPEN',
   ipHash: 'hash',
+  firstRespondedAt: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -33,6 +34,9 @@ function makePrisma(ticket = mockTicket) {
       update: jest.fn().mockResolvedValue({ ...ticket, status: 'RESOLVED' }),
       findMany: jest.fn().mockResolvedValue([ticket]),
       count: jest.fn().mockResolvedValue(1),
+    },
+    supportTicketReply: {
+      create: jest.fn().mockResolvedValue({ id: 'reply-1', ticketId: 'uuid-1', message: 'Response', author: 'customer', createdAt: new Date() }),
     },
     adminAuditLog: { create: jest.fn().mockResolvedValue({}) },
     faqStat: { upsert: jest.fn().mockResolvedValue({}) },
@@ -103,6 +107,27 @@ describe('SupportService', () => {
     );
   });
 
+  it('updateTicketStatus sets firstRespondedAt on first response', async () => {
+    const prisma = makePrisma();
+    const svc = new SupportService(prisma, makeCaptcha(), makeConfig());
+    await svc.updateTicketStatus('uuid-1', { status: 'IN_PROGRESS' }, 'GADMIN');
+    const updateCall = (prisma.supportTicket.update as jest.Mock).mock.calls[0][0];
+    expect(updateCall.data.firstRespondedAt).toBeDefined();
+  });
+
+  it('updateTicketStatus does not overwrite existing firstRespondedAt', async () => {
+    const prisma = makePrisma();
+    const existingDate = new Date('2026-01-01');
+    (prisma.supportTicket.findUnique as jest.Mock).mockResolvedValue({
+      ...mockTicket,
+      firstRespondedAt: existingDate,
+    });
+    const svc = new SupportService(prisma, makeCaptcha(), makeConfig());
+    await svc.updateTicketStatus('uuid-1', { status: 'RESOLVED' }, 'GADMIN');
+    const updateCall = (prisma.supportTicket.update as jest.Mock).mock.calls[0][0];
+    expect(updateCall.data.firstRespondedAt).toBeUndefined();
+  });
+
   it('updateTicketStatus throws when ticket not found', async () => {
     const prisma = makePrisma();
     (prisma.supportTicket.findUnique as jest.Mock).mockResolvedValue(null);
@@ -110,6 +135,21 @@ describe('SupportService', () => {
     await expect(svc.updateTicketStatus('bad-id', { status: 'RESOLVED' }, 'GADMIN')).rejects.toThrow(
       BadRequestException,
     );
+  });
+
+  it('getFirstResponseStats returns avgFirstResponseMs and slaBreachedCount', async () => {
+    const respondedAt = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
+    const createdAt = new Date(Date.now() - 3 * 60 * 60 * 1000); // 3 hours ago
+    const prisma = makePrisma();
+    (prisma.supportTicket.findMany as jest.Mock).mockResolvedValue([
+      { createdAt, firstRespondedAt: respondedAt },
+    ]);
+    (prisma.supportTicket.count as jest.Mock).mockResolvedValue(2);
+    const svc = new SupportService(prisma, makeCaptcha(), makeConfig());
+    const stats = await svc.getFirstResponseStats(24);
+    expect(stats.totalResponded).toBe(1);
+    expect(stats.avgFirstResponseMs).toBeGreaterThan(0);
+    expect(stats.slaBreachedCount).toBe(2);
   });
 });
 
@@ -150,5 +190,33 @@ describe('SupportService — FAQ CRUD', () => {
     const svc = new SupportService(prisma, makeCaptcha(), makeConfig());
     await svc.reorderFaqItems({ items: [{ id: 'faq-1', displayOrder: 2 }] });
     expect(prisma.$transaction).toHaveBeenCalled();
+  });
+});
+
+describe('SupportService — Customer replies', () => {
+  it('addCustomerReply creates reply record', async () => {
+    const prisma = makePrisma();
+    const svc = new SupportService(prisma, makeCaptcha(), makeConfig());
+    await svc.addCustomerReply('uuid-1', 'Customer response');
+    expect(prisma.supportTicketReply.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ ticketId: 'uuid-1', message: 'Customer response', author: 'customer' }),
+      }),
+    );
+  });
+
+  it('addCustomerReply throws when ticket not found', async () => {
+    const prisma = makePrisma();
+    (prisma.supportTicket.findUnique as jest.Mock).mockResolvedValue(null);
+    const svc = new SupportService(prisma, makeCaptcha(), makeConfig());
+    await expect(svc.addCustomerReply('bad-id', 'Message')).rejects.toThrow(BadRequestException);
+  });
+
+  it('addCustomerReply triggers autoclose reopen logic', async () => {
+    const prisma = makePrisma();
+    const mockAutoclose = { reopenIfReply: jest.fn() };
+    const svc = new SupportService(prisma, makeCaptcha(), makeConfig(), mockAutoclose as any);
+    await svc.addCustomerReply('uuid-1', 'Customer response');
+    expect(mockAutoclose.reopenIfReply).toHaveBeenCalledWith('uuid-1');
   });
 });

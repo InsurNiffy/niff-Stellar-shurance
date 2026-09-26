@@ -17,6 +17,7 @@
 import { useCallback, useEffect } from 'react';
 import { getConfig } from '@/config/env';
 import { useOptimisticState, useConfirmationPoller } from '@/lib/optimistic';
+import { toast } from '@/components/ui/use-toast';
 import { usePolicies } from './usePolicies';
 import type { UsePoliciesReturn } from './usePolicies';
 import type { PolicyDto, PolicyStatusFilter, PolicySortField } from '../api';
@@ -98,13 +99,24 @@ export function useOptimisticPolicies(
     return entry.status === 'failed' ? entry.previousData : entry.optimisticData;
   });
 
+  // Wrap rollback to also show a user-facing toast when an optimistic update
+  // is reverted (API call failed or confirmation timed out).
+  const rollback = useCallback((key: string, error: string) => {
+    optimistic.rollback(key, error);
+    toast.error(
+      'Update reverted',
+      error || 'The action could not be confirmed on-chain. Your previous state has been restored.',
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return {
     ...base,
     applyOptimisticPolicy,
     mergedPolicies,
     entries: optimistic.entries,
     confirm: optimistic.confirm,
-    rollback: optimistic.rollback,
+    rollback,
   };
 }
 

@@ -60,7 +60,12 @@ export class EvidenceUploadService {
       size: file.size,
     });
 
-    return { cid, gatewayUrl };
+    return {
+      cid,
+      gatewayUrl,
+      fileSizeBytes: file.size,
+      mimeType: file.mimetype,
+    };
   }
 
   private validateFile(file: Express.Multer.File): void {

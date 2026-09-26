@@ -3,17 +3,17 @@
  *
  * Key naming conventions
  * ──────────────────────
- * All keys are prefixed with `{env}:{service}:` to prevent collisions between
- * environments and feature areas:
+ * All keys are prefixed with `{service}:{environment}:` to prevent collisions between
+ * services and environments:
  *
- *   production:niffyinsure:queue:claim-events   ← BullMQ job queue
- *   staging:niffyinsure:cache:policy:{id}       ← response cache
- *   development:niffyinsure:nonce:{address}     ← wallet-auth challenge nonce
- *   development:niffyinsure:ratelimit:{ip}      ← rate-limit counter
+ *   niffy:production:queue:claim-events   ← BullMQ job queue
+ *   niffy:staging:cache:policy:{id}       ← response cache
+ *   niffy:development:nonce:{address}     ← wallet-auth challenge nonce
+ *   niffy:development:ratelimit:{ip}      ← rate-limit counter
  *
  * Namespace segments:
+ *   {service}  = APP_NAME (e.g. "niffy"; overridable by REDIS_KEY_PREFIX_OVERRIDE)
  *   {env}      = NODE_ENV value (development | staging | production)
- *   {service}  = "niffyinsure" (constant; guards against multi-tenant collisions)
  *   {area}     = queue | cache | nonce | ratelimit
  *   {id}       = resource-specific identifier
  *
@@ -32,6 +32,16 @@
  *   - Redis is an operational cache/queue layer only.
  */
 
+/** Default service name for Redis key prefixing. */
+const DEFAULT_APP_NAME = "niffy";
+
+/** Build the Redis key prefix from APP_NAME and NODE_ENV. */
+export function buildKeyPrefix(): string {
+  const appName = process.env.REDIS_KEY_PREFIX_OVERRIDE ?? process.env.APP_NAME ?? DEFAULT_APP_NAME;
+  const env = process.env.NODE_ENV ?? "development";
+  return `${appName}:${env}:`;
+}
+
 export interface RedisConfig {
   host: string;
   port: number;
@@ -39,18 +49,18 @@ export interface RedisConfig {
   tls: boolean;
   /** Logical DB index (0–15). Use 0 for all envs; separate by namespace prefix. */
   db: number;
-  /** Key namespace prefix: "{env}:niffyinsure" */
+  /** Key namespace prefix: "{service}:{environment}" */
   keyPrefix: string;
   /** Max connections in the ioredis pool (applies to BullMQ workers too). */
   maxRetriesPerRequest: number | null;
 }
 
 export function buildRedisConfig(): RedisConfig {
-  const env = process.env.NODE_ENV ?? "development";
   const host = process.env.REDIS_HOST ?? "127.0.0.1";
   const port = parseInt(process.env.REDIS_PORT ?? "6379", 10);
   const password = process.env.REDIS_PASSWORD || undefined;
   const tls = process.env.REDIS_TLS === "true";
+  const keyPrefix = buildKeyPrefix();
 
   return {
     host,
@@ -58,7 +68,7 @@ export function buildRedisConfig(): RedisConfig {
     password,
     tls,
     db: 0,
-    keyPrefix: `${env}:niffyinsure:`,
+    keyPrefix,
     // BullMQ requires null to allow blocking commands (BRPOP etc.)
     maxRetriesPerRequest: null,
   };

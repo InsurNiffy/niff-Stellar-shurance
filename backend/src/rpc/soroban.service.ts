@@ -17,6 +17,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import CircuitBreaker from 'opossum';
 import { MetricsService } from '../metrics/metrics.service';
+import { RequestIdService } from '../common/tracing/request-id.service';
 import { getNetworkConfig } from '../config/network.config';
 import { CLAIM_BATCH_GET_MAX, POLICY_BATCH_GET_MAX } from '../chain/chain.constants';
 import {
@@ -81,6 +82,20 @@ export interface FinalizeClaimResult {
   onChainStatus: string;
 }
 
+export interface EvidenceLimits {
+  minEvidenceCount: number;
+  maxEvidenceCount: number;
+}
+
+export interface KeeperActionResult {
+  txHash: string;
+  ledger: number;
+}
+
+export interface VotingDuration {
+  votingDurationLedgers: number;
+}
+
 interface PendingSubmission {
   transactionXdr: string;
   timestamp: number;
@@ -99,6 +114,7 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     @Optional() private readonly metricsService?: MetricsService,
+    @Optional() private readonly requestIdService?: RequestIdService,
   ) {
     this.cbThreshold = this.configService.get<number>('SOROBAN_RPC_CIRCUIT_BREAKER_THRESHOLD', 5);
     this.cbResetMs = this.configService.get<number>('SOROBAN_RPC_CIRCUIT_BREAKER_RESET_MS', 60_000);
@@ -191,9 +207,16 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   }
 
   private makeServer(): SorobanRpc.Server {
-    return new SorobanRpc.Server(this.rpcUrl, {
+    const options: { allowHttp: boolean; headers?: Record<string, string> } = {
       allowHttp: this.rpcUrl.startsWith('http://'),
-    });
+    };
+
+    const requestId = this.requestIdService?.getRequestId();
+    if (requestId) {
+      options.headers = { 'x-request-id': requestId };
+    }
+
+    return new SorobanRpc.Server(this.rpcUrl, options as SorobanRpc.Server.Options);
   }
 
   static enumVariantToScVal(variant: string): xdr.ScVal {
@@ -237,7 +260,8 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
             'Check STELLAR_NETWORK_PASSPHRASE and SOROBAN_RPC_URL.',
         });
       }
-      this.logger.error('RPC load account error', msg);
+      const requestId = this.requestIdService?.getRequestId();
+      this.logger.error('RPC load account error', { msg, requestId });
       throw new ServiceUnavailableException({
         code: 'RPC_UNAVAILABLE',
         message: 'Could not reach the Soroban RPC endpoint. Try again shortly.',
@@ -639,7 +663,8 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
         }
         return response;
       } catch (err) {
-        this.logger.error('Transaction submission error', err);
+        const requestId = this.requestIdService?.getRequestId();
+        this.logger.error('Transaction submission error', { err, requestId });
         throw new ServiceUnavailableException({
           code: 'SUBMISSION_FAILED',
           message: 'Failed to submit transaction to the network.',
@@ -1222,6 +1247,320 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
       throw new ServiceUnavailableException({
         code: 'FINALIZE_CLAIM_TIMEOUT',
         message: `Timed out waiting for finalize_claim confirmation (hash=${txHash}).`,
+      });
+    }
+
+    return { txHash, ledger, onChainStatus };
+  }
+
+  // ── #928 Voting Duration ───────────────────────────────────────────────────
+
+  async simulateGetVotingDuration({ sourceAccount }: { sourceAccount: string }): Promise<VotingDuration> {
+    return this.trackRpc('simulateGetVotingDuration', async () => {
+      const server = this.makeServer();
+      const account = await this.loadAccount(server, sourceAccount);
+      const contract = new Contract(this.contractId);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(contract.call('get_voting_duration_ledgers'))
+        .setTimeout(30)
+        .build();
+      const result = await server.simulateTransaction(tx);
+      if (Api.isSimulationError(result)) {
+        throw new BadRequestException({ code: 'SIMULATION_FAILED', message: result.error });
+      }
+      const raw = result.result?.retval;
+      if (!raw) throw new BadRequestException({ code: 'SIMULATION_EMPTY', message: 'Empty simulation result' });
+      const ledgers = Number(scValToNative(raw));
+      return { votingDurationLedgers: ledgers };
+    });
+  }
+
+  // ── #929 Evidence limits ─────────────────────────────────────────────────
+
+  async simulateGetEvidenceLimits({ sourceAccount }: { sourceAccount: string }): Promise<EvidenceLimits> {
+    return this.trackRpc('simulateGetEvidenceLimits', async () => {
+      const minEvidenceCount = await this.simulateReadU32(sourceAccount, 'get_min_evidence_count');
+      const maxEvidenceCount = await this.simulateReadU32(sourceAccount, 'get_max_evidence_count');
+      return { minEvidenceCount, maxEvidenceCount };
+    });
+  }
+
+  private async simulateReadU32(sourceAccount: string, method: string): Promise<number> {
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, sourceAccount);
+    const contract = new Contract(this.contractId);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(contract.call(method))
+      .setTimeout(30)
+      .build();
+    const result = await server.simulateTransaction(tx);
+    if (Api.isSimulationError(result)) {
+      throw new BadRequestException({ code: 'SIMULATION_FAILED', message: result.error });
+    }
+    const raw = result.result?.retval;
+    if (!raw) throw new BadRequestException({ code: 'SIMULATION_EMPTY', message: 'Empty simulation result' });
+    return Number(scValToNative(raw));
+  }
+
+  async invokeAdminSetEvidenceLimits({ min, max }: { min: number; max: number }): Promise<KeeperActionResult> {
+    return this.trackRpc('invokeAdminSetEvidenceLimits', async () => {
+      const contract = new Contract(this.contractId);
+      await this.submitKeeperTx(
+        contract.call('admin_set_min_evidence_count', nativeToScVal(min, { type: 'u32' })),
+        'admin_set_min_evidence_count',
+      );
+      return this.submitKeeperTx(
+        contract.call('admin_set_max_evidence_count', nativeToScVal(max, { type: 'u32' })),
+        'admin_set_max_evidence_count',
+      );
+    });
+  }
+
+  private async submitKeeperTx(
+    operation: xdr.Operation,
+    label: string,
+  ): Promise<KeeperActionResult> {
+    const keeperPublic = this.configService.get<string>('CLAIM_KEEPER_SOURCE_ACCOUNT');
+    const keeperSecret = this.configService.get<string>('CLAIM_KEEPER_SECRET_KEY');
+    if (!keeperPublic || !keeperSecret) {
+      throw new BadRequestException({ code: 'KEEPER_NOT_CONFIGURED', message: `Keeper account not configured (${label})` });
+    }
+    const keypair = Keypair.fromSecret(keeperSecret);
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, keeperPublic);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+    const simResult = await server.simulateTransaction(tx);
+    if (Api.isSimulationError(simResult)) {
+      throw new BadRequestException({ code: 'SIMULATION_FAILED', message: simResult.error });
+    }
+    const assembled = assembleTransaction(tx, simResult).build();
+    assembled.sign(keypair);
+    const send = await server.sendTransaction(assembled);
+    if (send.status === 'ERROR') {
+      throw new BadRequestException({ code: 'TX_SEND_FAILED', message: JSON.stringify(send.errorResult) });
+    }
+    const deadline = Date.now() + 30_000;
+    let poll = await server.getTransaction(send.hash);
+    while (poll.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND && Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 2_000));
+      poll = await server.getTransaction(send.hash);
+    }
+    if (poll.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+      throw new BadRequestException({ code: 'TX_FAILED', message: `${label} transaction status: ${poll.status}` });
+    }
+    return { txHash: send.hash, ledger: (poll as SorobanRpc.Api.GetSuccessfulTransactionResponse).ledger };
+  }
+
+  async invokeAdminSetVotingDuration({ ledgers }: { ledgers: number }): Promise<KeeperActionResult> {
+    return this.trackRpc('invokeAdminSetVotingDuration', async () => {
+      const contract = new Contract(this.contractId);
+      const operation = contract.call(
+        'admin_set_vote_duration_ledgers',
+        nativeToScVal(ledgers, { type: 'u32' }),
+      );
+      return this.submitKeeperTx(operation, 'admin_set_vote_duration_ledgers');
+    });
+  }
+
+  /**
+   * Build an unsigned file_appeal transaction for a rejected claim.
+   * Contract signature: file_appeal(claimant, claim_id, reason)
+   *
+   * Cost tracking (#1356): the `build_file_appeal` label is what makes this
+   * simulation show up as its own line item in cost monitoring. Any new appeal
+   * RPC call needs its own label added to the `rpc_method=~...` matcher in the
+   * `niffyinsure_rpc_cost` rules in backend/docs/prometheus-rules.yml.
+   */
+  async buildAppealTransaction(args: {
+    claimant: string;
+    claimId: number;
+    reason: string;
+  }): Promise<BuildTransactionResult> {
+    return this.trackRpc('build_file_appeal', () =>
+      this._buildAppealTransaction(args),
+    );
+  }
+
+  private async _buildAppealTransaction(args: {
+    claimant: string;
+    claimId: number;
+    reason: string;
+  }): Promise<BuildTransactionResult> {
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, args.claimant);
+    const ledgerInfo = await server.getLatestLedger();
+
+    const scArgs = [
+      new Address(args.claimant).toScVal(),
+      nativeToScVal(args.claimId, { type: 'u64' }),
+      nativeToScVal(args.reason, { type: 'string' }),
+    ];
+
+    const contract = new Contract(this.contractId);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(contract.call('file_appeal', ...scArgs))
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+
+    if (Api.isSimulationError(simulation)) {
+      const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+      this.mapSimulationError(err.error);
+    }
+
+    const successSim = simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+    const assembled = assembleTransaction(tx, successSim);
+    const unsignedXdr = assembled.build().toEnvelope().toXDR('base64');
+
+    const baseFee = BigInt(BASE_FEE);
+    const resourceFee = BigInt(successSim.minResourceFee ?? '0');
+    const totalFee = baseFee + resourceFee;
+
+    const authRequirements: AuthRequirement[] = [];
+    for (const authEntry of successSim.result?.auth ?? []) {
+      const credentials = authEntry.credentials();
+      if (
+        credentials.switch().value ===
+        xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
+      ) {
+        const addrObj = credentials.address().address();
+        const stellarAddr = Address.fromScAddress(addrObj);
+        const isContract =
+          addrObj.switch().value ===
+          xdr.ScAddressType.scAddressTypeContract().value;
+        authRequirements.push({ address: stellarAddr.toString(), isContract });
+      }
+    }
+
+    if (!authRequirements.some((r) => r.address === args.claimant)) {
+      authRequirements.unshift({ address: args.claimant, isContract: false });
+    }
+
+    return {
+      unsignedXdr,
+      minResourceFee: successSim.minResourceFee ?? '0',
+      baseFee: BASE_FEE.toString(),
+      totalEstimatedFee: totalFee.toString(),
+      totalEstimatedFeeXlm: SorobanService.stroopsToXlm(totalFee),
+      authRequirements,
+      memoConvention:
+        'NiffyInsure does not use memos for appeal correlation. ' +
+        'claim_id is embedded in the file_appeal contract call arguments.',
+      currentLedger: ledgerInfo.sequence,
+    };
+  }
+
+  /**
+   * Invoke on-chain `finalize_appeal` for a stalled appeal (admin only).
+   * The appeal deadline must have passed but no keeper has finalized it.
+   * Requires CLAIM_KEEPER_SECRET_KEY and a funded keeper source account.
+   */
+  async finalizeAppeal(claimId: number): Promise<FinalizeClaimResult> {
+    return this.trackRpc('finalize_appeal', () => this._finalizeAppeal(claimId));
+  }
+
+  private async _finalizeAppeal(claimId: number): Promise<FinalizeClaimResult> {
+    if (!this.contractId) {
+      throw new BadRequestException({
+        code: 'CONTRACT_NOT_INITIALIZED',
+        message: 'CONTRACT_ID is not configured; cannot finalize appeals.',
+      });
+    }
+
+    const source =
+      this.configService.get<string>('CLAIM_KEEPER_SOURCE_ACCOUNT') ||
+      this.configService.get<string>('SOLVENCY_SIMULATION_SOURCE_ACCOUNT');
+    const secret = this.configService.get<string>('CLAIM_KEEPER_SECRET_KEY');
+
+    if (!source || !secret) {
+      throw new ServiceUnavailableException({
+        code: 'KEEPER_NOT_CONFIGURED',
+        message:
+          'Claim keeper is not configured (CLAIM_KEEPER_SOURCE_ACCOUNT / CLAIM_KEEPER_SECRET_KEY).',
+      });
+    }
+
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, source);
+    const contract = new Contract(this.contractId);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        contract.call('finalize_appeal', nativeToScVal(claimId, { type: 'u64' })),
+      )
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+    if (Api.isSimulationError(simulation)) {
+      const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+      this.mapSimulationError(err.error);
+    }
+
+    const successSim = simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+    const assembled = assembleTransaction(tx, successSim).build();
+    const keypair = Keypair.fromSecret(secret);
+    assembled.sign(keypair);
+
+    const sendResponse = await server.sendTransaction(assembled);
+    if (sendResponse.status === 'ERROR') {
+      throw new BadRequestException({
+        code: 'FINALIZE_APPEAL_REJECTED',
+        message: 'finalize_appeal transaction was rejected by the network.',
+        details: sendResponse.errorResult,
+      });
+    }
+
+    const txHash = sendResponse.hash;
+    let ledger = 0;
+    let onChainStatus = 'Unknown';
+
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const txResponse = await server.getTransaction(txHash);
+      if (txResponse.status === 'SUCCESS') {
+        ledger = txResponse.ledger;
+        const retval = txResponse.returnValue;
+        if (retval) {
+          const native = scValToNative(retval);
+          onChainStatus =
+            typeof native === 'object' && native !== null && 'tag' in (native as object)
+              ? String((native as { tag?: string }).tag)
+              : String(native);
+        }
+        break;
+      }
+      if (txResponse.status === 'FAILED') {
+        throw new BadRequestException({
+          code: 'FINALIZE_APPEAL_FAILED',
+          message: 'finalize_appeal transaction failed on-chain.',
+        });
+      }
+    }
+
+    if (!ledger) {
+      throw new ServiceUnavailableException({
+        code: 'FINALIZE_APPEAL_TIMEOUT',
+        message: `Timed out waiting for finalize_appeal confirmation (hash=${txHash}).`,
       });
     }
 

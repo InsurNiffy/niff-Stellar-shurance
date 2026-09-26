@@ -33,7 +33,7 @@
 //!     storage keys — zero side effects for token governance paths.
 //! ```
 
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contractevent, contracttype, Address, Env};
 
 use crate::storage::DataKey;
 
@@ -43,6 +43,30 @@ use crate::storage::DataKey;
 pub struct GovernanceTokenStub {
     /// Reserved; keep 0 until a design assigns semantics.
     pub reserved: u32,
+}
+
+/// Emitted when an admin toggles the governance-token runtime flag.
+///
+/// topics: ("niffyinsure", "gov_token_activation", admin)
+/// payload: { enabled }
+///
+/// Indexers must surface this so the activation is auditable on-chain.
+#[contractevent(topics = ["niffyinsure", "gov_token_activation"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceTokenActivation {
+    #[topic]
+    pub admin: Address,
+    /// `true` = token-weighted logic armed, `false` = deactivated.
+    pub enabled: bool,
+}
+
+/// Emit the governance-token activation event.
+pub fn emit_governance_token_activation(env: &Env, admin: &Address, enabled: bool) {
+    GovernanceTokenActivation {
+        admin: admin.clone(),
+        enabled,
+    }
+    .publish(env);
 }
 
 /// Effective on-chain “armed” state for governance-token **hooks** (not implemented yet).

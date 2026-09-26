@@ -22,9 +22,28 @@ Restrict it at the ingress/firewall level — it must not be publicly reachable.
 | `rpc_errors_total` | Counter | `rpc_method`, `error_type` | RPC errors by type |
 
 `rpc_method` values: `simulate_generate_premium`, `build_initiate_policy`,
-`build_file_claim`, `send_transaction`, `get_events`, `get_latest_ledger`.
+`build_file_claim`, `send_transaction`, `get_events`, `get_latest_ledger`,
+`build_file_appeal`, `finalize_appeal`.
 
 `error_type` values: `client_error`, `unavailable`, `unknown`.
+
+#### Appeal RPC cost
+
+The appeal endpoints each trigger a Soroban simulation, so their RPC cost is
+tracked under its own `rpc_method` labels — `build_file_appeal` (one
+`simulate_transaction` per `POST /claims/:id/appeal/build-transaction`) and
+`finalize_appeal` (keeper-driven finalize of a stalled appeal). Two recording
+rules in [`prometheus-rules.yml`](./prometheus-rules.yml) pre-aggregate them so
+appeal cost is a first-class line item rather than a filter over every method:
+
+| Rule | Meaning |
+|---|---|
+| `job:appeal_rpc_calls:rate5m` | Appeal-attributable RPC calls/s, by `rpc_method` |
+| `job:appeal_rpc_calls:ratio5m` | Appeal share of total RPC calls (0–1) |
+
+When a new appeal RPC call is added, give it a distinct `trackRpc` label in
+`src/rpc/soroban.service.ts` and add that label to the `rpc_method=~...`
+matcher in both rules, or its cost will be invisible on the dashboard.
 
 ### Quote simulation cache
 
@@ -102,6 +121,8 @@ Panels:
 - RPC call rate by method
 - RPC error rate
 - RPC latency p95
+- Appeal RPC cost — calls/s by method
+- Appeal share of total RPC cost (%)
 - Node.js heap usage
 - Event loop lag
 

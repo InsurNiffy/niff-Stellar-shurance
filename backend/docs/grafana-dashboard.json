@@ -139,6 +139,148 @@
           "legendFormat": "event loop lag"
         }
       ]
+    },
+    {
+      "id": 9,
+      "title": "p95 Latency by Route & Status (SLA view)",
+      "description": "p95 latency per route broken down by HTTP status class. Use the 1 s threshold line to monitor SLA compliance.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 1.0 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app=\"niffyinsure-api\"}[5m])) by (le, route, status_code))",
+          "legendFormat": "p95 {{route}} HTTP{{status_code}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "SLA Compliance — requests ≤ 1 s (%)",
+      "description": "Percentage of HTTP requests completed within 1 second, grouped by route. Drop below 99 % triggers the HighP95Latency alert.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 40, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 0.95 },
+              { "color": "green",  "value": 0.99 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(http_request_duration_seconds_bucket{app=\"niffyinsure-api\",le=\"1\"}[5m])) by (route) / sum(rate(http_request_duration_seconds_count{app=\"niffyinsure-api\"}[5m])) by (route)",
+          "legendFormat": "SLA ≤1s {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Dead-Letter Queue (DLQ) Depth",
+      "description": "Number of failed jobs per queue. Alert fires when depth exceeds 10 for 5 minutes.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 48, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "bullmq_dlq_depth{app=\"niffyinsure-api\"}",
+          "legendFormat": "{{queue}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Indexer Ledger Gap",
+      "description": "Gap between latest chain ledger and last processed ledger per network. Alert fires when gap > 100 for 10 minutes.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 48, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "indexer_ledger_gap{app=\"niffyinsure-api\"}",
+          "legendFormat": "{{network}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Appeal RPC Cost — calls/s by method",
+      "description": "Soroban RPC/simulation calls made by the appeal endpoints, as their own cost line item. build_file_appeal is one simulate_transaction per POST /claims/:id/appeal/build-transaction; finalize_appeal is the keeper-driven finalize path.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 56, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "job:appeal_rpc_calls:rate5m",
+          "legendFormat": "{{rpc_method}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Appeal share of total RPC cost (%)",
+      "description": "Fraction of all Soroban RPC calls attributable to the appeal feature. Use with the panel on the left to size the appeal feature's contribution to RPC spend.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 56, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "job:appeal_rpc_calls:ratio5m",
+          "legendFormat": "appeal share"
+        }
+      ]
     }
   ]
 }

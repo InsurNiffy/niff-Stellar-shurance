@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Moon, PlayCircle, RefreshCw, Sun, Unplug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -25,6 +25,18 @@ export function SettingsPanel() {
   const { jwt } = useAuth()
   const { theme, setTheme } = useTheme()
   const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  // Scroll to and highlight the section matching the URL hash on load (#1124)
+  useEffect(() => {
+    const hash = window.location.hash.slice(1)
+    if (!hash) return
+    const el = document.getElementById(hash)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    el.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
+    const t = setTimeout(() => el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2'), 2000)
+    return () => clearTimeout(t)
+  }, [])
   const [rpcInput, setRpcInput] = useState(settings.customRpcUrl ?? '')
   const [rpcError, setRpcError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -93,7 +105,7 @@ export function SettingsPanel() {
     <div className="space-y-6 max-w-xl">
 
       {/* ── Theme ─────────────────────────────────────────────────────── */}
-      <Card>
+      <Card id="appearance">
         <CardHeader>
           <CardTitle>Appearance</CardTitle>
           <CardDescription>Choose your preferred colour scheme.</CardDescription>
@@ -119,7 +131,7 @@ export function SettingsPanel() {
       </Card>
 
       {/* ── Display currency ──────────────────────────────────────────── */}
-      <Card>
+      <Card id="display-currency">
         <CardHeader>
           <CardTitle>Display currency</CardTitle>
           <CardDescription>Amounts are shown in this currency where conversion is available.</CardDescription>
@@ -142,7 +154,7 @@ export function SettingsPanel() {
       </Card>
 
       {/* ── Notification preferences ──────────────────────────────────── */}
-      <Card>
+      <Card id="notifications">
         <CardHeader>
           <CardTitle>Notifications</CardTitle>
           <CardDescription>
@@ -241,7 +253,7 @@ export function SettingsPanel() {
       {/* ── Advanced ──────────────────────────────────────────────────── */}
 
       {/* ── Onboarding tour ───────────────────────────────────────────── */}
-      <Card>
+      <Card id="onboarding-tour">
         <CardHeader>
           <CardTitle>Onboarding tour</CardTitle>
           <CardDescription>Replay the guided walkthrough of key features.</CardDescription>
@@ -257,7 +269,7 @@ export function SettingsPanel() {
           </Button>
         </CardContent>
       </Card>
-      <Card>
+      <Card id="advanced">
         <CardHeader>
           <button
             className="flex w-full items-center justify-between text-left"

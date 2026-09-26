@@ -2,12 +2,13 @@ import { Module, Global, NestModule, MiddlewareConsumer, RequestMethod } from '@
 import { MetricsController } from './metrics.controller';
 import { MetricsService } from './metrics.service';
 import { MetricsAuthMiddleware } from './metrics-auth.middleware';
+import { MetricsCardinalityGuard } from './cardinality-guard.service';
 
 @Global()
 @Module({
   controllers: [MetricsController],
-  providers: [MetricsService, MetricsAuthMiddleware],
-  exports: [MetricsService],
+  providers: [MetricsService, MetricsAuthMiddleware, MetricsCardinalityGuard],
+  exports: [MetricsService, MetricsCardinalityGuard],
 })
 export class MetricsModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

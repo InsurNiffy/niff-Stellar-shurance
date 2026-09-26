@@ -3,6 +3,7 @@
 import { useWallet } from '@/hooks/use-wallet'
 import { PolicyDashboard } from '@/features/policies/components/PolicyDashboard'
 import { WalletConnectButton } from '@/features/wallet'
+import { ScrollToTop } from '@/components/ui/scroll-to-top'
 
 export default function PoliciesPage() {
   const { address } = useWallet()
@@ -24,6 +25,7 @@ export default function PoliciesPage() {
     <main className="container mx-auto px-4 py-8 max-w-6xl">
       <h1 className="text-2xl font-bold text-gray-900 mb-6" data-tour="view-policies">My Policies</h1>
       <PolicyDashboard />
+      <ScrollToTop />
     </main>
   )
 }

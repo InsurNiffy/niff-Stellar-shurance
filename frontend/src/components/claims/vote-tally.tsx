@@ -27,6 +27,9 @@ const STATUS_LABELS: Record<ClaimStatus, string> = {
   Paid: 'Paid out',
   Rejected: 'Rejected',
   Withdrawn: 'Withdrawn by claimant',
+  UnderAppeal: 'Under Appeal',
+  AppealApproved: 'Appeal Approved',
+  AppealRejected: 'Appeal Rejected',
 }
 
 const STATUS_VARIANT: Record<
@@ -39,6 +42,9 @@ const STATUS_VARIANT: Record<
   Paid: 'success',
   Rejected: 'destructive',
   Withdrawn: 'secondary',
+  UnderAppeal: 'warning',
+  AppealApproved: 'success',
+  AppealRejected: 'destructive',
 }
 
 function useCountdown(targetMs: number) {
