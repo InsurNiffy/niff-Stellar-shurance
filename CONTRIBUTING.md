@@ -15,7 +15,8 @@ Welcome. This guide takes you from a fresh clone to a passing CI run and an open
 7. [PR review process](#7-pr-review-process)
 8. [Good first issues](#8-good-first-issues)
 9. [Security rules](#9-security-rules)
-10. [Dependency update policy](#10-dependency-update-policy)
+10. [On-call operations](#10-on-call-operations)
+11. [Dependency update policy](#11-dependency-update-policy)
 
 ---
 
@@ -508,6 +509,8 @@ Every page must have at minimum: `<main>`, `<nav>` (if navigation present), and 
 
 All text must meet WCAG AA contrast ratios (4.5:1 normal text, 3:1 large text). Claim outcomes (Approved / Rejected / Pending) must not rely on color alone — shape indicators and text labels are required.
 
+Appeal UI (`AppealButton`, `AppealConfirmModal`) conformance against **WCAG 2.1 AA** is recorded in [`docs/appeal-accessibility-conformance.md`](docs/appeal-accessibility-conformance.md) (#1363).
+
 ### Adding new UI
 
 When adding new interactive components:
@@ -529,7 +532,21 @@ See [section 3](#3-contract-development-rust--soroban) for the refresh workflow.
 
 ---
 
-## 10. Dependency update policy
+## 10. On-call operations
+
+If you are on-call for production incidents, refer to the **[On-Call Runbook Index](docs/ops/README.md)** for step-by-step procedures covering:
+
+- **Database & data loss** — PostgreSQL restore, GDPR data deletion, retention policies
+- **Job queue issues** — Failed BullMQ job replay, queue depth alerts
+- **Smart contract incidents** — WASM drift, testnet resets, contract upgrades, emergency pause
+- **API & error handling** — Error code lookup, log correlation, Stellar transaction debugging
+- **Operational maintenance** — Secret rotation, dependency audits, indexer reindex
+
+When an incident is declared, open the runbook index and scan by symptom to find the matching runbook. Each runbook includes detection signals, step-by-step procedures, smoke tests, and escalation paths.
+
+---
+
+## 11. Dependency update policy
 
 ### Cadence and automation
 

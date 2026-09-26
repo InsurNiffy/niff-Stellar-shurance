@@ -85,13 +85,29 @@ async function seedPolicyAndClaim(
       creatorAddress: CLAIMANT,
       amount: '500',
       description: 'Test claim for appeal e2e',
-      status: status as 'PENDING' | 'APPROVED' | 'PAID' | 'REJECTED' | 'UNDER_APPEAL',
+      status: status as
+        | 'PENDING'
+        | 'APPROVED'
+        | 'PAID'
+        | 'REJECTED'
+        | 'UNDER_APPEAL'
+        | 'APPEAL_APPROVED'
+        | 'APPEAL_REJECTED',
       approveVotes: 0,
       rejectVotes: 0,
       createdAtLedger: 1000,
       updatedAtLedger: 1000,
     },
-    update: { status: status as 'PENDING' | 'APPROVED' | 'PAID' | 'REJECTED' | 'UNDER_APPEAL' },
+    update: {
+      status: status as
+        | 'PENDING'
+        | 'APPROVED'
+        | 'PAID'
+        | 'REJECTED'
+        | 'UNDER_APPEAL'
+        | 'APPEAL_APPROVED'
+        | 'APPEAL_REJECTED',
+    },
   });
 }
 
@@ -275,10 +291,10 @@ describe('Appeal flow (E2E #1331)', () => {
 
   // ── 4. Indexer decode — appeal_approved event ─────────────────────────────
 
-  describe('Indexer: appeal_approved event → DB status = APPROVED', () => {
+  describe('Indexer: appeal_approved event → DB status = APPEAL_APPROVED', () => {
     beforeAll(() => seedPolicyAndClaim(prisma, APPEAL_CLAIM_ID2, 'UNDER_APPEAL'));
 
-    it('updates the claim to APPROVED and records the metric', async () => {
+    it('updates the claim to APPEAL_APPROVED and records the metric', async () => {
       // Spy on the metric before triggering the handler
       const approvedSpy = jest.spyOn(metrics, 'recordAppealApproved');
 
@@ -292,11 +308,11 @@ describe('Appeal flow (E2E #1331)', () => {
           ledgerClosedAt: new Date().toISOString(),
           txHash: 'aaa111',
         },
-        'APPROVED',
+        'APPEAL_APPROVED',
       );
 
       const claim = await prisma.claim.findUnique({ where: { id: APPEAL_CLAIM_ID2 } });
-      expect(claim?.status).toBe('APPROVED');
+      expect(claim?.status).toBe('APPEAL_APPROVED');
       expect(claim?.isFinalized).toBe(true);
 
       expect(approvedSpy).toHaveBeenCalledTimes(1);
@@ -306,10 +322,10 @@ describe('Appeal flow (E2E #1331)', () => {
 
   // ── 5. Indexer decode — appeal_rejected event ─────────────────────────────
 
-  describe('Indexer: appeal_rejected event → DB status = REJECTED', () => {
+  describe('Indexer: appeal_rejected event → DB status = APPEAL_REJECTED', () => {
     beforeAll(() => seedPolicyAndClaim(prisma, APPEAL_CLAIM_ID3, 'UNDER_APPEAL'));
 
-    it('updates the claim to REJECTED and records the metric', async () => {
+    it('updates the claim to APPEAL_REJECTED and records the metric', async () => {
       const rejectedSpy = jest.spyOn(metrics, 'recordAppealRejected');
 
       // @ts-expect-error — accessing private method for test coverage
@@ -321,11 +337,11 @@ describe('Appeal flow (E2E #1331)', () => {
           ledgerClosedAt: new Date().toISOString(),
           txHash: 'bbb222',
         },
-        'REJECTED',
+        'APPEAL_REJECTED',
       );
 
       const claim = await prisma.claim.findUnique({ where: { id: APPEAL_CLAIM_ID3 } });
-      expect(claim?.status).toBe('REJECTED');
+      expect(claim?.status).toBe('APPEAL_REJECTED');
       expect(claim?.isFinalized).toBe(true);
 
       expect(rejectedSpy).toHaveBeenCalledTimes(1);

@@ -40,4 +40,8 @@ they're touched or reviewed.
 Applies to all files under `docs/ops/` with "runbook" in the name:
 `disaster-recovery-runbook.md`, `maintenance-runbook.md`,
 `privacy-runbook.md`, `queue-replay-runbook.md`,
-`secrets-management-runbook.md`, `stellar-testnet-reset-recovery.md`.
+`secrets-management-runbook.md`, `stellar-testnet-reset-recovery.md`,
+`appeal-incident-runbook.md`.
+
+Also linked from the on-call index: appeal ops rollout checklist
+[`appeal-enum-migration-rollout.md`](./appeal-enum-migration-rollout.md).

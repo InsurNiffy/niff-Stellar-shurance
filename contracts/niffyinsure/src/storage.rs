@@ -162,6 +162,13 @@ pub enum DataKey {
     /// Value of `LastClaimLedger(claimant)` **before** this claim's filing updated it.
     /// Removed when the claim leaves `Processing` without withdraw, or consumed by `withdraw_claim`.
     ClaimRateLimitPrev(u64),
+    /// Filing fee actually collected for this claim (stroops), set at `file_claim`
+    /// when `claim_filing_fee > 0`. Consumed (removed) and refunded by `withdraw_claim`.
+    ClaimFilingFeePaid(u64),
+    /// Test/ops-only override of a voter's snapshot voting power for a given claim.
+    /// Used to seed a corrupt (zero/negative) entry in tests of `CorruptSnapshotEntry`;
+    /// not written by any normal contract flow.
+    ClaimVoterPowerOverride(u64, Address),
     /// Per-holder replay-protection nonce. Incremented on each successful mutating call
     /// when the caller supplies `expected_nonce`. Supplementary to Stellar sequence numbers.
     HolderNonce(Address),
@@ -685,6 +692,58 @@ pub fn get_voters(env: &Env) -> Vec<Address> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+/// Hard cap on the size of the voter registry. Enforced atomically across an
+/// entire `add_voters_batch` call so a batch that would exceed the cap reverts
+/// in full, leaving no partial writes.
+pub const MAX_ELIGIBLE_VOTERS: u32 = 5_000;
+
+/// Batch-register `addresses` as voters, skipping addresses already present
+/// (in storage or earlier in the same batch) so duplicates cannot corrupt the
+/// registry or double-count. The `MAX_ELIGIBLE_VOTERS` cap is checked against
+/// the final, de-duplicated size of the registry *before* any write happens,
+/// so a batch that would exceed the cap reverts atomically with zero partial
+/// writes.
+///
+/// Returns the list of addresses actually added (in call order), which the
+/// caller uses to emit one `VoterAdded` event per address.
+pub fn add_voters_batch(env: &Env, addresses: &Vec<Address>) -> Result<Vec<Address>, ()> {
+    let mut voters = get_voters(env);
+    let mut to_add: Vec<Address> = Vec::new(env);
+
+    for addr in addresses.iter() {
+        let mut already_present = false;
+        for v in voters.iter() {
+            if v == addr {
+                already_present = true;
+                break;
+            }
+        }
+        if !already_present {
+            for v in to_add.iter() {
+                if v == addr {
+                    already_present = true;
+                    break;
+                }
+            }
+        }
+        if !already_present {
+            to_add.push_back(addr.clone());
+        }
+    }
+
+    let projected_len = voters.len().saturating_add(to_add.len());
+    if projected_len > MAX_ELIGIBLE_VOTERS {
+        return Err(());
+    }
+
+    for addr in to_add.iter() {
+        voters.push_back(addr.clone());
+    }
+    set_voters(env, &voters);
+
+    Ok(to_add)
+}
+
 // ── Governance proposals ─────────────────────────────────────────────────────
 
 pub fn next_proposal_id(env: &Env) -> u64 {
@@ -1190,6 +1249,70 @@ pub fn get_claim_filing_fee(env: &Env) -> i128 {
         .instance()
         .get(&DataKey::ClaimFilingFee)
         .unwrap_or(0)
+}
+
+/// Record the filing fee actually collected for `claim_id` so it can be
+/// refunded in full if the claim is withdrawn before any vote is cast.
+pub fn set_claim_filing_fee_paid(env: &Env, claim_id: u64, fee: i128) {
+    let key = DataKey::ClaimFilingFeePaid(claim_id);
+    env.storage().persistent().set(&key, &fee);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+/// Remove and return the filing fee recorded for `claim_id`, if any.
+/// Called once by `withdraw_claim` so a claim cannot be refunded twice.
+pub fn take_claim_filing_fee_paid(env: &Env, claim_id: u64) -> Option<i128> {
+    let key = DataKey::ClaimFilingFeePaid(claim_id);
+    let fee = env.storage().persistent().get(&key);
+    if fee.is_some() {
+        env.storage().persistent().remove(&key);
+    }
+    fee
+}
+
+// ── Claim voter power override (persistent, test/ops-only) ──────────────────
+
+/// Test/ops-only: force a specific voter's snapshot voting power for `claim_id`.
+/// Not used by any normal contract flow — exists so tests can seed a corrupt
+/// (zero/negative) snapshot entry to exercise `Error::CorruptSnapshotEntry`.
+pub fn set_claim_voter_power_override(env: &Env, claim_id: u64, voter: &Address, power: i128) {
+    let key = DataKey::ClaimVoterPowerOverride(claim_id, voter.clone());
+    env.storage().persistent().set(&key, &power);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+/// Read the voter power override for `(claim_id, voter)`, if one was seeded.
+pub fn get_claim_voter_power_override(env: &Env, claim_id: u64, voter: &Address) -> Option<i128> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ClaimVoterPowerOverride(claim_id, voter.clone()))
+}
+
+/// Resolve the effective voting power for `voter` on `claim_id`, validating
+/// that any seeded snapshot entry has strictly positive power.
+///
+/// Issue: finalization/quorum math assumes every cast ballot carries positive
+/// weight. A zero or negative entry (corrupted snapshot data) would silently
+/// distort `approve_votes` / `reject_votes` and therefore quorum results.
+/// Reverts with `Error::CorruptSnapshotEntry` rather than clamping or
+/// ignoring the bad entry, so corruption is surfaced instead of masked.
+pub fn voting_power_for(
+    env: &Env,
+    claim_id: u64,
+    voter: &Address,
+    default_weight: u32,
+) -> Result<u32, crate::validate::Error> {
+    if let Some(power) = get_claim_voter_power_override(env, claim_id, voter) {
+        if power <= 0 {
+            return Err(crate::validate::Error::CorruptSnapshotEntry);
+        }
+        return Ok(power as u32);
+    }
+    Ok(default_weight)
 }
 
 // ── Per-policy cooldown (persistent) ─────────────────────────────────────────

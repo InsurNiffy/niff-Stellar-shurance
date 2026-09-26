@@ -190,6 +190,23 @@ pub struct ClaimFeeCollected {
     pub at_ledger: u32,
 }
 
+/// Emitted when a previously-collected filing fee is refunded in full because
+/// the claimant withdrew the claim before any vote was cast.
+///
+/// Topic layout: ["niffyinsure", "claim_fee_refunded", claim_id]
+/// Data: { fee_amount, recipient, at_ledger }
+#[contractevent(topics = ["niffyinsure", "claim_fee_refunded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimFeeRefunded {
+    #[topic]
+    pub claim_id: u64,
+    /// Fee amount refunded (stroops); always equal to the amount originally collected.
+    pub fee_amount: i128,
+    /// Address the refund was sent to (the claimant).
+    pub recipient: Address,
+    pub at_ledger: u32,
+}
+
 /// Emitted when the claimant withdraws before any vote is cast.
 ///
 /// Topic layout: ["niffyinsure", "claim_withdrawn", claim_id]
@@ -383,6 +400,7 @@ pub fn file_claim(
         }
 
         crate::token::collect_premium(env, holder, &policy.asset, filing_fee);
+        storage::set_claim_filing_fee_paid(env, claim_id, filing_fee);
 
         ClaimFeeCollected {
             claim_id,
@@ -494,6 +512,25 @@ pub fn withdraw_claim(env: &Env, claimant: &Address, claim_id: u64) -> Result<()
 
     storage::set_claim(env, &claim);
 
+    // ── Filing fee refund ────────────────────────────────────────────────
+    //
+    // If a non-zero filing fee was collected at `file_claim`, refund it in
+    // full now. Withdrawal is only reachable while `approve_votes ==
+    // reject_votes == 0` (checked above), so this always refunds a claim
+    // that has not yet been voted on.
+    if let Some(fee_paid) = storage::take_claim_filing_fee_paid(env, claim_id) {
+        if fee_paid > 0 {
+            crate::token::refund_fee(env, &claim.claimant, &claim.asset, fee_paid);
+            ClaimFeeRefunded {
+                claim_id,
+                fee_amount: fee_paid,
+                recipient: claim.claimant.clone(),
+                at_ledger: now,
+            }
+            .publish(env);
+        }
+    }
+
     ClaimWithdrawn {
         claim_id,
         policy_id: claim.policy_id,
@@ -572,13 +609,18 @@ pub fn vote_on_claim(
 
     // Compute vote weight: proportional to active policy count when governance token
     // is enabled (capped by max_weight_cap), or 1 when disabled.
-    let vote_weight: u32 = if crate::governance_token::governance_token_effective_enabled(env) {
+    let default_weight: u32 = if crate::governance_token::governance_token_effective_enabled(env) {
         let balance = storage::get_holder_active_policy_count(env, voter) as i128;
         let cap = storage::get_max_weight_cap(env);
         balance.min(cap).max(1) as u32
     } else {
         1
     };
+    // Validity check on the snapshot entry: a zero or negative voting power
+    // (only reachable via a corrupted/seeded entry — see
+    // `storage::voting_power_for`) must not be silently treated as valid
+    // weight, since that would skew quorum math. Revert instead.
+    let vote_weight: u32 = storage::voting_power_for(env, claim_id, voter, default_weight)?;
 
     match vote {
         VoteOption::Approve => {
@@ -686,6 +728,23 @@ fn finalize_claim_inner(env: &Env, claim_id: u64) -> Result<ClaimStatus, Error> 
     let quorum_bps = effective_quorum_bps(env, claim_id);
 
     if participation_quorum_met(cast, eligible, quorum_bps) {
+        // ── Tie-breaking rule ────────────────────────────────────────────
+        //
+        // When `approve_votes == reject_votes` exactly, the claim is
+        // Rejected, not Approved. This is a strict `>` comparison (not
+        // `>=`), so a tie falls through to the `else` branch below.
+        //
+        // Rationale (insurer-favored default, matching the no-quorum branch
+        // a few lines down): approval should require an affirmative
+        // majority, not merely "no fewer" reject votes. This mirrors
+        // `resolve_plurality_if_quorum_met` (used by `vote_on_claim` for
+        // early resolution), which applies the identical `>` comparison —
+        // so the outcome of a tie is the same whether the claim resolves
+        // early via voting or later via `finalize_claim`/deadline, and is
+        // independent of the order in which votes were submitted (only the
+        // final approve/reject totals matter). See
+        // `tests/finalize_tie_vote.rs` and `docs/GOVERNANCE.md` /
+        // `docs/EVENT_DICTIONARY.md` for the documented rule.
         if claim.approve_votes > claim.reject_votes {
             claim.status = ClaimStatus::Approved;
         } else {
@@ -910,6 +969,18 @@ pub fn process_payout_timeout(env: &Env, claim_id: u64) -> Result<ClaimStatus, E
 /// This invariant is enforced structurally: `on_reject` does not call
 /// `payout`, and there is no entrypoint that transitions a `Rejected` claim
 /// to `Approved`.
+///
+/// CHECKS-EFFECTS-INTERACTIONS: the claim's status is flipped to `Paid` and
+/// persisted to storage BEFORE the token transfer (`payout`, the
+/// "interaction") is invoked. Soroban does not support Ethereum-style
+/// reentrancy into the same contract instance during a single host
+/// invocation, but a cross-contract call into the token contract can still
+/// panic or trap partway through (insufficient balance, a malicious/faulty
+/// token implementation, etc). Ordering effects before interactions means
+/// that if the transfer traps, the *entire* top-level invocation — including
+/// the `Paid` write already made — is atomically rolled back by the host, so
+/// the claim is left in `Approved`, never in a state where it is marked
+/// `Paid` without a completed transfer (or payable twice).
 pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
@@ -929,7 +1000,19 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
         return Err(Error::DisputeWindowActive);
     }
 
+    // ── EFFECTS: persist the terminal status before the external interaction ──
+    let old_status = claim.status.clone();
+    claim.status = ClaimStatus::Paid;
+    push_status_transition(&mut claim.status_history, ClaimStatus::Paid, now);
+    storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
+    storage::remove_claim_rate_limit_prev(env, claim_id);
+    storage::set_claim(env, &claim);
+
+    // ── INTERACTION: token transfer. If this returns Err, the `?` below
+    // aborts the whole invocation and the host rolls back every storage
+    // write made above — the claim reverts to `Approved`, never stuck `Paid`.
     payout(env, &claim)?;
+
     crate::rolling_claim_cap::record_claim_paid(
         env,
         &claim.claimant,
@@ -937,12 +1020,6 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
         claim.amount,
         now,
     );
-    let old_status = claim.status.clone();
-    claim.status = ClaimStatus::Paid;
-    push_status_transition(&mut claim.status_history, ClaimStatus::Paid, now);
-    storage::set_open_claim(env, &claim.claimant, claim.policy_id, false);
-    storage::remove_claim_rate_limit_prev(env, claim_id);
-    storage::set_claim(env, &claim);
     events::emit_claim_status_changed(env, claim_id, old_status, ClaimStatus::Paid);
     Ok(())
 }
@@ -1082,6 +1159,7 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         }
         PayoutRecipientWarning {
             claim_id: claim.claim_id,
+            version: events::EVENT_SCHEMA_VERSION,
             recipient: payout_to.clone(),
             asset: effective_asset.clone(),
             at_ledger: now,
@@ -1441,6 +1519,7 @@ pub fn add_claim_evidence(
     }
     ClaimEvidenceUpdated {
         claim_id,
+        version: events::EVENT_SCHEMA_VERSION,
         policy_id: claim.policy_id,
         evidence_hashes,
         at_ledger: now,
@@ -1648,6 +1727,13 @@ pub struct AppealVoteCast {
 /// A fresh voter snapshot is taken at appeal opening so new policy-holders
 /// can participate in the appeal vote (and departed ones cannot).
 pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), Error> {
+    let now = env.ledger().sequence();
+    // Fail fast before any TTL-touching storage so near-u32::MAX ledgers
+    // surface Overflow instead of a host InternalError on extend_ttl.
+    let appeal_deadline = now
+        .checked_add(ledger::APPEAL_VOTE_WINDOW_LEDGERS)
+        .ok_or(Error::Overflow)?;
+
     storage::assert_claims_not_paused(env);
 
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
@@ -1661,8 +1747,6 @@ pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), E
     if claim.status != ClaimStatus::Rejected {
         return Err(Error::ClaimAlreadyTerminal);
     }
-
-    let now = env.ledger().sequence();
 
     // Appeal window: must be called within APPEAL_OPEN_WINDOW_LEDGERS of rejection.
     if now > claim.appeal_open_deadline_ledger {
@@ -1679,9 +1763,7 @@ pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), E
     claim.appeal_reject_votes = 0;
 
     // Set the appeal voting deadline.
-    claim.appeal_deadline_ledger = now
-        .checked_add(ledger::APPEAL_VOTE_WINDOW_LEDGERS)
-        .ok_or(Error::Overflow)?;
+    claim.appeal_deadline_ledger = appeal_deadline;
 
     claim.appeals_count = claim.appeals_count.saturating_add(1);
 
@@ -1998,4 +2080,30 @@ pub fn escalate_claim(env: &Env, claim_id: u64, new_deadline_ledger: u32) -> Res
     .publish(env);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod open_appeal_overflow_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Address, Env,
+    };
+
+    /// Contract entrypoints auto-extend instance TTL and panic near u32::MAX.
+    /// Call `open_appeal` directly so the fail-fast Overflow path is reachable.
+    #[test]
+    fn open_appeal_returns_overflow_near_u32_max() {
+        let overflow_now = u32::MAX - ledger::APPEAL_VOTE_WINDOW_LEDGERS + 1;
+        assert!(overflow_now
+            .checked_add(ledger::APPEAL_VOTE_WINDOW_LEDGERS)
+            .is_none());
+
+        let env = Env::default();
+        env.ledger().with_mut(|l| l.sequence_number = overflow_now);
+        let claimant = Address::generate(&env);
+
+        let err = open_appeal(&env, &claimant, 1).expect_err("must Overflow near u32::MAX");
+        assert_eq!(err, Error::Overflow);
+    }
 }

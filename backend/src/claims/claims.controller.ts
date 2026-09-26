@@ -42,10 +42,12 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
 import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
 import { ClaimRateLimitGuard } from '../rate-limit/claim-rate-limit.guard';
+import { AppealRateLimitGuard } from '../rate-limit/appeal-rate-limit.guard';
 import { MAX_LIMIT, DEFAULT_LIMIT } from '../helpers/pagination';
 import { OptionalJwtAuthGuard } from '../tx/guards/optional-jwt.guard';
 import { Feature } from '../feature-flags/feature.decorator';
 import { APPEAL_FEATURE_FLAG } from './claims.constants';
+import { SimulateAppealDto } from './dto/simulate-appeal.dto';
 
 /** Maximum claim IDs accepted per status-poll or SSE subscription. */
 const MAX_WATCH_IDS = 50;
@@ -184,6 +186,23 @@ export class ClaimsController {
     return this.claimsService.getClaimVoters(id);
   }
 
+  /**
+   * GET /api/claims/:id/appeal/voters
+   *
+   * Lists the appeal-round electorate (offline mirror of snapshot_appeal_voters)
+   * once an appeal is open. Same DTO shape as GET /claims/:id/voters.
+   */
+  @Get(':id/appeal/voters')
+  @Feature(APPEAL_FEATURE_FLAG)
+  @ApiOperation({ summary: 'List eligible voters for the current appeal round' })
+  @ApiResponse({ status: 200, description: 'Appeal voters with eligibility', type: [ClaimVoterDto] })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  async getAppealVoters(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ClaimVoterDto[]> {
+    return this.claimsService.getAppealVoters(id);
+  }
+
   @Post(':id/evidence/metadata')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
@@ -241,19 +260,47 @@ export class ClaimsController {
   }
 
   // ── Appeal endpoints ─────────────────────────────────────────────────────
-  // Both endpoints are gated behind the `claims_appeal_enabled` feature flag
-  // (#1355) so the appeal feature can be staged per environment. When the flag
-  // is off, FeatureFlagsGuard returns the configured disabled status (404/403).
+  // Gated behind `claims_appeal_enabled` (#1355). Appeal writes use
+  // AppealRateLimitGuard (#1322) — a stricter, isolated tier from claim filing.
+
+  /**
+   * POST /api/claims/:id/appeal/simulate
+   *
+   * Dry-runs file_appeal via Soroban simulation. Results are short-TTL Redis
+   * cached by (claimId, walletAddress) so wallet retries avoid redundant RPC
+   * (#1327). Never returns signing XDR — use /build-transaction for that.
+   */
+  @Post(':id/appeal/simulate')
+  @Feature(APPEAL_FEATURE_FLAG)
+  @UseGuards(OptionalJwtAuthGuard, AppealRateLimitGuard)
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Simulate file_appeal (short-TTL cache; no signing XDR)' })
+  @ApiResponse({ status: 200, description: 'Simulation succeeded (may be cache hit)' })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
+  async simulateAppeal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SimulateAppealDto,
+  ) {
+    return this.claimsService.simulateAppealTransaction({
+      claimId: id,
+      walletAddress: dto.walletAddress,
+      reason: dto.reason,
+    });
+  }
 
   /**
    * POST /api/claims/:id/appeal/build-transaction
    *
    * Builds an unsigned file_appeal XDR for a rejected claim.
+   * Always performs a fresh RPC simulation — never served from the simulate cache (#1327).
    * The client signs the XDR with their wallet and submits it via POST ./:id/appeal.
    */
   @Post(':id/appeal/build-transaction')
   @Feature(APPEAL_FEATURE_FLAG)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AppealRateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiBearerAuth()
@@ -261,6 +308,7 @@ export class ClaimsController {
   @ApiResponse({ status: 200, description: 'Unsigned appeal transaction XDR + fee estimates' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Claim not found' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
   async buildAppealTransaction(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: BuildAppealTransactionDto,
@@ -279,10 +327,12 @@ export class ClaimsController {
    *
    * Idempotency: if `txHash` was already recorded for this claim, the cached
    * result is returned without re-submitting or double-counting the appeal.
+   *
+   * Rate limit: AppealRateLimitGuard (2/hour, 5/day per wallet) — see #1322.
    */
   @Post(':id/appeal')
   @Feature(APPEAL_FEATURE_FLAG)
-  @UseGuards(JwtAuthGuard, ClaimRateLimitGuard, RateLimitGuard)
+  @UseGuards(JwtAuthGuard, AppealRateLimitGuard, RateLimitGuard)
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiBearerAuth()

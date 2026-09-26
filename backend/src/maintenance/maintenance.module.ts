@@ -10,6 +10,7 @@ import { WasmDriftJob } from './wasm-drift.job';
 import { PrivacyService } from './privacy.service';
 import { DataRetentionService } from './data-retention.service';
 import { SolvencyMonitoringService } from './solvency-monitoring.service';
+import { AppealSlaMonitorService } from './appeal-sla-monitor.service';
 import { IpfsPinCheckJob } from './ipfs-pin-check.job';
 import { VacuumService } from './vacuum.service';
 import { VacuumJob } from './vacuum.job';
@@ -17,10 +18,11 @@ import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
 import { VoteReconciliationJob } from './vote-reconciliation.job';
 import { RampReconciliationService } from '../jobs/ramp-reconciliation.service';
 import { RampHealthCheckService } from '../jobs/ramp-health-check.service';
+import { AppealFinalizeKeeperService } from '../jobs/appeal-finalize-keeper.service';
 
 @Module({
   imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule, MetricsModule],
-  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService],
+  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService, AppealFinalizeKeeperService],
   exports: [PrivacyService, SolvencyMonitoringService],
 })
 export class MaintenanceModule {}

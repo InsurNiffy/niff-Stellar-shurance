@@ -95,6 +95,8 @@ threshold fails the PR gate.
 | claims-list p(95) | < 500 ms | 412 ms | PASS |
 | claims-list p(99) | < 2000 ms | 891 ms | PASS |
 | build-tx p(95) | < 3000 ms | 2700 ms | PASS |
+| appeal-build p(95) | < 3000 ms | see `appeal-baseline-2026-08-29.md` | PENDING |
+| appeal-submit p(95) | < 4000 ms | see `appeal-baseline-2026-08-29.md` | PENDING |
 | health p(95) | < 100 ms | 61 ms | PASS |
 | quote p(95) | < 1000 ms | 780 ms | PASS |
 | error rate (all) | < 1% | 0.18% | PASS |

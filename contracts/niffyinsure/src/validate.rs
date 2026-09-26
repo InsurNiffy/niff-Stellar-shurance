@@ -154,6 +154,10 @@ pub enum Error {
     InsufficientAllowanceForFee = 87,
     /// Claim has already reached the configured maximum number of unique voters.
     VoterCapReached = 88,
+    /// `add_voters_batch` would push the global voter registry past
+    /// `storage::MAX_ELIGIBLE_VOTERS`. The entire batch reverts atomically;
+    /// no partial writes are made.
+    VoterRegistryCapExceeded = 89,
 }
 
 pub fn check_claim_evidence_update(
