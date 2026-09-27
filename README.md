@@ -69,3 +69,6 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 - #1538: Frontend — Admin governance: voters, delegations and audit log
 <!-- handsoff-issue-1539 -->
 - #1539: Frontend — Admin content: FAQ and announcements
+
+<!-- handsoff-issue-1479 -->
+- #1479: Backend — Claim deadline and payout keeper jobs
