@@ -80,3 +80,12 @@ fn escalate_non_processing_claim_reverts() {
     let result = client.try_escalate_claim(&claim_id, &(100u32 + 1000));
     assert!(result.is_err());
 }
+
+#[test]
+fn escalate_non_existent_claim_reverts() {
+    let (_env, client, _admin) = setup();
+
+    // claim_id 999 does not exist — must revert with ClaimNotFound
+    let result = client.try_escalate_claim(&999u64, &150u32);
+    assert!(result.is_err());
+}
