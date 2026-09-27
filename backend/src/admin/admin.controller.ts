@@ -922,18 +922,26 @@ export class AdminController {
    * GET /admin/claims/:id/comments
    *
    * List all comments for a claim, including soft-deleted ones (admin view).
+   * Each deleted comment includes an `isDeleted: true` flag.
    */
   @Get('claims/:id/comments')
   @MinAdminRole('viewer')
   @ApiOperation({ summary: 'List all comments for a claim including soft-deleted (admin view)' })
   async listClaimCommentsAdmin(@Param('id', ParseIntPipe) claimId: number) {
-    return this.commentRepository.findAll(claimId);
+    const comments = await this.prisma.withSoftDeleteBypass(() =>
+      this.commentRepository.findAll(claimId),
+    );
+    return comments.map((c) => ({
+      ...c,
+      isDeleted: c.deletedAt !== null,
+    }));
   }
 
   /**
    * DELETE /admin/claims/:id/comments/:commentId
    *
-   * Admin soft-delete of a comment. Records an audit log entry with the reason.
+   * Admin soft-delete of a comment. Records an audit log entry with the reason
+   * and captures the admin's wallet address as `deletedBy`.
    */
   @Delete('claims/:id/comments/:commentId')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -948,12 +956,12 @@ export class AdminController {
     if (!comment || comment.deletedAt !== null) {
       throw new NotFoundException('Comment not found');
     }
-    await this.commentRepository.softDelete(commentId);
     const actor = req.user?.walletAddress ?? 'unknown';
+    await this.commentRepository.softDelete(commentId, actor);
     await this.auditService.write({
       actor,
       action: 'admin_delete_comment',
-      payload: { commentId, claimId, reason: dto.reason ?? null },
+      payload: { commentId, claimId, deletedBy: actor, reason: dto.reason ?? null },
       ipAddress: req.ip,
     });
   }

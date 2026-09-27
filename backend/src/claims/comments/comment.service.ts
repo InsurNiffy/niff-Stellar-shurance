@@ -52,6 +52,7 @@ export class CommentService {
     commentId: string,
     walletAddress: string,
     isAdmin: boolean,
+    deletedBy?: string,
   ): Promise<void> {
     const comment = await this.repo.findById(commentId);
     if (!comment || comment.deletedAt !== null) {
@@ -60,7 +61,7 @@ export class CommentService {
     if (!isAdmin && comment.authorAddress !== walletAddress) {
       throw new ForbiddenException('Not authorized to delete this comment');
     }
-    await this.repo.softDelete(commentId);
+    await this.repo.softDelete(commentId, deletedBy);
   }
 
   private async assertClaimExists(claimId: number): Promise<void> {

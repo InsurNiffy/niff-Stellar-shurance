@@ -453,11 +453,14 @@ model ClaimComment {
   body          String
   createdAt     DateTime  @default(now()) @map("created_at")
   deletedAt     DateTime? @map("deleted_at")
+  /// Staff wallet address who soft-deleted this comment. Null if deleted by author.
+  deletedBy     String?   @map("deleted_by")
 
   claim         Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
 
   @@index([claimId, deletedAt, createdAt])
   @@index([authorAddress, claimId])
+  @@index([deletedBy])
   @@map("claim_comments")
 }
 
