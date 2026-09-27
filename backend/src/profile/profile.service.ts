@@ -2,7 +2,12 @@ import { Injectable, ConflictException, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './profile.dto';
+import { maskEmail } from './email-mask';
+import { shouldTouchLastSeen } from '../common/throttle/last-seen.throttle';
 import type { HolderProfile } from '@prisma/client';
+
+/** Fields written to the audit log with masked values. */
+const SENSITIVE_FIELDS = new Set<string>(['email']);
 
 @Injectable()
 export class ProfileService {
@@ -35,7 +40,7 @@ export class ProfileService {
         ...(notifPrefs !== undefined && { notificationPreferences: notifPrefs }),
       };
 
-      // Log audit trail for changed fields
+      // Log audit trail for changed fields (emails masked — #1485)
       await this.logProfileAudit(walletAddress, existing, dto);
 
       return await this.prisma.holderProfile.upsert({
@@ -58,12 +63,27 @@ export class ProfileService {
     }
   }
 
+  /**
+   * Records authenticated activity at most once per 5 minutes per user (#1485).
+   * Fire-and-forget: never throws into the request path.
+   */
+  touchLastSeen(walletAddress: string): void {
+    if (!shouldTouchLastSeen(walletAddress)) return;
+    const now = new Date();
+    this.prisma.holderProfile
+      .upsert({
+        where: { walletAddress },
+        create: { walletAddress, lastSeenAt: now },
+        update: { lastSeenAt: now },
+      })
+      .catch(() => undefined);
+  }
+
   private async logProfileAudit(
     walletAddress: string,
     existing: HolderProfile | null,
     dto: UpdateProfileDto,
   ): Promise<void> {
-    const sensitiveFields = new Set<string>();
     const auditEntries: Array<{ fieldName: string; oldValue: string | null; newValue: string | null }> = [];
 
     const fieldMap = {
@@ -81,12 +101,12 @@ export class ProfileService {
       // Skip if no change
       if (JSON.stringify(oldValue) === JSON.stringify(newValue)) continue;
 
-      // Exclude sensitive fields from plaintext logging
-      if (sensitiveFields.has(fieldName)) {
+      // Sensitive fields (email) are stored masked, never in plaintext.
+      if (SENSITIVE_FIELDS.has(fieldName)) {
         auditEntries.push({
           fieldName,
-          oldValue: '[REDACTED]',
-          newValue: '[REDACTED]',
+          oldValue: maskEmail(typeof oldValue === 'string' ? oldValue : null),
+          newValue: maskEmail(typeof newValue === 'string' ? newValue : null),
         });
       } else {
         auditEntries.push({

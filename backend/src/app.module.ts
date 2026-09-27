@@ -28,6 +28,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
 import { EventsModule } from './events/events.module';
 import { ProfileModule } from './profile/profile.module';
 import { RampModule } from './ramp/ramp.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 import { FeedsModule } from './feeds/feeds.module';
 import { AssetsModule } from './assets/assets.module';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
@@ -94,6 +95,7 @@ const IDEMPOTENCY_ROUTES = [
     EventsModule,
     ProfileModule,
     RampModule,
+    WebhooksModule,
     FeedsModule,
     AssetsModule,
     PostsModule,

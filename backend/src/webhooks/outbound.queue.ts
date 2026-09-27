@@ -8,12 +8,20 @@
 import { Queue, Worker, Job } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
 import { getQueueRetryConfig } from '../queues/queue-config';
+import type { OutboundWebhookJob } from './outbound.types';
 
-export interface OutboundWebhookJob {
-  targetUrl: string;
-  eventType: string;
-  idempotencyKey: string;
-  payload: Record<string, unknown>;
+export type { OutboundWebhookJob } from './outbound.types';
+
+/**
+ * Pluggable processor — WebhooksModule wires in the signing + delivery-log
+ * implementation. When unset (e.g. unit tests, legacy boot paths) jobs fall
+ * back to a plain unsigned POST.
+ */
+export type OutboundJobProcessor = (job: OutboundWebhookJob) => Promise<void>;
+let jobProcessor: OutboundJobProcessor | null = null;
+
+export function setOutboundJobProcessor(processor: OutboundJobProcessor | null): void {
+  jobProcessor = processor;
 }
 
 const QUEUE_NAME = 'outbound-webhooks';
@@ -67,6 +75,12 @@ export const outboundWebhookWorker = new Worker<OutboundWebhookJob>(
       throw new Error(
         `Webhook payload size (${payloadSize} bytes) exceeds limit (${MAX_OUTBOUND_WEBHOOK_SIZE_BYTES} bytes)`,
       );
+    }
+
+    // Signing + delivery-log processor wired by WebhooksModule (#1484).
+    if (jobProcessor) {
+      await jobProcessor({ ...job.data, attempt: job.attemptsMade + 1 });
+      return;
     }
 
     const { default: axios } = await import('axios');
