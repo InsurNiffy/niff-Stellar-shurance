@@ -158,6 +158,8 @@ pub enum Error {
     /// `storage::MAX_ELIGIBLE_VOTERS`. The entire batch reverts atomically;
     /// no partial writes are made.
     VoterRegistryCapExceeded = 89,
+    /// Individual voter registration would exceed [`storage::MAX_ELIGIBLE_VOTERS`].
+    VoterRegistryFull = 90,
 }
 
 pub fn check_claim_evidence_update(

@@ -74,6 +74,9 @@ pub enum PolicyError {
     /// region with an overlapping ledger window. See `initiate_policy`'s
     /// "Overlap definition" doc comment for the exact rule.
     DuplicateCoverageActive = 127,
+    /// The global voter registry has reached its configured maximum.
+    /// No additional voters can be registered until some are removed.
+    VoterRegistryFull = 128,
 }
 
 #[contracttype]
@@ -591,6 +594,14 @@ pub fn initiate_policy(
     }
 
     // Allocate unique per-holder policy_id.
+    //
+    // Atomicity: `next_policy_id` reads, increments, and stores the
+    // counter in a single Soroban invocation frame. Because Soroban
+    // executes each transaction atomically (no concurrent ledger slot
+    // can interleave reads and writes on the same key), this read-increment-write
+    // sequence is safe from races — two concurrent `initiate_policy` calls
+    // on different ledger slots will each see a distinct counter value
+    // and produce monotonically increasing unique IDs.
     let policy_id = storage::next_policy_id(env, &holder);
 
     if storage::has_policy(env, &holder, policy_id) {
@@ -681,7 +692,7 @@ pub fn initiate_policy(
     validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
 
     storage::set_policy(env, &holder, policy_id, &policy);
-    storage::add_voter(env, &holder);
+    storage::add_voter(env, &holder).map_err(|_| PolicyError::VoterRegistryFull)?;
 
     if fee_amount > 0 {
         ProtocolFeeCollected {

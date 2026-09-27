@@ -695,6 +695,22 @@ pub fn get_voters(env: &Env) -> Vec<Address> {
 /// Hard cap on the size of the voter registry. Enforced atomically across an
 /// entire `add_voters_batch` call so a batch that would exceed the cap reverts
 /// in full, leaving no partial writes.
+///
+/// # Gas safety rationale
+///
+/// Soroban charges CPU instructions per storage read and write. An unbounded
+/// voter registry means that `get_voters` (which reads the entire `Vec<Address>`
+/// from persistent storage) and iteration over it during snapshot creation or
+/// finalization would consume an ever-growing share of the per-transaction
+/// instruction budget. At 5 000 entries the worst-case read is still well
+/// within the default Soroban budget (≈ 100 M instructions); beyond that the
+/// cost grows linearly and risks hitting the limit during snapshot creation or
+/// claim finalization loops. The cap is set to 5 000 because:
+///   - Typical governance protocols have far fewer voters.
+///   - 5 000 addresses × ~200 instructions each ≈ 1 M instructions, leaving
+///     ample headroom for the rest of the transaction logic.
+///   - A larger cap would not meaningfully improve decentralisation but would
+///     make gas costs unpredictable and risk transaction failure.
 pub const MAX_ELIGIBLE_VOTERS: u32 = 5_000;
 
 /// Batch-register `addresses` as voters, skipping addresses already present
@@ -702,11 +718,11 @@ pub const MAX_ELIGIBLE_VOTERS: u32 = 5_000;
 /// registry or double-count. The `MAX_ELIGIBLE_VOTERS` cap is checked against
 /// the final, de-duplicated size of the registry *before* any write happens,
 /// so a batch that would exceed the cap reverts atomically with zero partial
-/// writes.
+/// writes, returning [`validate::Error::VoterRegistryFull`].
 ///
 /// Returns the list of addresses actually added (in call order), which the
 /// caller uses to emit one `VoterAdded` event per address.
-pub fn add_voters_batch(env: &Env, addresses: &Vec<Address>) -> Result<Vec<Address>, ()> {
+pub fn add_voters_batch(env: &Env, addresses: &Vec<Address>) -> Result<Vec<Address>, validate::Error> {
     let mut voters = get_voters(env);
     let mut to_add: Vec<Address> = Vec::new(env);
 
@@ -733,7 +749,7 @@ pub fn add_voters_batch(env: &Env, addresses: &Vec<Address>) -> Result<Vec<Addre
 
     let projected_len = voters.len().saturating_add(to_add.len());
     if projected_len > MAX_ELIGIBLE_VOTERS {
-        return Err(());
+        return Err(validate::Error::VoterRegistryFull);
     }
 
     for addr in to_add.iter() {
@@ -797,9 +813,12 @@ pub fn set_voters(env: &Env, voters: &Vec<Address>) {
     env.storage().instance().set(&DataKey::Voters, voters);
 }
 
-/// Add `holder` to the voter set (if not already present) and increment their
-/// active-policy count by 1.
-pub fn add_voter(env: &Env, holder: &Address) {
+/// Add `holder` to the voter set (if not already present) and increment
+/// their active-policy count by 1.
+///
+/// Reverts with [`validate::Error::VoterRegistryFull`] when the registry
+/// is already at [`MAX_ELIGIBLE_VOTERS`].
+pub fn add_voter(env: &Env, holder: &Address) -> Result<(), validate::Error> {
     let mut voters = get_voters(env);
     let mut found = false;
     for v in voters.iter() {
@@ -809,6 +828,9 @@ pub fn add_voter(env: &Env, holder: &Address) {
         }
     }
     if !found {
+        if voters.len() >= MAX_ELIGIBLE_VOTERS as usize {
+            return Err(validate::Error::VoterRegistryFull);
+        }
         voters.push_back(holder.clone());
     }
     set_voters(env, &voters);
@@ -816,6 +838,7 @@ pub fn add_voter(env: &Env, holder: &Address) {
     let key = DataKey::ActivePolicyCount(holder.clone());
     let count: u32 = env.storage().instance().get(&key).unwrap_or(0);
     env.storage().instance().set(&key, &(count + 1));
+    Ok(())
 }
 
 pub fn increment_holder_active_policies(env: &Env, holder: &Address) {
@@ -834,7 +857,7 @@ pub fn get_holder_active_policy_count(env: &Env, holder: &Address) -> u32 {
     get_active_policy_count(env, holder)
 }
 
-pub fn voters_ensure_holder(env: &Env, holder: &Address) {
+pub fn voters_ensure_holder(env: &Env, holder: &Address) -> Result<(), validate::Error> {
     let mut voters = get_voters(env);
     let mut found = false;
     for v in voters.iter() {
@@ -844,9 +867,13 @@ pub fn voters_ensure_holder(env: &Env, holder: &Address) {
         }
     }
     if !found {
+        if voters.len() >= MAX_ELIGIBLE_VOTERS as usize {
+            return Err(validate::Error::VoterRegistryFull);
+        }
         voters.push_back(holder.clone());
         set_voters(env, &voters);
     }
+    Ok(())
 }
 
 /// Removes `holder` from the voter list (no-op if absent).
@@ -895,6 +922,16 @@ pub fn get_policy_counter(env: &Env, holder: &Address) -> u32 {
 /// This function reads, increments, stores, and returns the policy ID counter
 /// in a single operation to ensure atomicity and prevent duplicate IDs under
 /// concurrent calls. The counter is stored in persistent storage per holder.
+///
+/// # Atomicity Guarantee
+///
+/// Soroban executes each contract invocation as a single, atomic ledger
+/// transaction. Within that invocation frame, all storage reads and writes
+/// are isolated from concurrent invocations — no other transaction can
+/// observe or modify the counter between the read and the write. This
+/// means that `next_policy_id` is safe to call from `initiate_policy`
+/// without additional locking: two concurrent calls on different ledger
+/// slots will each see a distinct counter value and produce distinct IDs.
 ///
 /// # Returns
 /// The next sequential policy ID (u32) for the given holder.

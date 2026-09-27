@@ -56,6 +56,15 @@ pub fn initiate_policy(
         .checked_add(term_ledgers)
         .ok_or(PolicyError::LedgerOverflow)?;
 
+    // Allocate unique per-holder policy_id.
+    //
+    // Atomicity: `next_policy_id` reads, increments, and stores the
+    // counter in a single Soroban invocation frame. Because Soroban
+    // executes each transaction atomically (no concurrent ledger slot
+    // can interleave reads and writes on the same key), this read-increment-write
+    // sequence is safe from races — two concurrent `initiate_policy` calls
+    // on different ledger slots will each see a distinct counter value
+    // and produce monotonically increasing unique IDs.
     let policy_id = storage::next_policy_id(env, &holder);
 
     let asset = storage::get_token(env);
@@ -103,7 +112,7 @@ pub fn initiate_policy(
 
     storage::set_policy(env, &holder, policy_id, &policy);
     storage::increment_holder_active_policies(env, &holder);
-    storage::voters_ensure_holder(env, &holder);
+    storage::voters_ensure_holder(env, &holder)?;
 
     Ok(policy_id)
 }
