@@ -27,6 +27,7 @@ Any release that carries one or more ABI-BREAKING tags requires:
 ## [Unreleased]
 
 ### Added
+- Contract metadata entrypoint `get_contract_metadata() -> ContractMetadata` returning name, version, and network passphrase hint (#811).
 - Admin governance UI: voters, region, quorum, and dispute panels (#1006).
 - UI improvements across four tracked issues (#1005).
 - Contract fuzz testing harness for `niffyinsure` and `premium_calculator` (#1003).
