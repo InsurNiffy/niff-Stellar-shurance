@@ -18,6 +18,15 @@ import { MetricsService } from './metrics/metrics.service';
 import { setRedisCacheMetricsService } from './redis/cache';
 import { setRedisClientMetricsService } from './redis/client';
 import { AppLoggerService } from "./common/logger/app-logger.service";
+import { PrismaService } from "./prisma/prisma.service";
+import { NotificationsService } from "./notifications/notifications.service";
+import {
+  NOTIFICATION_PREFERENCES_REPOSITORY,
+  NotificationPreferencesRepository,
+} from "./notifications/notification-preferences.repository";
+import { createNotificationDeliveryProcessor } from "./notifications/notification-delivery.processor";
+import { resolveUnsubscribeSecret } from "./notifications/unsubscribe";
+import { startNotificationWorker } from "./notifications/notification-jobs.worker";
 import { EnvironmentVariables } from "./config/env.definitions";
 
 export function parseOrigins(raw: string): string[] {
@@ -212,6 +221,34 @@ async function bootstrap() {
     `🌐 Network: ${networkConfig.network.toUpperCase()} | Contract: ${networkConfig.contractIds.niffyinsure || '(not set)'}`,
     "Bootstrap",
   );
+
+  // Notification delivery worker (#1483) — opt-in via ENABLE_NOTIFICATION_WORKER.
+  // The processor loads recipient details by ID inside the worker; queue
+  // payloads only ever contain IDs.
+  if (process.env.ENABLE_NOTIFICATION_WORKER === "true") {
+    try {
+      const prisma = app.get(PrismaService);
+      const preferences = app.get<NotificationPreferencesRepository>(
+        NOTIFICATION_PREFERENCES_REPOSITORY,
+      );
+      const notificationsService = app.get(NotificationsService);
+      const processor = createNotificationDeliveryProcessor({
+        prisma,
+        preferences,
+        sendMail: (message) => notificationsService.sendEmail(message),
+        unsubscribeSecret: resolveUnsubscribeSecret(configService),
+        baseUrl: process.env.APP_URL || `http://localhost:${port}`,
+      });
+      startNotificationWorker(processor);
+      Logger.log("📧 Notification delivery worker started", "Bootstrap");
+    } catch (error) {
+      Logger.error(
+        `Notification worker failed to start: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        "Bootstrap",
+      );
+    }
+  }
 }
 bootstrap().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
