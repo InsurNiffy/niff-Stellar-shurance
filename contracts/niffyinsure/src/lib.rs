@@ -1616,6 +1616,35 @@ impl NiffyInsure {
         storage::get_secs_per_ledger_estimate(&env)
     }
 
+    /// Estimate the wall-clock Unix timestamp for a given future ledger sequence.
+    ///
+    /// Returns an estimated Unix timestamp (seconds since epoch) at which
+    /// `target_ledger` might close, based on the current ledger timestamp and
+    /// the admin-configurable seconds-per-ledger estimate.
+    ///
+    /// If `target_ledger` is in the past or equal to the current ledger, returns
+    /// the current ledger timestamp (no underflow).
+    ///
+    /// # Formula
+    ///
+    /// ```text
+    /// estimate = current_ledger_timestamp + (target_ledger - current_ledger) * secs_per_ledger
+    /// ```
+    ///
+    /// # Estimation error margin
+    ///
+    /// This entrypoint is intended solely for UI display of human-readable
+    /// deadlines. The estimation error grows with the time horizon — see
+    /// [`ledger::estimate_close_time`] for a detailed error-margin table.
+    /// Do not use this value for on-chain enforcement or legal SLAs.  Actual
+    /// Stellar ledger close times vary (typically 3–7 s per ledger).
+    pub fn estimate_close_time(env: Env, target_ledger: u32) -> u64 {
+        let current_timestamp = env.ledger().timestamp();
+        let current_ledger = env.ledger().sequence();
+        let secs_per_ledger = storage::get_secs_per_ledger_estimate(&env);
+        ledger::estimate_close_time(current_timestamp, current_ledger, target_ledger, secs_per_ledger)
+    }
+
     /// Admin-only: update the seconds-per-ledger estimate if network conditions change.
     ///
     /// Valid range: 1–30 seconds. The default is 5 (Stellar Mainnet Protocol 20+).

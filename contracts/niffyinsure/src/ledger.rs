@@ -388,6 +388,59 @@ pub fn approx_secs_remaining(now: u32, end: u32) -> u32 {
     ledgers_remaining(now, end).saturating_mul(SECS_PER_LEDGER)
 }
 
+// ── Issue #804: Estimated wall-clock timestamp for UI ───────────────────────
+
+/// Estimate the wall-clock Unix timestamp (seconds) at which a given ledger
+/// sequence number *might* close.
+///
+/// # Formula
+///
+/// ```text
+/// estimate = current_timestamp + (target_ledger - current_ledger) * secs_per_ledger
+/// ```
+///
+/// # Estimation Error Margin
+///
+/// This is an **estimate only** for UI display. Actual Stellar ledger close
+/// times vary between approximately 3–7 seconds depending on network conditions,
+/// validator performance, and transaction volume. The estimation error grows
+/// with the distance into the future:
+///
+/// | Time horizon | Nominal ledgers | Error margin (approx., at ±2 s/ledger) |
+/// |-------------|----------------|----------------------------------------|
+/// | 1 hour      | 720            | ±0.25–15 minutes                       |
+/// | 1 day       | 17_280         | ±1–4 hours                             |
+/// | 1 week      | 120_960        | ±0.5–1.5 days                          |
+/// | 30 days     | 518_400        | ±2–7 days                              |
+///
+/// These estimates MUST NOT be used for on-chain enforcement, legal deadlines,
+/// or financial penalty calculations — they are intended solely for
+/// human-facing UI displays.  For on-chain time-keeping always use ledger
+/// sequence numbers directly.
+///
+/// # Safety
+///
+/// - If `target_ledger <= current_ledger`, returns `current_timestamp`
+///   (no underflow — the requested ledger is already in the past).
+/// - Multiplication uses [`u64`] arithmetic via [`saturating_mul`] to prevent
+///   overflow for far-future target ledgers.
+/// - The result is clamped via [`u64::saturating_add`] so the function never
+///   panics, regardless of inputs.
+#[inline]
+pub fn estimate_close_time(
+    current_timestamp: u64,
+    current_ledger: u32,
+    target_ledger: u32,
+    secs_per_ledger: u32,
+) -> u64 {
+    if target_ledger <= current_ledger {
+        return current_timestamp;
+    }
+    let ledger_delta: u64 = (target_ledger - current_ledger) as u64;
+    let secs_delta = ledger_delta.saturating_mul(secs_per_ledger as u64);
+    current_timestamp.saturating_add(secs_delta)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
