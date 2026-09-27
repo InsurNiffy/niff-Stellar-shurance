@@ -104,6 +104,8 @@ pub fn initiate_policy(
     storage::set_policy(env, &holder, policy_id, &policy);
     storage::increment_holder_active_policies(env, &holder);
     storage::voters_ensure_holder(env, &holder);
+    // Issue #812: index the new policy for status-based queries.
+    storage::index_new_policy(env, &holder, policy_id, &policy);
 
     Ok(policy_id)
 }
@@ -191,12 +193,16 @@ pub fn process_expired(env: &Env, holder: Address, policy_id: u32) -> Result<(),
 
     crate::policy::publish_policy_expired_if_due(env, &policy, now);
 
+    let old_policy = policy.clone();
+
     policy.is_active = false;
     policy.terminated_at_ledger = now;
     policy.termination_reason = TerminationReason::LapsedNonPayment;
     policy.terminated_by_admin = false;
 
     storage::set_policy(env, &holder, policy_id, &policy);
+    // Issue #812: update status index — policy moves from Active → Expired.
+    storage::reindex_policy(env, &holder, policy_id, &old_policy, &policy);
     storage::decrement_holder_active_policies(env, &holder);
     if storage::get_holder_active_policy_count(env, &holder) == 0 {
         storage::voters_remove_holder(env, &holder);
@@ -240,6 +246,7 @@ fn terminate_inner(
     }
 
     let now = env.ledger().sequence();
+    let old_policy = policy.clone();
 
     // Calculate pro-rata refund for unused premium.
     // refund = premium * remaining_ledgers / total_ledgers
@@ -251,6 +258,8 @@ fn terminate_inner(
     policy.terminated_by_admin = by_admin;
 
     storage::set_policy(env, holder, policy_id, &policy);
+    // Issue #812: update status index on termination.
+    storage::reindex_policy(env, holder, policy_id, &old_policy, &policy);
     storage::decrement_holder_active_policies(env, holder);
     if storage::get_holder_active_policy_count(env, holder) == 0 {
         storage::voters_remove_holder(env, holder);

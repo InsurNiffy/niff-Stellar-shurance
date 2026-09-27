@@ -1360,6 +1360,56 @@ impl NiffyInsure {
         Ok(results)
     }
 
+    /// Read-only (global): return a paginated list of policies filtered by status.
+    ///
+    /// Uses a pre-computed index that maps each [`types::PolicyStatus`] to the set of
+    /// matching `PolicyLookupKey`s. The index is kept consistent across all status
+    /// transitions (initiate, terminate, expire, deactivate).
+    ///
+    /// # Query complexity
+    /// - **Storage reads**: O(`limit`) — each result reads the full policy entry from
+    ///   persistent storage. The index itself is a single read (the Vec of keys).
+    /// - **Instruction budget**: at most [`types::POLICIES_BY_STATUS_PAGE_SIZE_MAX`] (20)
+    ///   results per call. This keeps simulation costs predictable for dashboards.
+    ///
+    /// # Recommended page sizes
+    /// - **Dashboard UI**: 10–20 items per page.
+    /// - **Indexer backfill**: 20 (the hard cap). Larger pages revert.
+    /// - **Admin reporting**: 20; batch multiple calls for larger datasets.
+    ///
+    /// # Panics
+    /// - If `limit > POLICIES_BY_STATUS_PAGE_SIZE_MAX` (panics with
+    ///   `validate::Error::PageSizeTooLarge`).
+    pub fn get_policies_by_status(
+        env: Env,
+        status: types::PolicyStatus,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<types::PolicySummary> {
+        if limit > types::POLICIES_BY_STATUS_PAGE_SIZE_MAX {
+            panic_with_error!(&env, validate::Error::PageSizeTooLarge);
+        }
+        let keys = storage::get_policy_status_index_page(&env, &status, offset, limit);
+        let now = env.ledger().sequence();
+        let mut out: Vec<types::PolicySummary> = Vec::new(&env);
+        for i in 0..keys.len() {
+            let key = keys.get(i).unwrap();
+            if let Some(policy) = storage::get_policy(&env, &key.holder, key.policy_id) {
+                // Use ledger-truth for the is_active field in the summary,
+                // consistent with list_policies.
+                let active = ledger::is_policy_active_by_ledger(&policy, now);
+                out.push_back(types::PolicySummary {
+                    policy_id: policy.policy_id,
+                    policy_type: policy.policy_type,
+                    coverage: policy.coverage,
+                    is_active: active,
+                    end_ledger: policy.end_ledger,
+                });
+            }
+        }
+        out
+    }
+
     /// Read-only: current replay-protection nonce for `holder`.
     /// Pass this value as `expected_nonce` in the next `initiate_policy` or `file_claim`
     /// call to enable nonce checking. Nonce starts at 0 and increments on each
@@ -2419,6 +2469,8 @@ impl NiffyInsure {
             storage::PERSISTENT_TTL_EXTEND_TO,
         );
         storage::add_voter(&env, &holder);
+        // Issue #812: index the seeded policy.
+        storage::index_new_policy(&env, &holder, policy_id, &policy);
     }
 
     pub fn test_remove_voter(env: Env, holder: Address) {
@@ -2438,10 +2490,12 @@ impl NiffyInsure {
         end_ledger: u32,
     ) {
         let mut policy = storage::get_policy(&env, &holder, policy_id).expect("policy not found");
+        let old_policy = policy.clone();
         policy.is_active = is_active;
         policy.start_ledger = start_ledger;
         policy.end_ledger = end_ledger;
         storage::set_policy(&env, &holder, policy_id, &policy);
+        storage::reindex_policy(&env, &holder, policy_id, &old_policy, &policy);
     }
 
     /// Test-only: extend a seeded policy's end_ledger to simulate a renewal
@@ -2449,11 +2503,13 @@ impl NiffyInsure {
     /// after premium collection (extend end, keep start) and resets the rolling cap.
     pub fn test_renew_policy(env: Env, holder: Address, policy_id: u32) {
         let mut policy = storage::get_policy(&env, &holder, policy_id).expect("policy not found");
+        let old_policy = policy.clone();
         let new_end = policy
             .end_ledger
             .saturating_add(ledger::POLICY_DURATION_LEDGERS);
         policy.end_ledger = new_end;
         storage::set_policy(&env, &holder, policy_id, &policy);
+        storage::reindex_policy(&env, &holder, policy_id, &old_policy, &policy);
         let now = env.ledger().sequence();
         rolling_claim_cap::reset_on_renewal(&env, &holder, policy_id, now);
     }
