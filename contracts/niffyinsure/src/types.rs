@@ -97,6 +97,18 @@ pub const MIN_SOLVENCY_RATIO_BPS_MAX: u32 = 100_000;
 /// Hard cap on `page_size` for `get_inactive_policies`.
 pub const INACTIVE_POLICIES_PAGE_SIZE_MAX: u32 = 20;
 
+/// Hard cap on `page_size` for `get_policies_by_status`.
+pub const POLICIES_BY_STATUS_PAGE_SIZE_MAX: u32 = PAGE_SIZE_MAX;
+
+/// Policy status for filtered queries.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PolicyStatus {
+    Active,
+    Expired,
+    Terminated,
+}
+
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
 #[contracttype]

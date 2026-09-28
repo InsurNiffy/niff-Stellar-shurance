@@ -3,6 +3,7 @@ import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationsConsumer } from './notifications.consumer';
 import { ClaimNotificationBatchService } from './claim-notification-batch.service';
+import { NotificationDispatchService } from './notification-dispatch.service';
 import {
   InMemoryNotificationPreferencesRepository,
   NOTIFICATION_PREFERENCES_REPOSITORY,
@@ -17,11 +18,17 @@ import { MetricsModule } from '../metrics/metrics.module';
     NotificationsService,
     NotificationsConsumer,
     ClaimNotificationBatchService,
+    NotificationDispatchService,
     {
       provide: NOTIFICATION_PREFERENCES_REPOSITORY,
       useClass: InMemoryNotificationPreferencesRepository,
     },
   ],
-  exports: [NotificationsService, NotificationsConsumer, ClaimNotificationBatchService],
+  exports: [
+    NotificationsService,
+    NotificationsConsumer,
+    ClaimNotificationBatchService,
+    NotificationDispatchService,
+  ],
 })
 export class NotificationsModule {}

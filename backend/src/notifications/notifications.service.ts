@@ -6,7 +6,13 @@
  * PII minimisation: only claim_id, policy_id, outcome in templates.
  * Default: email opt-in, Discord/Telegram opt-out.
  */
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import * as nodemailer from 'nodemailer';
@@ -17,11 +23,14 @@ import type {
 } from './notification.types';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
+  NOTIFICATION_TYPES,
   NOTIFICATION_TYPE_TO_PREFERENCE_KEY,
   NotificationPreferenceRecord,
   NotificationPreferences,
   NotificationPreferenceUpdate,
+  NotificationRoutingPreferences,
   NotificationType,
+  resolveRoutingPreferences,
 } from './notification-preference.types';
 import {
   NOTIFICATION_PREFERENCES_REPOSITORY,
@@ -97,6 +106,8 @@ export class NotificationsService {
         userId,
         renewalRemindersEnabled: DEFAULT_NOTIFICATION_PREFERENCES.renewalRemindersEnabled,
         claimUpdatesEnabled: DEFAULT_NOTIFICATION_PREFERENCES.claimUpdatesEnabled,
+        email: null,
+        emailVerified: false,
       });
       storedPreferences = await this.preferencesRepository.findByUserId(userId);
     }
@@ -122,6 +133,10 @@ export class NotificationsService {
       userId,
       renewalRemindersEnabled: nextPreferences.renewalRemindersEnabled,
       claimUpdatesEnabled: nextPreferences.claimUpdatesEnabled,
+      // Preserve routing / email fields on the in-memory wholesale upsert.
+      routing: currentRecord?.routing ?? null,
+      email: currentRecord?.email ?? null,
+      emailVerified: currentRecord?.emailVerified ?? false,
     });
 
     return nextPreferences;
@@ -284,6 +299,24 @@ export class NotificationsService {
     }
   }
 
+  /** Sends a notification email through the shared SMTP transport. */
+  async sendEmail(message: {
+    to: string;
+    subject: string;
+    text: string;
+    html?: string;
+    headers?: Record<string, string>;
+  }): Promise<void> {
+    await this.getTransport().sendMail({
+      from: this.configService.get<string>('SMTP_FROM', 'niffyinsure@localhost'),
+      to: message.to,
+      subject: message.subject,
+      text: message.text,
+      ...(message.html ? { html: message.html } : {}),
+      ...(message.headers ? { headers: message.headers } : {}),
+    });
+  }
+
   /** Persist a notification record so the frontend can ACK it on render. */
   async createNotificationRecord(params: {
     userId: string;
@@ -334,6 +367,148 @@ export class NotificationsService {
       orderBy: { createdAt: 'asc' },
       take: limit,
     });
+  }
+
+
+  // ── Per-event × channel routing, quiet hours, digest (#1483) ──────────────
+
+  /** Routing preferences (per event × channel, quiet hours, digest mode). */
+  async getRoutingPreferences(
+    userId: string,
+  ): Promise<NotificationRoutingPreferences> {
+    const record = await this.preferencesRepository.findByUserId(userId);
+    return resolveRoutingPreferences(record?.routing);
+  }
+
+  /** Merges a partial routing update over the current preferences. */
+  async updateRoutingPreferences(
+    userId: string,
+    update: {
+      events?: Partial<Record<NotificationType, { email?: boolean; inApp?: boolean }>>;
+      quietHours?: { enabled?: boolean; start?: string; end?: string };
+      digestMode?: NotificationRoutingPreferences['digestMode'];
+    },
+  ): Promise<NotificationRoutingPreferences> {
+    const current = await this.getRoutingPreferences(userId);
+    const next: NotificationRoutingPreferences = {
+      events: Object.fromEntries(
+        NOTIFICATION_TYPES.map((type) => [
+          type,
+          { ...current.events[type], ...(update.events?.[type] ?? {}) },
+        ]),
+      ) as Record<NotificationType, { email: boolean; inApp: boolean }>,
+      quietHours: { ...current.quietHours, ...(update.quietHours ?? {}) },
+      digestMode: update.digestMode ?? current.digestMode,
+    };
+
+    const record = await this.preferencesRepository.findByUserId(userId);
+    await this.preferencesRepository.upsert({
+      userId,
+      renewalRemindersEnabled:
+        record?.renewalRemindersEnabled ??
+        DEFAULT_NOTIFICATION_PREFERENCES.renewalRemindersEnabled,
+      claimUpdatesEnabled:
+        record?.claimUpdatesEnabled ??
+        DEFAULT_NOTIFICATION_PREFERENCES.claimUpdatesEnabled,
+      routing: next,
+      email: record?.email ?? null,
+      emailVerified: record?.emailVerified ?? false,
+    });
+
+    return next;
+  }
+
+  /**
+   * One-click unsubscribe (#1483): disables email delivery for the user.
+   * `scope` is a notification type, or covers every type when omitted.
+   */
+  async unsubscribeFromEmail(
+    userId: string,
+    scope?: string,
+  ): Promise<{ unsubscribed: boolean; scope: string }> {
+    const routing = await this.getRoutingPreferences(userId);
+
+    const types: NotificationType[] =
+      !scope || scope === '*' || scope === 'all'
+        ? [...NOTIFICATION_TYPES]
+        : NOTIFICATION_TYPES.filter((type) => type === scope);
+
+    if (types.length === 0) {
+      return { unsubscribed: false, scope: scope ?? '*' };
+    }
+
+    const events = { ...routing.events };
+    for (const type of types) {
+      events[type] = { ...events[type], email: false };
+    }
+
+    await this.updateRoutingPreferences(userId, { events });
+    return { unsubscribed: true, scope: types.length === 1 ? types[0] : '*' };
+  }
+
+  /**
+   * Cursor-paginated in-app notification listing (newest first).
+   * Cursor is an opaque base64url-encoded row id.
+   */
+  async listNotifications(
+    userId: string,
+    options: { cursor?: string; limit?: number } = {},
+  ): Promise<{
+    items: Array<{
+      id: string;
+      type: string;
+      payload: unknown;
+      read: boolean;
+      createdAt: Date;
+      expiresAt: Date | null;
+    }>;
+    nextCursor: string | null;
+    hasMore: boolean;
+  }> {
+    const take = Math.min(Math.max(options.limit ?? 20, 1), 50);
+
+    let cursorId: string | undefined;
+    if (options.cursor) {
+      const decoded = Buffer.from(options.cursor, 'base64url').toString('utf8');
+      // Reject anything that is not a canonical base64url-encoded row id.
+      const canonical = Buffer.from(decoded, 'utf8').toString('base64url');
+      if (decoded && canonical === options.cursor) cursorId = decoded;
+      if (!cursorId) {
+        throw new BadRequestException({
+          code: 'INVALID_NOTIFICATION_CURSOR',
+          message: 'Invalid notification cursor.',
+        });
+      }
+    }
+
+    const rows = await this.prisma.notification.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: take + 1,
+    });
+
+    const hasMore = rows.length > take;
+    const page = rows.slice(0, take);
+    const items = page.map((row) => ({
+      id: row.id,
+      type: row.type,
+      payload: row.payload,
+      read: row.acknowledgedAt !== null,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+    }));
+    const nextCursor =
+      hasMore && items.length > 0
+        ? Buffer.from(items[items.length - 1].id).toString('base64url')
+        : null;
+
+    return { items, nextCursor, hasMore };
+  }
+
+  /** Marks a notification as read (alias of acknowledge — same read marker). */
+  async markNotificationRead(id: string, userId: string): Promise<void> {
+    return this.acknowledgeNotification(id, userId);
   }
 
   private resolveNotificationPreferences(

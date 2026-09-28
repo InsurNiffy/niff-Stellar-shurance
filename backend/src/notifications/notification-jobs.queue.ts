@@ -13,13 +13,20 @@ import {
   NOTIFICATION_JOB_OPTIONS,
   getPriorityForNotificationType,
 } from './notification-queue.constants';
-import { NotificationType } from './notification-preference.types';
+import {
+  NotificationChannel,
+  NotificationType,
+} from './notification-preference.types';
 
 export interface NotificationJobData {
   userId: string;
   notificationType: NotificationType;
-  message: string;
+  /** Legacy producer text. Delivery jobs (#1483) are IDs-only and omit it. */
+  message?: string;
   metadata?: Record<string, unknown>;
+  /** #1483 delivery payload: notification row IDs (loaded by the worker). */
+  recordIds?: string[];
+  channels?: NotificationChannel[];
 }
 
 let _queue: Queue<NotificationJobData> | null = null;

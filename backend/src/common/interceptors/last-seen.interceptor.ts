@@ -2,6 +2,7 @@ import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nes
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { PrismaService } from '../../prisma/prisma.service';
+import { shouldTouchLastSeen } from '../throttle/last-seen.throttle';
 
 type RequestWithUser = {
   user?: { walletAddress?: string };
@@ -19,7 +20,7 @@ export class LastSeenInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest<RequestWithUser>();
     const walletAddress = req.user?.walletAddress;
 
-    if (walletAddress) {
+    if (walletAddress && shouldTouchLastSeen(walletAddress)) {
       const now = new Date();
       this.prisma.holderProfile
         .upsert({

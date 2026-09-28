@@ -62,6 +62,7 @@ export class CommentController {
   ): Promise<void> {
     const identity = await this.authIdentity.resolveRequestIdentity(req);
     const isAdmin = identity?.kind === 'staff' && identity.role === 'admin';
-    await this.commentService.softDelete(commentId, walletAddress, isAdmin);
+    const deletedBy = isAdmin ? walletAddress : undefined;
+    await this.commentService.softDelete(commentId, walletAddress, isAdmin, deletedBy);
   }
 }

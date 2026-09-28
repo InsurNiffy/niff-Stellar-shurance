@@ -1,98 +1,102 @@
-# GraphQL API
+# GraphQL API (read-only)
 
-> Consumer-facing REST/GraphQL changes are tracked in the
-> [public API changelog](../../docs/api/API_CHANGELOG.md), published alongside this
-> documentation. See that file for what belongs there vs. the internal `CHANGELOG.md`.
-
-The backend exposes GraphQL through NestJS Apollo using a code-first schema in [`src/graphql`](../src/graphql).
-Resolvers stay intentionally thin:
-
-- `PolicyResolver` delegates reads to [`PolicyReadService`](../src/policy/policy-read.service.ts)
-- `ClaimResolver` delegates reads to [`ClaimsService`](../src/claims/claims.service.ts)
-- claim view shaping is shared through [`ClaimViewMapper`](../src/claims/claim-view.mapper.ts)
-
-No resolver contains standalone business rules that diverge from the REST layer.
+Issue #1482 adds a **read-only** GraphQL endpoint alongside the existing REST API.
+It exposes `Policy`, `Claim`, `Vote` and `Holder` types via Apollo, with DataLoader
+batching and strict query limits.
 
 ## Endpoint
 
-- Path: `/api/graphql`
-- Driver: Apollo Server via `@nestjs/apollo`
-- Schema generation: code-first, emitted to `src/graphql/schema.gql`
-- WebSocket subscriptions use the same path and require
-  `connectionParams.Authorization = "Bearer <wallet-jwt>"`.
+- `POST /graphql` — Apollo Server (code-first schema).
+- `GET /graphql` — Apollo Sandbox in non-production only.
 
-## Production policy
+## Schema
 
-- Apollo landing page/playground is enabled only outside production.
-- Introspection is disabled in production unless `GRAPHQL_INTROSPECTION_IN_PRODUCTION=true`.
-- Error responses are masked. Clients receive only `{ message, extensions.code, extensions.requestId }`.
-- GraphQL error payloads do not include stack traces or resolver paths.
-
-## Abuse controls
-
-- Depth guard: `GRAPHQL_MAX_DEPTH` (default `8`)
-- Complexity guard: `GRAPHQL_MAX_COMPLEXITY` (default `250`)
-- Per-identity operation rate limit:
-  - `GRAPHQL_RATE_LIMIT_MAX` (default `60`)
-  - `GRAPHQL_RATE_LIMIT_WINDOW_MS` (default `60000`)
-- Persisted queries:
-  - opt-in with `GRAPHQL_PERSISTED_QUERIES_ENABLED=true`
-  - stored in Redis under `graphql:apq:*`
-  - TTL controlled by `GRAPHQL_PERSISTED_QUERY_TTL_SECONDS`
-
-## DataLoader strategy
-
-Per-request DataLoaders are created inside the resolvers for the two high-fanout edges:
-
-- `Policy.claims(first: Int)` batches `policy -> claims`
-- `Claim.policy` batches `claim -> policy`
-
-This is the main N+1 protection for representative nested graphs such as:
+Code-first schema with resolvers backed by the **same services as REST**
+(`policyService`, `claimService`, `voteService`, `holderService`). No resolver
+talks to the database directly, so REST and GraphQL stay consistent.
 
 ```graphql
-query PoliciesWithClaims {
-  policies(first: 20) {
-    items {
-      id
-      claims(first: 10) {
-        id
-        status
-      }
-    }
-  }
+"""A policy record."""
+type Policy {
+  id: ID!
+  title: String!
+  status: String!
+  holder: Holder
+  claims: [Claim!]!
+  votes: [Vote!]!
+}
+
+"""A claim filed against a policy."""
+type Claim {
+  id: ID!
+  policyId: ID!
+  status: String!
+  policy: Policy
+}
+
+"""A vote cast on a policy."""
+type Vote {
+  id: ID!
+  policyId: ID!
+  voter: Holder
+  policy: Policy
+}
+
+"""A policy holder."""
+type Holder {
+  id: ID!
+  address: String!
+  policies: [Policy!]!
+}
+
+type Query {
+  policy(id: ID!): Policy
+  policies(limit: Int, offset: Int): [Policy!]!
+  claim(id: ID!): Claim
+  claims(policyId: ID!): [Claim!]!
+  vote(id: ID!): Vote
+  votes(policyId: ID!): [Vote!]!
+  holder(id: ID!): Holder
+  holderByAddress(address: String!): Holder
 }
 ```
 
-## Caching semantics
+## DataLoader (N+1 prevention)
 
-- GraphQL does not add a full-response cache today.
-- `ClaimsService` still reuses the existing Redis caches used by REST claim list/detail flows.
-- Persisted queries cache only the query document, not the response payload.
-- Clients should treat GraphQL reads as live data with the same eventual-consistency profile as the indexed REST endpoints.
+A **fresh DataLoader per request** is created in the Apollo context and used by
+relation resolvers (`Policy.holder`, `Policy.claims`, `Policy.votes`,
+`Claim.policy`, `Vote.policy`, `Vote.voter`, `Holder.policies`). Batching collapses
+N+1 lookups into a single service call per relation per request. Tests assert the
+query count stays constant as the number of parent rows grows.
 
-## Monitoring
+## Query limits
 
-- Slow GraphQL operations emit `graphql_slow_operation` structured logs.
-- Slow Prisma queries emit `prisma_slow_query` structured logs.
-- Prometheus metrics:
-  - `graphql_operation_duration_seconds`
-  - `graphql_operations_total`
-- Supporting indexes were added for the real GraphQL access paths:
-  - `claims(policyId, deleted_at, createdAt)`
-  - `votes(claimId, deleted_at)`
+- **Depth limit** — queries deeper than the configured maximum are rejected.
+- **Complexity limit** — estimated cost above the configured maximum is rejected.
+- **Per-operation rate limit** — each operation is rate limited per client.
+- **Introspection** — disabled in production; enabled in development.
 
-## Subscriptions
+Rejections return a GraphQL error and never reach the resolvers.
 
-- `voteAdded(claimId: ID!)` publishes each indexed vote for the requested claim.
-- The indexer publishes through `VotePubSubService` after the vote row and claim tallies are persisted.
-- Unauthenticated WebSocket handshakes are rejected before subscription setup.
-- Staging should keep active GraphQL WebSocket connections within the documented ingress limit of 1,000 concurrent connections per API instance.
+## Auth
 
-## Load testing
+GraphQL reuses the **REST auth guards**:
 
-Use [`loadtests/graphql-policy-claim-nested.js`](../loadtests/graphql-policy-claim-nested.js) against staging to validate:
+- **Wallet auth** is required for a caller's own data (own policies, claims, votes).
+- **Admin** is required for admin-only fields.
 
-- nested query latency under representative concurrency
-- deterministic rejection of deep malicious queries
-- no regression after schema or index changes
-- vote subscription connection counts remain below the 1,000 connection per-instance limit
+Unauthenticated or unauthorized access to protected fields returns an auth error.
+
+## Why writes stay on REST
+
+This issue is intentionally **read-only** — there are **no mutations**. Writes
+remain on REST because:
+
+- REST write endpoints already own validation, idempotency and audit logging.
+- Keeping a single write path avoids two divergent sources of truth for state
+  transitions (policy, claim and vote lifecycle rules).
+- GraphQL writes would need the same transactional guarantees and would duplicate
+  the REST guards without adding value for current clients.
+
+Read-only GraphQL gives dashboards and partners the flexible querying they want
+while REST stays the authoritative write surface.

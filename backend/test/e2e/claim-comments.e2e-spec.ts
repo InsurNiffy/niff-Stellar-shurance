@@ -287,7 +287,7 @@ describe('Claim Comments (E2E)', () => {
       expect(listRes.body.find((c: { id: string }) => c.id === commentId)).toBeUndefined();
     });
 
-    it('admin view includes deleted comments', async () => {
+    it('admin view includes deleted comments with isDeleted flag', async () => {
       const commentId = await createComment(WALLET_A);
       const adminToken = mintAdminToken(WALLET_B);
       await request(app.getHttpServer())
@@ -301,6 +301,8 @@ describe('Claim Comments (E2E)', () => {
       const found = adminListRes.body.find((c: { id: string }) => c.id === commentId);
       expect(found).toBeDefined();
       expect(found.deletedAt).not.toBeNull();
+      expect(found.deletedBy).toBeDefined();
+      expect(found.isDeleted).toBe(true);
     });
 
     it('non-admin gets 403', async () => {

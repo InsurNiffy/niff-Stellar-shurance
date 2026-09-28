@@ -693,6 +693,8 @@ pub fn initiate_policy(
 
     storage::set_policy(env, &holder, policy_id, &policy);
     storage::add_voter(env, &holder).map_err(|_| PolicyError::VoterRegistryFull)?;
+    // Issue #812: index the new policy for status-based queries.
+    storage::index_new_policy(env, &holder, policy_id, &policy);
 
     if fee_amount > 0 {
         ProtocolFeeCollected {
@@ -1006,6 +1008,7 @@ pub fn renew_policy(
         .ok_or(PolicyError::LedgerOverflow)?;
 
     let old_coverage = policy.coverage;
+    let old_policy = policy.clone();
     policy.premium = premium_amount;
     policy.coverage = effective_coverage_amount;
     policy.end_ledger = new_end;
@@ -1013,6 +1016,8 @@ pub fn renew_policy(
     validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
 
     storage::set_policy(env, &holder, policy_id, &policy);
+    // Issue #812: update status index (expired-in-grace → active).
+    storage::reindex_policy(env, &holder, policy_id, &old_policy, &policy);
 
     // Rolling claim cap resets for the renewed policy term (see rolling_claim_cap module docs).
     crate::rolling_claim_cap::reset_on_renewal(env, &holder, policy_id, now);

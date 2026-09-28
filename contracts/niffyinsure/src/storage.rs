@@ -2,7 +2,8 @@ use soroban_sdk::{contracttype, Address, Env, Map, String, Vec};
 
 use crate::ledger;
 use crate::types::{
-    Claim, MultiplierTable, Policy, RollingClaimWindowState, VoteDelegation, VoteOption,
+    Claim, MultiplierTable, Policy, PolicyLookupKey, PolicyStatus, RollingClaimWindowState,
+    VoteDelegation, VoteOption,
 };
 
 // ── TTL constants ─────────────────────────────────────────────────────────────
@@ -238,6 +239,8 @@ pub enum DataKey {
     AllowedPayoutRecipient(Address),
     // ── Region registry ──────────────────────────────────────────────────────
     RegionRegistry,
+    // ── Issue #812: Policy status index ──────────────────────────────────────
+    PolicyByStatusIndex(crate::types::PolicyStatus),
     // ── Treatment tracking ───────────────────────────────────────────────────
     TreatmentCount(u64),
     // ── Vet specialization registry ──────────────────────────────────────────
@@ -970,6 +973,159 @@ pub fn get_policy(env: &Env, holder: &Address, policy_id: u32) -> Option<Policy>
     env.storage()
         .persistent()
         .get(&DataKey::Policy(holder.clone(), policy_id))
+}
+
+// ── Issue #812: Policy status index (persistent) ─────────────────────────────
+
+/// Determine the status of a policy based on its stored state and the current ledger.
+/// Uses ledger-truth for the active check (see `ledger::is_policy_active_by_ledger`).
+/// A policy is:
+///   - **Active**:  `is_active == true` and the ledger window has not expired.
+///   - **Terminated**: `is_active == false` with an explicit termination reason
+///     (any reason except `None` or `LapsedNonPayment`).
+///   - **Expired**:  `is_active == false` with `LapsedNonPayment` (keeper-processed),
+///     or `is_active == true` but the ledger window has already passed (keeper call
+///     has not yet run — ledger-truth overrides the stale flag).
+pub fn compute_policy_status(policy: &Policy, now: u32) -> crate::types::PolicyStatus {
+    if ledger::is_policy_active_by_ledger(policy, now) {
+        crate::types::PolicyStatus::Active
+    } else if !policy.is_active
+        && policy.termination_reason != crate::types::TerminationReason::None
+        && policy.termination_reason != crate::types::TerminationReason::LapsedNonPayment
+    {
+        crate::types::PolicyStatus::Terminated
+    } else {
+        crate::types::PolicyStatus::Expired
+    }
+}
+
+/// Full-path builder (blocks the short-key limit for policy-status-index keys).
+fn index_key_for_status(
+    status: &crate::types::PolicyStatus,
+) -> DataKey {
+    DataKey::PolicyByStatusIndex(status.clone())
+}
+
+/// Return the full index of `PolicyLookupKey`s for a given status.
+/// Returns an empty `Vec` if no index entry exists yet.
+fn get_policy_status_index_raw(
+    env: &Env,
+    status: &crate::types::PolicyStatus,
+) -> Vec<PolicyLookupKey> {
+    env.storage()
+        .persistent()
+        .get(&index_key_for_status(status))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Persist a complete status-index Vec, extending its TTL.
+fn set_policy_status_index(
+    env: &Env,
+    status: &crate::types::PolicyStatus,
+    index: &Vec<PolicyLookupKey>,
+) {
+    let key = index_key_for_status(status);
+    env.storage().persistent().set(&key, index);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+/// Add `key` to the status index for `status` (idempotent: no-op if already present).
+pub fn index_policy_by_status(
+    env: &Env,
+    status: &crate::types::PolicyStatus,
+    key: &PolicyLookupKey,
+) {
+    let mut index = get_policy_status_index_raw(env, status);
+    for i in 0..index.len() {
+        if index.get(i).unwrap() == *key {
+            return; // already indexed
+        }
+    }
+    index.push_back(key.clone());
+    set_policy_status_index(env, status, &index);
+}
+
+/// Remove `key` from the status index for `status` (no-op if absent).
+pub fn unindex_policy_by_status(
+    env: &Env,
+    status: &crate::types::PolicyStatus,
+    key: &PolicyLookupKey,
+) {
+    let index = get_policy_status_index_raw(env, status);
+    let mut next: Vec<PolicyLookupKey> = Vec::new(env);
+    for i in 0..index.len() {
+        if index.get(i).unwrap() != *key {
+            next.push_back(index.get(i).unwrap());
+        }
+    }
+    // Only write if we actually removed an entry.
+    if next.len() < index.len() {
+        set_policy_status_index(env, status, &next);
+    }
+}
+
+/// Transition a policy from its old status to its new status in the index.
+/// Call this after *any* state change that could alter `compute_policy_status`.
+pub fn reindex_policy(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+    old_policy: &Policy,
+    new_policy: &Policy,
+) {
+    let now = env.ledger().sequence();
+    let old_status = compute_policy_status(old_policy, now);
+    let new_status = compute_policy_status(new_policy, now);
+    if old_status == new_status {
+        return;
+    }
+    let key = PolicyLookupKey {
+        holder: holder.clone(),
+        policy_id,
+    };
+    unindex_policy_by_status(env, &old_status, &key);
+    index_policy_by_status(env, &new_status, &key);
+}
+
+/// Index a newly created policy (no previous status to unindex).
+pub fn index_new_policy(
+    env: &Env,
+    holder: &Address,
+    policy_id: u32,
+    policy: &Policy,
+) {
+    let now = env.ledger().sequence();
+    let status = compute_policy_status(policy, now);
+    let key = PolicyLookupKey {
+        holder: holder.clone(),
+        policy_id,
+    };
+    index_policy_by_status(env, &status, &key);
+}
+
+/// Return a page of `PolicyLookupKey`s from the status index.
+/// Clamps `limit` to [`crate::types::POLICIES_BY_STATUS_PAGE_SIZE_MAX`].
+/// Returns an empty `Vec` when `offset` is beyond the index length.
+pub fn get_policy_status_index_page(
+    env: &Env,
+    status: &crate::types::PolicyStatus,
+    offset: u32,
+    limit: u32,
+) -> Vec<PolicyLookupKey> {
+    let index = get_policy_status_index_raw(env, status);
+    let len = index.len();
+    if offset >= len {
+        return Vec::new(env);
+    }
+    let limit = limit.min(crate::types::POLICIES_BY_STATUS_PAGE_SIZE_MAX);
+    let end = (offset + limit).min(len);
+    let mut page: Vec<PolicyLookupKey> = Vec::new(env);
+    for i in offset..end {
+        page.push_back(index.get(i).unwrap());
+    }
+    page
 }
 
 // ── Claim (persistent) ────────────────────────────────────────────────────────

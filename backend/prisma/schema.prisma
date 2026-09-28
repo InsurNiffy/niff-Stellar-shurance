@@ -453,11 +453,14 @@ model ClaimComment {
   body          String
   createdAt     DateTime  @default(now()) @map("created_at")
   deletedAt     DateTime? @map("deleted_at")
+  /// Staff wallet address who soft-deleted this comment. Null if deleted by author.
+  deletedBy     String?   @map("deleted_by")
 
   claim         Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
 
   @@index([claimId, deletedAt, createdAt])
   @@index([authorAddress, claimId])
+  @@index([deletedBy])
   @@map("claim_comments")
 }
 
@@ -575,5 +578,42 @@ model ProfileAuditLog {
   @@index([walletAddress])
   @@index([fieldName])
   @@index([createdAt])
-  @@map("profile_audit_logs")
+}
+
+/// Partner-facing outbound webhook subscription (#1484).
+model WebhookSubscription {
+  id            String   @id @default(uuid()) @map("id")
+  tenantId      String?  @map("tenant_id")
+  /// HTTPS target — validated against SSRF rules before persisting.
+  url           String
+  /// Event names, e.g. ["claim.finalized", "claim.paid"].
+  events        String[]
+  /// HMAC-SHA256 signing secret for X-Niffy-Signature.
+  secret        String
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([active])
+  @@index([tenantId])
+  @@map("webhook_subscriptions")
+}
+
+/// Delivery log for outbound webhook POSTs — attempt, response code, outcome.
+model WebhookDelivery {
+  id             String   @id @default(uuid()) @map("id")
+  subscriptionId String?  @map("subscription_id")
+  targetUrl      String   @map("target_url")
+  eventType      String   @map("event_type")
+  idempotencyKey String   @map("idempotency_key")
+  attempt        Int      @default(1)
+  success        Boolean
+  responseCode   Int?     @map("response_code")
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([targetUrl, createdAt])
+  @@index([eventType])
+  @@index([subscriptionId])
+  @@map("webhook_deliveries")
 }

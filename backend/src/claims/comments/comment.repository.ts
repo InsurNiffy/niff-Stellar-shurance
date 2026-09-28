@@ -29,10 +29,10 @@ export class CommentRepository {
     return this.prisma.claimComment.findUnique({ where: { id } });
   }
 
-  softDelete(id: string) {
+  softDelete(id: string, deletedBy?: string) {
     return this.prisma.claimComment.update({
       where: { id },
-      data: { deletedAt: new Date() },
+      data: { deletedAt: new Date(), deletedBy: deletedBy ?? null },
     });
   }
 }
