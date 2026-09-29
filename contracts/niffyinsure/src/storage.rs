@@ -274,6 +274,11 @@ pub enum DataKey {
     // ── Issue #782: Token decimal normalization ───────────────────────────────
     /// Stored decimals for an allowlisted asset (queried at bind time).
     AssetDecimals(Address),
+    // ── Issue #1450: Per-proposer governance cooldown ─────────────────────────
+    /// Last ledger at which this address created a governance proposal.
+    LastProposalLedger(Address),
+    /// Admin-configurable cooldown between proposals from the same address (ledgers).
+    ProposerCooldownLedgers,
 }
 
 pub fn has_open_claim(env: &Env, holder: &Address, policy_id: u32) -> bool {
@@ -2462,6 +2467,33 @@ pub fn get_last_param_change_ledger(env: &Env) -> Option<u32> {
     env.storage()
         .instance()
         .get(&DataKey::LastParamChangeLedger)
+}
+
+// ── Per-proposer governance cooldown (Issue #1450) ────────────────────────
+
+pub fn get_last_proposal_ledger(env: &Env, proposer: &Address) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::LastProposalLedger(proposer.clone()))
+}
+
+pub fn set_last_proposal_ledger(env: &Env, proposer: &Address, ledger: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::LastProposalLedger(proposer.clone()), &ledger);
+}
+
+pub fn get_proposer_cooldown_ledgers(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ProposerCooldownLedgers)
+        .unwrap_or(0)
+}
+
+pub fn set_proposer_cooldown_ledgers(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ProposerCooldownLedgers, &ledgers);
 }
 
 // ── Treasury withdrawal limit (Issue #845) ────────────────────────────────

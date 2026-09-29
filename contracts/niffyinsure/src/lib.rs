@@ -928,6 +928,21 @@ impl NiffyInsure {
         governance::get_proposal(&env, proposal_id)
     }
 
+    /// Admin-only: set the per-proposer cooldown (ledgers between proposals from same address).
+    /// 0 = disabled. Bounded by `governance::MAX_PROPOSER_COOLDOWN_LEDGERS`.
+    pub fn admin_set_proposer_cooldown(
+        env: Env,
+        new_ledgers: u32,
+    ) -> Result<(), GovernanceError> {
+        admin::require_admin(&env);
+        governance::admin_set_proposer_cooldown_ledgers(&env, new_ledgers)
+    }
+
+    /// Read-only: get the per-proposer cooldown window in ledgers (0 = disabled).
+    pub fn get_proposer_cooldown(env: Env) -> u32 {
+        governance::get_proposer_cooldown_ledgers(&env)
+    }
+
     pub fn voter_registry_len(env: Env) -> u32 {
         storage::get_voters(&env).len()
     }
