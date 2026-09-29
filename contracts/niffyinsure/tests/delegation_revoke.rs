@@ -27,6 +27,8 @@ fn perms(fraud: bool, asset: bool, reins: bool) -> DelegationPermissions {
         can_set_fraud_score: fraud,
         can_set_asset_config: asset,
         can_set_reinsurance: reins,
+        can_process_payout: false,
+        can_manage_voters: false,
     }
 }
 

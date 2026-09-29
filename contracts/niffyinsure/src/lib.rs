@@ -2039,13 +2039,18 @@ impl NiffyInsure {
 
     /// Admin or delegated oracle: set fraud score (0–100) for a claim.
     /// High-score claims require elevated quorum at finalization.
+    /// Accepts the admin key or any operator with the `SetFraudScore` scope.
     pub fn set_claim_fraud_score(
         env: Env,
         caller: Address,
         claim_id: u64,
         score: u32,
     ) -> Result<(), validate::Error> {
-        caller.require_auth();
+        delegation::require_admin_or_scope(
+            &env,
+            &caller,
+            types::DelegatedScopeKind::SetFraudScore,
+        )?;
         claim::set_claim_fraud_score(&env, &caller, claim_id, score)
     }
 

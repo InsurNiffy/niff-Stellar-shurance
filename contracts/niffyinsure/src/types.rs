@@ -1033,6 +1033,10 @@ pub struct DelegationPermissions {
     pub can_set_asset_config: bool,
     /// Operator may call set_reinsurance_contract.
     pub can_set_reinsurance: bool,
+    /// Operator may call process_payout (approved claim disbursement).
+    pub can_process_payout: bool,
+    /// Operator may call voter management functions (add/remove voters, set weights).
+    pub can_manage_voters: bool,
 }
 
 /// On-chain delegation record stored per operator address.
@@ -1048,12 +1052,24 @@ pub struct DelegationRecord {
 }
 
 /// Discrete permission scope exposed by `list_active_delegated_scopes` (Issue #1149).
+///
+/// # Admin-only operations (operators can never perform these)
+///
+/// The following operations are restricted to the admin key at all times;
+/// scoped operators cannot be granted these via delegation:
+///   - `rotate_admin` / `accept_admin` — key rotation
+///   - `unpause` — restoring contract operation after an emergency pause
+///   - `grant_delegation` / `revoke_delegation` — operators cannot sub-delegate
+///   - `drain` / `sweep` — treasury extraction
+///   - All `admin_set_*` governance parameter setters
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DelegatedScopeKind {
     SetFraudScore,
     SetAssetConfig,
     SetReinsurance,
+    ProcessPayout,
+    ManageVoters,
 }
 
 /// One active delegated scope for an operator address.

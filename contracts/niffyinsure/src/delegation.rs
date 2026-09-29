@@ -55,6 +55,48 @@ pub struct DelegationRevoked {
     pub at_ledger: u32,
 }
 
+/// Check that `caller` is either the admin or holds an active, non-expired delegation
+/// with the given `required_scope`.
+///
+/// Returns the caller address on success (matching the pattern of `require_admin`).
+/// Panics (via `require_auth` + validation) if neither condition is met.
+///
+/// # Usage
+///
+/// ```ignore
+/// let caller = delegation::require_admin_or_scope(&env, &caller_addr, DelegatedScopeKind::SetFraudScore)?;
+/// ```
+pub fn require_admin_or_scope(
+    env: &Env,
+    caller: &Address,
+    required_scope: DelegatedScopeKind,
+) -> Result<Address, Error> {
+    caller.require_auth();
+
+    // Fast path: caller is admin.
+    let admin_addr = storage::get_admin(env);
+    if *caller == admin_addr {
+        return Ok(caller.clone());
+    }
+
+    // Slow path: check delegation record.
+    let record = get_delegation(env, caller).ok_or(Error::DelegationInvalid)?;
+
+    let has_scope = match required_scope {
+        DelegatedScopeKind::SetFraudScore => record.permissions.can_set_fraud_score,
+        DelegatedScopeKind::SetAssetConfig => record.permissions.can_set_asset_config,
+        DelegatedScopeKind::SetReinsurance => record.permissions.can_set_reinsurance,
+        DelegatedScopeKind::ProcessPayout => record.permissions.can_process_payout,
+        DelegatedScopeKind::ManageVoters => record.permissions.can_manage_voters,
+    };
+
+    if !has_scope {
+        return Err(Error::DelegationPermissionDenied);
+    }
+
+    Ok(caller.clone())
+}
+
 /// Admin-only: grant a temporary delegation to `operator`.
 pub fn grant_delegation(
     env: &Env,
@@ -152,6 +194,20 @@ fn collect_scopes(env: &Env, record: &DelegationRecord) -> Vec<ActiveDelegatedSc
     if record.permissions.can_set_reinsurance {
         scopes.push_back(ActiveDelegatedScope {
             scope: DelegatedScopeKind::SetReinsurance,
+            grantor: record.grantor.clone(),
+            expiry_ledger: record.expiry_ledger,
+        });
+    }
+    if record.permissions.can_process_payout {
+        scopes.push_back(ActiveDelegatedScope {
+            scope: DelegatedScopeKind::ProcessPayout,
+            grantor: record.grantor.clone(),
+            expiry_ledger: record.expiry_ledger,
+        });
+    }
+    if record.permissions.can_manage_voters {
+        scopes.push_back(ActiveDelegatedScope {
+            scope: DelegatedScopeKind::ManageVoters,
             grantor: record.grantor.clone(),
             expiry_ledger: record.expiry_ledger,
         });
