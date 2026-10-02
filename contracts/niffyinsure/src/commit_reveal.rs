@@ -35,7 +35,38 @@
 
 use soroban_sdk::{Address, BytesN, Env};
 
-use crate::{storage, validate::Error};
+use crate::{events::EVENT_SCHEMA_VERSION, storage, validate::Error};
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+/// Emitted by `commit_vote`. Does NOT include the vote or salt.
+/// topics: ("niffyinsure", "vote_committed", claim_id, voter)
+#[contractevent(topics = ["niffyinsure", "vote_committed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoteCommitted {
+    #[topic]
+    pub claim_id: u64,
+    #[topic]
+    pub voter: Address,
+    pub version: u32,
+    pub at_ledger: u32,
+}
+
+/// Emitted by `reveal_vote` on a successful reveal.
+/// topics: ("niffyinsure", "vote_revealed", claim_id, voter)
+#[contractevent(topics = ["niffyinsure", "vote_revealed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoteRevealed {
+    #[topic]
+    pub claim_id: u64,
+    #[topic]
+    pub voter: Address,
+    pub version: u32,
+    pub vote: crate::types::VoteOption,
+    pub approve_votes: u32,
+    pub reject_votes: u32,
+    pub at_ledger: u32,
+}
 
 pub use crate::types::CommitRevealPhases;
 
@@ -93,6 +124,14 @@ pub fn commit_vote(
 
     storage::set_vote_commitment(env, claim_id, voter, &commitment);
 
+    VoteCommitted {
+        claim_id,
+        voter: voter.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+
     Ok(())
 }
 
@@ -146,10 +185,14 @@ pub fn reveal_vote(
         crate::types::VoteOption::Reject => 0x01,
     };
 
+    // Hash preimage: vote_byte || salt || voter_bytes
+    // Voter is included so commitments cannot be copied between voters.
     let mut preimage = soroban_sdk::Bytes::new(env);
     preimage.push_back(vote_byte);
     let salt_bytes: soroban_sdk::Bytes = salt.into();
     preimage.append(&salt_bytes);
+    let voter_bytes = voter.to_xdr(env);
+    preimage.append(&voter_bytes);
 
     let computed: BytesN<32> = env.crypto().sha256(&preimage).into();
 
@@ -170,6 +213,17 @@ pub fn reveal_vote(
         }
     }
     storage::set_claim(env, &claim);
+
+    VoteRevealed {
+        claim_id,
+        voter: voter.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        vote,
+        approve_votes: claim.approve_votes,
+        reject_votes: claim.reject_votes,
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
 
     Ok(())
 }

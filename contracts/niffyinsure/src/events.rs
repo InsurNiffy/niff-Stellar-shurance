@@ -124,7 +124,28 @@ use crate::types::{ClaimStatus, VoteOption};
 use soroban_sdk::{contractevent, Address, BytesN, Env, String, Vec};
 
 /// Bump this when any event payload has a breaking change (semver-major release).
+///
+/// # Migration process for consumers
+///
+/// When `EVENT_SCHEMA_VERSION` increments:
+/// 1. The new version is deployed. Old consumers may still receive the old version
+///    until they redeploy their indexer.
+/// 2. Add a new typed struct (e.g. `ClaimFiledData_v2`) rather than modifying the
+///    existing one. Never remove fields from a released struct version.
+/// 3. Update off-chain indexers to branch on the `version` field and handle both
+///    the old and new layouts until the migration window closes.
+/// 4. Update `docs/events.md` with the new field table for affected events.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
+
+/// Returns the next schema version. Use to verify a bump at compile time.
+///
+/// Example in a migration test:
+/// ```ignore
+/// assert_eq!(bump_schema_version(EVENT_SCHEMA_VERSION), EVENT_SCHEMA_VERSION + 1);
+/// ```
+pub const fn bump_schema_version(current: u32) -> u32 {
+    current + 1
+}
 
 // ── Claim events ──────────────────────────────────────────────────────────────
 
@@ -765,6 +786,46 @@ pub fn emit_min_coverage_amount_updated(
     }
     .publish(env);
 }
+
+// ── Governance proposal events (Issue #1450) — defined in governance.rs ──────
+//
+// ### proposal_created — ProposalCreated
+// topics: ("niffyinsure", "proposal_created", proposal_id: u64, creator: Address)
+// payload: { version: 1, param_key, proposed_value, deadline, at_ledger }
+//
+// ### proposal_vote_cast — ProposalVoteCast
+// topics: ("niffyinsure", "proposal_vote_cast", proposal_id: u64, voter: Address)
+// payload: { version: 1, approve, approve_votes, reject_votes, at_ledger }
+//
+// ### proposal_resolved — ProposalResolved
+// topics: ("niffyinsure", "proposal_resolved", proposal_id: u64)
+// payload: { version: 1, param_key, proposed_value, applied, at_ledger }
+//   - applied = true means the proposal passed and was executed; false means rejected.
+
+// ── Commit-reveal voting events (Issue #1443) — defined in commit_reveal.rs ──
+//
+// ### vote_committed — VoteCommitted
+// topics: ("niffyinsure", "vote_committed", claim_id: u64, voter: Address)
+// payload: { version: 1, at_ledger }
+//   - Does NOT leak the vote or salt.
+//
+// ### vote_revealed — VoteRevealed
+// topics: ("niffyinsure", "vote_revealed", claim_id: u64, voter: Address)
+// payload: { version: 1, vote, approve_votes, reject_votes, at_ledger }
+
+// ── Admin dispute / fraud score events (Issue #1448) — defined in claim.rs ───
+//
+// ### claim_disputed — ClaimDisputed
+// topics: ("niffyinsure", "claim_disputed", claim_id: u64)
+// payload: { version: 1, at_ledger }
+//
+// ### claim_escalated — ClaimEscalated
+// topics: ("niffyinsure", "claim_escalated", claim_id: u64)
+// payload: { version: 1, old_deadline_ledger, new_deadline_ledger, at_ledger }
+//
+// ### claim_fraud_score_set — ClaimFraudScoreSet
+// topics: ("niffyinsure", "claim_fraud_score_set", claim_id: u64)
+// payload: { version: 1, score, set_by, at_ledger }
 
 // ── Batch voter registration event (governance setup) ────────────────────────
 

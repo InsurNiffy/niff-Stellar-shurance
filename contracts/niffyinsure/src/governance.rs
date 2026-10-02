@@ -1,8 +1,60 @@
-use soroban_sdk::{contracterror, contracttype, panic_with_error, Address, Env, String};
+use soroban_sdk::{contractevent, contracterror, contracttype, panic_with_error, Address, Env, String};
 
-use crate::{ledger, storage, validate};
+use crate::{events::EVENT_SCHEMA_VERSION, ledger, storage, validate};
 
 pub const MINIMUM_STAKE_POLICIES: u32 = 1;
+
+/// Hard maximum for the per-proposer proposal cooldown to prevent accidental lock-out.
+pub const MAX_PROPOSER_COOLDOWN_LEDGERS: u32 = 7 * crate::ledger::LEDGERS_PER_DAY; // ~7 days
+
+// ── Governance events ──────────────────────────────────────────────────────────
+
+/// Emitted by `create_proposal`.
+/// topics: ("niffyinsure", "proposal_created", proposal_id, creator)
+#[contractevent(topics = ["niffyinsure", "proposal_created"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalCreated {
+    #[topic]
+    pub proposal_id: u64,
+    #[topic]
+    pub creator: Address,
+    pub version: u32,
+    pub param_key: String,
+    pub proposed_value: u32,
+    pub deadline: u32,
+    pub at_ledger: u32,
+}
+
+/// Emitted by `vote_proposal` on each ballot cast.
+/// topics: ("niffyinsure", "proposal_vote_cast", proposal_id, voter)
+#[contractevent(topics = ["niffyinsure", "proposal_vote_cast"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalVoteCast {
+    #[topic]
+    pub proposal_id: u64,
+    #[topic]
+    pub voter: Address,
+    pub version: u32,
+    pub approve: bool,
+    pub approve_votes: u32,
+    pub reject_votes: u32,
+    pub at_ledger: u32,
+}
+
+/// Emitted by `vote_proposal` when a proposal reaches quorum and is applied or rejected.
+/// topics: ("niffyinsure", "proposal_resolved", proposal_id)
+#[contractevent(topics = ["niffyinsure", "proposal_resolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalResolved {
+    #[topic]
+    pub proposal_id: u64,
+    pub version: u32,
+    pub param_key: String,
+    pub proposed_value: u32,
+    /// `true` = proposal passed and was applied; `false` = rejected.
+    pub applied: bool,
+    pub at_ledger: u32,
+}
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -14,6 +66,10 @@ pub enum GovernanceError {
     VotingClosed = 303,
     UnsupportedParameter = 304,
     InvalidParameterValue = 305,
+    /// Per-proposer cooldown is still active; too soon since last proposal.
+    ProposerCooldownActive = 306,
+    /// Proposer cooldown value is out of the allowed bounds.
+    ProposerCooldownOutOfBounds = 307,
 }
 
 #[contracttype]
@@ -77,22 +133,45 @@ pub fn create_proposal(env: &Env, creator: Address, param_key: String, new_value
     require_token_holder(env, &creator);
     validate_supported_parameter(env, &param_key, new_value);
 
+    // Per-proposer cooldown: reject if last proposal was too recent.
+    let now = env.ledger().sequence();
+    let proposer_cooldown = storage::get_proposer_cooldown_ledgers(env);
+    if proposer_cooldown > 0 {
+        if let Some(last) = storage::get_last_proposal_ledger(env, &creator) {
+            if now.saturating_sub(last) < proposer_cooldown {
+                panic_with_error!(env, GovernanceError::ProposerCooldownActive);
+            }
+        }
+    }
+    storage::set_last_proposal_ledger(env, &creator, now);
+
     let proposal_id = storage::next_proposal_id(env);
+    let deadline = now
+        .checked_add(storage::get_voting_duration_ledgers(env))
+        .unwrap_or_else(|| panic_with_error!(env, GovernanceError::InvalidParameterValue));
     let proposal = Proposal {
         proposal_id,
-        creator,
-        param_key,
+        creator: creator.clone(),
+        param_key: param_key.clone(),
         proposed_value: new_value,
-        deadline: env
-            .ledger()
-            .sequence()
-            .checked_add(storage::get_voting_duration_ledgers(env))
-            .unwrap_or_else(|| panic_with_error!(env, GovernanceError::InvalidParameterValue)),
+        deadline,
         approve_votes: 0,
         reject_votes: 0,
         applied: false,
     };
     storage::set_proposal(env, &proposal);
+
+    ProposalCreated {
+        proposal_id,
+        creator,
+        version: EVENT_SCHEMA_VERSION,
+        param_key,
+        proposed_value: new_value,
+        deadline,
+        at_ledger: now,
+    }
+    .publish(env);
+
     proposal_id
 }
 
@@ -121,15 +200,44 @@ pub fn vote_proposal(
         proposal.reject_votes = proposal.reject_votes.saturating_add(1);
     }
 
+    ProposalVoteCast {
+        proposal_id,
+        voter: voter.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        approve,
+        approve_votes: proposal.approve_votes,
+        reject_votes: proposal.reject_votes,
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+
     let quorum = quorum_required(env);
     if proposal.approve_votes >= quorum {
         apply_parameter(env, &proposal);
         proposal.applied = true;
         storage::set_proposal(env, &proposal);
+        ProposalResolved {
+            proposal_id,
+            version: EVENT_SCHEMA_VERSION,
+            param_key: proposal.param_key.clone(),
+            proposed_value: proposal.proposed_value,
+            applied: true,
+            at_ledger: env.ledger().sequence(),
+        }
+        .publish(env);
         return Ok(());
     }
 
     if proposal.reject_votes >= quorum {
+        ProposalResolved {
+            proposal_id,
+            version: EVENT_SCHEMA_VERSION,
+            param_key: proposal.param_key.clone(),
+            proposed_value: proposal.proposed_value,
+            applied: false,
+            at_ledger: env.ledger().sequence(),
+        }
+        .publish(env);
         storage::remove_proposal(env, proposal_id);
         return Ok(());
     }
@@ -140,4 +248,25 @@ pub fn vote_proposal(
 
 pub fn get_proposal(env: &Env, proposal_id: u64) -> Option<Proposal> {
     storage::get_proposal(env, proposal_id)
+}
+
+pub fn get_governance_cooldown_ledgers(env: &Env) -> u32 {
+    storage::get_governance_cooldown_ledgers(env)
+}
+
+/// Admin-only: set per-proposer cooldown window (ledgers between proposals from same address).
+/// 0 disables the per-proposer cooldown. Bounded by `MAX_PROPOSER_COOLDOWN_LEDGERS`.
+pub fn admin_set_proposer_cooldown_ledgers(
+    env: &Env,
+    new_ledgers: u32,
+) -> Result<(), GovernanceError> {
+    if new_ledgers > MAX_PROPOSER_COOLDOWN_LEDGERS {
+        return Err(GovernanceError::ProposerCooldownOutOfBounds);
+    }
+    storage::set_proposer_cooldown_ledgers(env, new_ledgers);
+    Ok(())
+}
+
+pub fn get_proposer_cooldown_ledgers(env: &Env) -> u32 {
+    storage::get_proposer_cooldown_ledgers(env)
 }

@@ -253,11 +253,13 @@ pub struct PayoutTimedOut {
 }
 
 /// Emitted when admin disputes an approved claim during the dispute window.
+/// topics: ("niffyinsure", "claim_disputed", claim_id)
 #[contractevent(topics = ["niffyinsure", "claim_disputed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimDisputed {
     #[topic]
     pub claim_id: u64,
+    pub version: u32,
     pub at_ledger: u32,
 }
 
@@ -1276,6 +1278,7 @@ pub fn dispute_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
 
     ClaimDisputed {
         claim_id,
+        version: crate::events::EVENT_SCHEMA_VERSION,
         at_ledger: now,
     }
     .publish(env);
@@ -1301,11 +1304,13 @@ pub fn set_allowed_asset(env: &Env, asset: &Address, allowed: bool) {
 // ── Issue #583: Fraud score ───────────────────────────────────────────────────
 
 /// Emitted when a fraud score is set for a claim.
+/// topics: ("niffyinsure", "claim_fraud_score_set", claim_id)
 #[contractevent(topics = ["niffyinsure", "claim_fraud_score_set"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimFraudScoreSet {
     #[topic]
     pub claim_id: u64,
+    pub version: u32,
     pub score: u32,
     pub set_by: Address,
     pub at_ledger: u32,
@@ -1342,6 +1347,7 @@ pub fn set_claim_fraud_score(
 
     ClaimFraudScoreSet {
         claim_id,
+        version: crate::events::EVENT_SCHEMA_VERSION,
         score,
         set_by: caller.clone(),
         at_ledger: env.ledger().sequence(),
@@ -2049,6 +2055,7 @@ fn finalize_appeal_outcome(
 pub struct ClaimEscalated {
     #[topic]
     pub claim_id: u64,
+    pub version: u32,
     pub old_deadline_ledger: u32,
     pub new_deadline_ledger: u32,
     pub at_ledger: u32,
@@ -2091,6 +2098,7 @@ pub fn escalate_claim(env: &Env, claim_id: u64, new_deadline_ledger: u32) -> Res
 
     ClaimEscalated {
         claim_id,
+        version: crate::events::EVENT_SCHEMA_VERSION,
         old_deadline_ledger: old_deadline,
         new_deadline_ledger,
         at_ledger: now,

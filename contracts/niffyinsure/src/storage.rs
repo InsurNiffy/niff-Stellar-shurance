@@ -2897,6 +2897,33 @@ pub fn get_last_param_change_ledger(env: &Env) -> Option<u32> {
         .get(&DataKey::LastParamChangeLedger)
 }
 
+// ── Per-proposer governance cooldown (Issue #1450) ────────────────────────
+
+pub fn get_last_proposal_ledger(env: &Env, proposer: &Address) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::LastProposalLedger(proposer.clone()))
+}
+
+pub fn set_last_proposal_ledger(env: &Env, proposer: &Address, ledger: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::LastProposalLedger(proposer.clone()), &ledger);
+}
+
+pub fn get_proposer_cooldown_ledgers(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ProposerCooldownLedgers)
+        .unwrap_or(0)
+}
+
+pub fn set_proposer_cooldown_ledgers(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ProposerCooldownLedgers, &ledgers);
+}
+
 // ── Treasury withdrawal limit (Issue #845) ────────────────────────────────
 
 pub fn set_max_sweep_per_ledger(env: &Env, cap: i128) {
