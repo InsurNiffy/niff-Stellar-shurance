@@ -1,5 +1,17 @@
 //! Rolling per-policy claim cap over a **ledger-anchored** window.
 //!
+//! # Check vs consume (lifecycle)
+//! - **Check at filing** (`check_file_claim`): before accepting a new claim,
+//!   require `cumulative_paid + new_amount <= cap` for the **current** window
+//!   bucket. No accumulator write of the filed amount occurs here — only a
+//!   possible bucket rollover persist. Filing is rejected with
+//!   `RollingClaimCapExceeded` when the check fails.
+//! - **Consume at approval/payout** (`record_claim_paid`): only **paid** amounts
+//!   (when `process_claim` / installment payout succeeds) add to
+//!   `cumulative_paid`. Rejected, withdrawn, or still-open claims do not
+//!   consume headroom. At most one open claim per policy (`DuplicateOpenClaim`)
+//!   keeps the filing-time check consistent with eventual paid totals.
+//!
 //! # What is counted
 //! Only **paid** amounts (when `process_claim` succeeds) add to `cumulative_paid`.
 //! At `file_claim` we require `cumulative_paid + new_amount <= cap` for the **current**
@@ -22,6 +34,10 @@
 //!
 //! This is intentional: the boundary ledger is the first ledger of the new window
 //! (exclusive end of the previous window). Off-by-one regressions must preserve this.
+//!
+//! # Storage complexity
+//! Per-policy state is a single `RollingClaimState` entry (O(1) reads/writes per
+//! check or payout). Window math is O(1); no historical bucket list is retained.
 //!
 //! # Policy renewal boundary (Issue #1152)
 //!

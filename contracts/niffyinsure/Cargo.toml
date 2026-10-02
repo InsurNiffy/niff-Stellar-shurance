@@ -2,7 +2,7 @@
 name = "niffyinsure"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"          # MSRV – soroban-sdk 22+ requires ≥ 1.81
+rust-version = "1.81"          # MSRV – soroban-sdk 25+ requires ≥ 1.81
 publish = false
 
 [lib]
@@ -12,7 +12,6 @@ crate-type = ["cdylib", "rlib"]
 # Enables test-only contract entrypoints (test_seed_policy, test_remove_voter).
 # Never enable in production WASM builds.
 testutils = ["soroban-sdk/testutils"]
-experimental = []
 # Opt-in: `quarantine/events_integration_stale.rs` targets a pre-`contractevent` topic layout; keep off in CI until migrated.
 legacy-event-schema-tests = []
 # Reserves governance-token storage keys and optional admin entrypoints. No mint/transfer.
@@ -24,10 +23,10 @@ governance-token = []
 appeal-stub = []
 
 [dependencies]
-soroban-sdk = { version = "=28.0.0", features = [] }
+soroban-sdk = { version = "=25.3.1", features = [] }
 
 [dev-dependencies]
-soroban-sdk = { version = "=28.0.0", features = ["testutils"] }
+soroban-sdk = { version = "=25.3.1", features = ["testutils"] }
 premium_calculator = { path = "../../contracts/premium_calculator", features = ["testutils"] }
 ed25519-dalek = { version = "=2.1.1", features = ["rand_core"] }
 rand = { version = "=0.8.5", features = ["std"] }

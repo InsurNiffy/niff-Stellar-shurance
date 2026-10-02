@@ -1,7 +1,7 @@
 use crate::{
-    events, ledger, premium, storage, token,
+    calculator, events, ledger, premium, storage, token,
     types::{
-        AgeBand, CoverageTier, CoverageType, Policy, PolicyType, PremiumQuote, RegionTier,
+        AgeBand, CoverageTier, CoverageType, Policy, PolicyType, QuoteResult, RegionTier,
         RiskInput, STRIKE_DEACTIVATION_THRESHOLD,
     },
     validate::{self, Error},
@@ -62,7 +62,7 @@ pub enum PolicyError {
     InvalidRegion = 121,
     /// KYC whitelist is enabled and the holder is not in the whitelist.
     NotWhitelisted = 122,
-    /// Deductible value is invalid (negative or exceeds coverage).
+    /// Deductible value is invalid (negative or ≥ coverage; must satisfy `0 <= d < coverage`).
     InvalidDeductible = 123,
     /// Treasury balance is insufficient to cover projected claim obligations.
     InsufficientSolvency = 124,
@@ -77,6 +77,8 @@ pub enum PolicyError {
     /// The global voter registry has reached its configured maximum.
     /// No additional voters can be registered until some are removed.
     VoterRegistryFull = 128,
+    /// Holder has not approved enough allowance for the premium transfer.
+    InsufficientAllowance = 129,
 }
 
 #[contracttype]
@@ -182,16 +184,22 @@ pub struct PolicyRenewed {
 ///
 /// **`renew_policy` on an expired policy:** the call returns [`crate::types::RenewPolicyOutcome::Lapsed`]
 /// in **`Ok`** (not `Err`) so this event and idempotency storage are not rolled back.
+/// Read-only premium quote. Performs **no persistent storage writes** so the
+/// backend can call via RPC simulation for free.
+///
+/// Validates coverage against `min_coverage_amount`, optional asset claim bounds,
+/// and (when the policy-type registry is enabled) that at least one active type
+/// exists. Routes through the calculator with fail-open local fallback.
 pub fn generate_premium(
     env: &Env,
     region: RegionTier,
     age_band: AgeBand,
     coverage_type: CoverageTier,
     safety_score: u32,
-    base_amount: i128,
+    coverage: i128,
     include_breakdown: bool,
     asset: Option<&Address>,
-) -> Result<PremiumQuote, validate::Error> {
+) -> Result<QuoteResult, validate::Error> {
     let input = RiskInput {
         region,
         age_band,
@@ -200,32 +208,66 @@ pub fn generate_premium(
     };
 
     validate::check_risk_input(&input)?;
-    if base_amount <= 0 {
+    validate_quote_coverage(env, coverage, asset)?;
+
+    let (quote, calc_source) = calculator::compute_quote_readonly(
+        env,
+        &input,
+        coverage,
+        include_breakdown,
+        QUOTE_TTL_LEDGERS,
+        asset,
+    )?;
+
+    Ok(QuoteResult {
+        premium: quote.total_premium,
+        coverage,
+        asset: asset.cloned(),
+        table_version: quote.config_version,
+        calc_source,
+    })
+}
+
+/// Validate coverage amount for quoting: floor, optional asset bounds, registry sanity.
+fn validate_quote_coverage(
+    env: &Env,
+    coverage: i128,
+    asset: Option<&Address>,
+) -> Result<(), validate::Error> {
+    if coverage <= 0 {
         return Err(validate::Error::InvalidBaseAmount);
     }
+    let min_coverage = storage::get_min_coverage_amount(env);
+    if coverage < min_coverage {
+        return Err(validate::Error::ClaimBelowMinAmount);
+    }
 
-    let table = match asset {
-        Some(a) => premium::get_table_for_asset(env, a),
-        None => storage::get_multiplier_table(env),
-    };
-    let computation = premium::compute_premium(&input, base_amount, &table)?;
-    let line_items = if include_breakdown {
-        Some(premium::build_line_items(env, &computation))
-    } else {
-        None
-    };
+    if let Some(a) = asset {
+        if !storage::is_allowed_asset(env, a) {
+            return Err(validate::Error::InvalidAsset);
+        }
+        if let Some(bounds) = storage::get_allowed_asset_config(env, a) {
+            if coverage < bounds.min_claim_amount {
+                return Err(validate::Error::ClaimBelowMinAmount);
+            }
+            if coverage > bounds.max_claim_amount {
+                return Err(validate::Error::ClaimAboveMaxAmount);
+            }
+        }
+    }
 
-    let current_ledger = env.ledger().sequence();
-    let valid_until_ledger = current_ledger
-        .checked_add(QUOTE_TTL_LEDGERS)
-        .ok_or(validate::Error::Overflow)?;
+    // Policy-type registry: when enabled, refuse quotes if the registry has been
+    // turned on but no types remain active (misconfiguration).
+    if storage::is_policy_type_registry_enabled(env) {
+        let any_active = [PolicyType::Auto, PolicyType::Health, PolicyType::Property]
+            .iter()
+            .any(|pt| storage::is_policy_type_active(env, pt));
+        if !any_active {
+            return Err(validate::Error::PolicyInactive);
+        }
+    }
 
-    Ok(PremiumQuote {
-        total_premium: computation.total_premium,
-        line_items,
-        valid_until_ledger,
-        config_version: computation.config_version,
-    })
+    Ok(())
 }
 
 pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
@@ -335,8 +377,12 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::PayoutRecipientContractNotAllowlisted => {
             "contract payout recipient is not on the allowlist"
         }
-        Error::ClaimBelowMinAmount => "claim amount is below the asset-specific minimum",
-        Error::ClaimAboveMaxAmount => "claim amount exceeds the asset-specific maximum",
+        Error::ClaimBelowMinAmount => {
+            "coverage/claim amount is below the configured minimum (min_coverage or asset bound)"
+        }
+        Error::ClaimAboveMaxAmount => {
+            "coverage/claim amount exceeds the asset-specific maximum"
+        }
         Error::DelegationInvalid => "delegation not found or expired",
         Error::DelegationPermissionDenied => "operator lacks required delegation permission",
         Error::NoReinsuranceConfigured => {
@@ -372,6 +418,12 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::VoterCapReached => "claim has already reached the maximum number of unique voters",
         Error::VoterRegistryCapExceeded => {
             "batch would push the global voter registry past its configured maximum"
+        }
+        Error::VoterRegistryFull => {
+            "global voter registry is full; remove voters before registering more"
+        }
+        Error::CorruptSnapshotEntry => {
+            "claim voter snapshot has a corrupt (zero/negative) voting-power entry"
         }
     };
 
@@ -433,6 +485,18 @@ pub fn check_solvency_ratio(env: &Env, asset: &Address, new_coverage: i128) -> b
 /// `asset` must be on the admin-controlled allowlist at call time.
 /// The asset is bound to the policy and used for both premium payment
 /// and future claim payouts — no cross-asset settlement in MVP.
+///
+/// # Duplicate-coverage rule
+/// A holder **cannot** hold two *active* policies of the same `policy_type`
+/// and `region` whose ledger windows overlap (half-open `[start, end)`).
+/// Different types, different regions, or adjacent (non-overlapping) windows
+/// are allowed. This blocks double-payout on a single loss event.
+///
+/// # Counters
+/// On success: premium is transferred exactly once, the holder's policy
+/// counter and optional nonce are incremented, active-policy count / voter
+/// registry are updated, and coverage is tracked via the holder's active
+/// policy weight (reserved against solvency checks at bind time).
 #[allow(clippy::too_many_arguments)]
 pub fn initiate_policy(
     env: &Env,
@@ -501,6 +565,9 @@ pub fn initiate_policy(
     storage::check_and_bump_nonce(env, &holder, expected_nonce)
         .map_err(|_| PolicyError::NonceMismatch)?;
 
+    // Metadata URI: non-empty, max length, allowed scheme (ipfs:// or https://).
+    validate::validate_metadata_uri(&metadata_uri).map_err(|_| PolicyError::InvalidMetadataUri)?;
+
     let input = RiskInput {
         region: region.clone(),
         age_band: age_band.clone(),
@@ -531,7 +598,9 @@ pub fn initiate_policy(
         None => None,
         Some(0) => None,
         Some(d) if d < 0 => return Err(PolicyError::InvalidDeductible),
-        Some(d) if d > base_amount => return Err(PolicyError::InvalidDeductible),
+        // Product rule: 0 <= deductible < coverage (equal to coverage would
+        // leave a zero net payout on a full-limit claim).
+        Some(d) if d >= base_amount => return Err(PolicyError::InvalidDeductible),
         Some(d) => Some(d),
     };
 
@@ -565,17 +634,9 @@ pub fn initiate_policy(
 
     let fee_bps = storage::get_protocol_fee_bps(env);
     let fee_recipient = storage::get_fee_recipient(env);
-    let fee_amount = if fee_bps == 0 {
-        0
-    } else {
-        premium_amount
-            .checked_mul(fee_bps as i128)
-            .ok_or(PolicyError::PremiumOverflow)?
-            / 10_000
-    };
-    let treasury_amount = premium_amount
-        .checked_sub(fee_amount)
-        .ok_or(PolicyError::PremiumOverflow)?;
+    let (treasury_amount, fee_amount) =
+        crate::premium_pure::split_premium(premium_amount, fee_bps)
+            .map_err(|_| PolicyError::PremiumOverflow)?;
 
     // Pre-flight allowance check (before any state changes): surface a
     // friendly `InsufficientAllowance` error instead of letting the
@@ -645,7 +706,8 @@ pub fn initiate_policy(
     }
 
     // Premium transfer: holder -> treasury and fee recipient using the policy's bound asset.
-    // Done BEFORE any durable writes so failure leaves no partial state.
+    // CEI: collect_premium_with_fee updates internal ledger counters before SEP-41 calls.
+    // Soroban aborts the whole frame on transfer failure, so no partial policy state persists.
     token::collect_premium_with_fee(
         env,
         &holder,
@@ -654,6 +716,11 @@ pub fn initiate_policy(
         &fee_recipient,
         fee_amount,
     );
+    // Reserve coverage against the asset ledger so sweeps cannot undercut liabilities.
+    ledger::reserve_coverage(env, &asset, base_amount).map_err(|e| match e {
+        validate::Error::Overflow => PolicyError::PremiumOverflow,
+        _ => PolicyError::InsufficientSolvency,
+    })?;
 
     let current_ledger = env.ledger().sequence();
     let end_ledger = current_ledger
@@ -777,17 +844,15 @@ pub fn set_beneficiary(
     Ok(())
 }
 
-/// Admin-only: update the policy metadata URI. Must be non-empty.
+/// Admin-only: update the policy metadata URI.
+/// Uses the same validation as bind: non-empty, ≤ max length, `ipfs://` or `https://`.
 pub fn update_policy_metadata_uri(
     env: &Env,
     holder: Address,
     policy_id: u32,
     new_uri: String,
 ) -> Result<(), PolicyError> {
-    // Validate new_uri is non-empty
-    if new_uri.is_empty() {
-        return Err(PolicyError::InvalidMetadataUri);
-    }
+    validate::validate_metadata_uri(&new_uri).map_err(|_| PolicyError::InvalidMetadataUri)?;
 
     let mut policy = storage::get_policy(env, &holder, policy_id).ok_or(PolicyError::NotFound)?;
 
@@ -1048,8 +1113,24 @@ fn coverage_tier_rank(tier: &CoverageType) -> u32 {
 
 /// Transfer policy ownership to a new holder.
 ///
-/// - Authenticated by the current holder.
-/// - Reverts if `new_holder` equals the current holder or if any claim is open.
+/// # Authorization
+/// Requires **both** `holder.require_auth()` and `new_holder.require_auth()` so
+/// ownership (and future claim payouts) cannot move without the recipient's consent.
+///
+/// # Guards
+/// - Reverts if `new_holder` is zero, equals the current holder, the policy is
+///   inactive, or any claim is open on this policy.
+///
+/// # Indexes / voters
+/// Moves the persistent policy key, updates the status index, decrements the
+/// old holder's active-policy count (and drops them from the voter registry if
+/// they have no remaining active policies), and registers the new holder.
+///
+/// # History preserved
+/// Does **not** reset `strike_count`, deductible, beneficiary, terms_hash,
+/// coverage window fields (other than holder/id), or off-key claim history.
+/// Claim records stay keyed to the filing claimant; transfer is blocked while
+/// an open claim exists so in-flight filings are not orphaned mid-vote.
 pub fn transfer_policy(
     env: &Env,
     holder: &Address,
@@ -1057,8 +1138,16 @@ pub fn transfer_policy(
     new_holder: &Address,
 ) -> Result<(), Error> {
     holder.require_auth();
+    new_holder.require_auth();
 
     if holder == new_holder {
+        return Err(Error::PolicyTransferInvalid);
+    }
+    let zero = Address::from_string(&soroban_sdk::String::from_str(
+        env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
+    if *new_holder == zero {
         return Err(Error::PolicyTransferInvalid);
     }
 
@@ -1073,14 +1162,34 @@ pub fn transfer_policy(
         return Err(Error::PolicyTransferInvalid);
     }
 
-    // Move storage: write under new holder key, remove old key
+    let strike_count = policy.strike_count;
+    let old_policy = policy.clone();
+
+    // Allocate a fresh per-holder id under the recipient to avoid colliding
+    // with an existing (new_holder, policy_id) key.
+    let new_id = storage::next_policy_id(env, new_holder);
     policy.holder = new_holder.clone();
     storage::set_policy(env, new_holder, policy_id, &policy);
-    env.storage()
-        .persistent()
-        .remove(&storage::DataKey::Policy(holder.clone(), policy_id));
+    storage::remove_policy(env, holder, policy_id);
 
-    events::emit_policy_transferred(env, policy_id, holder, new_holder);
+    // Status index: remove old key, add new key.
+    storage::unindex_policy_by_status(
+        env,
+        &storage::compute_policy_status(&old_policy, env.ledger().sequence()),
+        &crate::types::PolicyLookupKey {
+            holder: holder.clone(),
+            policy_id,
+        },
+    );
+    storage::index_new_policy(env, new_holder, new_id, &policy);
+
+    storage::decrement_holder_active_policies(env, holder);
+    if storage::get_holder_active_policy_count(env, holder) == 0 {
+        storage::voters_remove_holder(env, holder);
+    }
+    storage::add_voter(env, new_holder)?;
+
+    events::emit_policy_transferred(env, new_id, holder, new_holder);
 
     Ok(())
 }

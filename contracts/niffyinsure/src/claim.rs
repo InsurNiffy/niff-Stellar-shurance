@@ -356,6 +356,16 @@ pub fn file_claim(
         return Err(Error::DuplicateOpenClaim);
     }
 
+    // Per-policy cooldown after the last resolved claim (if configured).
+    let cooldown = storage::get_cooldown_ledgers(env);
+    if cooldown > 0 {
+        if let Some(last) = storage::get_last_claim_resolved_ledger(env, holder, policy_id) {
+            if now.saturating_sub(last) < cooldown {
+                return Err(Error::CooldownActive);
+            }
+        }
+    }
+
     // Anchor for restoring per-holder rate limit if claimant later withdraws (see `withdraw_claim`).
     let rate_limit_anchor_before_filing = storage::get_last_claim_ledger(env, holder);
 
@@ -415,7 +425,7 @@ pub fn file_claim(
 
     let mut status_history: Vec<ClaimStatusHistoryEntry> = Vec::new(env);
     push_status_transition(&mut status_history, ClaimStatus::Processing, now);
-    storage::snapshot_claim_voters(env, claim_id);
+    storage::snapshot_claim_voters(env, claim_id, holder);
     let eligible_voter_count = storage::get_claim_voters(env, claim_id).len();
 
     let claim = Claim {
@@ -484,7 +494,7 @@ pub fn file_claim(
 /// between **successful** `file_claim` calls is reverted to the pre-filing anchor so a
 /// mistaken filing does not force the holder to wait another full window before refiling.
 pub fn withdraw_claim(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), Error> {
-    storage::assert_claims_not_paused(env);
+    // Intentionally NOT pause-gated: users must be able to withdraw during any pause.
 
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
 
@@ -1125,9 +1135,10 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         storage::get_policy(env, &claim.claimant, claim.policy_id).ok_or(Error::PolicyNotFound)?;
     let now = env.ledger().sequence();
 
-    if !storage::is_allowed_asset(env, &policy.asset) {
-        return Err(Error::InvalidAsset);
-    }
+    // Delisting behaviour (issue #1425): the policy's bound asset is grandfathered.
+    // Active policies may still be paid even after `set_allowed_asset(asset, false)`.
+    // New binds / renewals still require the allowlist (enforced at those entrypoints).
+    // A *payout asset override* (admin-configured alternate) must remain allowlisted.
 
     // Resolve effective payout asset: use PolicyTypeConfig override when set,
     // otherwise fall back to the policy's bound premium asset.
@@ -1137,8 +1148,8 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         .and_then(|c| c.payout_asset_override.clone())
         .unwrap_or_else(|| policy.asset.clone());
 
-    // The override asset must also be allowlisted at payout time.
-    if !storage::is_allowed_asset(env, &effective_asset) {
+    let override_active = effective_asset != policy.asset;
+    if override_active && !storage::is_allowed_asset(env, &effective_asset) {
         return Err(Error::InvalidAsset);
     }
 
@@ -1170,7 +1181,6 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
     }
 
     // Emit override event before the transfer so indexers see the asset decision first.
-    let override_active = effective_asset != policy.asset;
     if override_active {
         crate::events::emit_payout_asset_override_applied(
             env,
@@ -1181,10 +1191,14 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         );
     }
 
+    // CEI: update internal ledger before SEP-41 transfers (issue #1426).
+    crate::ledger::record_payout_out(env, &effective_asset, net, net)?;
+
     // Issue #581: attempt primary treasury; if insufficient, draw from reinsurance.
+    // Bound-asset transfers honor grandfathered (possibly delisted) policy assets.
     let primary_balance = crate::token::get_balance(env, &effective_asset);
     if primary_balance >= net {
-        crate::token::transfer(
+        crate::token::transfer_bound_asset(
             env,
             &effective_asset,
             &env.current_contract_address(),
@@ -1201,7 +1215,7 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
 
         // Transfer whatever is available from primary
         if primary_amount > 0 {
-            crate::token::transfer(
+            crate::token::transfer_bound_asset(
                 env,
                 &effective_asset,
                 &env.current_contract_address(),
@@ -1583,7 +1597,8 @@ pub fn disburse_installment(env: &Env, claim_id: u64, amount: i128) -> Result<()
         .and_then(|c| c.payout_asset_override.clone())
         .unwrap_or_else(|| policy.asset.clone());
 
-    if !storage::is_allowed_asset(env, &effective_asset) {
+    let override_active = effective_asset != policy.asset;
+    if override_active && !storage::is_allowed_asset(env, &effective_asset) {
         return Err(Error::InvalidAsset);
     }
 
@@ -1592,7 +1607,10 @@ pub fn disburse_installment(env: &Env, claim_id: u64, amount: i128) -> Result<()
         .clone()
         .unwrap_or_else(|| policy.holder.clone());
 
-    crate::token::transfer(
+    // CEI: book the installment against the asset ledger before the host transfer.
+    crate::ledger::record_payout_out(env, &effective_asset, amount, 0)?;
+
+    crate::token::transfer_bound_asset(
         env,
         &effective_asset,
         &env.current_contract_address(),

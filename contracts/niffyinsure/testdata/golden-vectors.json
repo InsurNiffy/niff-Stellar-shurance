@@ -1,0 +1,73 @@
+{
+  "_meta": {
+    "description": "Golden premium vectors for premium_pure::compute_premium. Backend and premium_calculator must match bit-for-bit.",
+    "rounding": "ceil on region/age/coverage stages; floor on safety; ceil final unit snap",
+    "scale": 10000,
+    "table_version": 1,
+    "default_table": {
+      "region": {
+        "Low": 8500,
+        "Medium": 10000,
+        "High": 13500
+      },
+      "age": {
+        "Young": 12500,
+        "Adult": 10000,
+        "Senior": 11500
+      },
+      "coverage": {
+        "Basic": 9000,
+        "Standard": 10000,
+        "Premium": 13000
+      },
+      "safety_discount": 2000
+    }
+  },
+  "vectors": [
+    {
+      "id": "medium_adult_standard_50",
+      "region": "Medium",
+      "age_band": "Adult",
+      "coverage": "Standard",
+      "safety_score": 50,
+      "base": 10000000,
+      "expected_premium": 9000000
+    },
+    {
+      "id": "high_young_premium_80",
+      "region": "High",
+      "age_band": "Young",
+      "coverage": "Premium",
+      "safety_score": 80,
+      "base": 12345678,
+      "expected_premium": 22749999
+    },
+    {
+      "id": "low_senior_basic_0",
+      "region": "Low",
+      "age_band": "Senior",
+      "coverage": "Basic",
+      "safety_score": 0,
+      "base": 7654321,
+      "expected_premium": 6733890
+    },
+    {
+      "id": "high_young_premium_0",
+      "region": "High",
+      "age_band": "Young",
+      "coverage": "Premium",
+      "safety_score": 0,
+      "base": 1000000,
+      "expected_premium": 2193750
+    },
+    {
+      "id": "low_adult_basic_100",
+      "region": "Low",
+      "age_band": "Adult",
+      "coverage": "Basic",
+      "safety_score": 100,
+      "base": 5000000,
+      "expected_premium": 3060000
+    }
+  ]
+}

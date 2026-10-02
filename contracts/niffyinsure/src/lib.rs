@@ -9,7 +9,7 @@ pub mod delegation;
 pub mod events;
 pub mod governance;
 mod governance_token;
-mod ledger;
+pub mod ledger;
 pub mod policy;
 pub mod policy_lifecycle;
 pub mod premium;
@@ -69,12 +69,34 @@ struct VoterRemovedEvent {
     pub voter: Address,
 }
 
+/// Emitted on every `set_allowed_asset` call (issue #1425).
+#[contractevent(topics = ["niffyinsure", "asset_allowlist_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AssetAllowlistUpdated {
+    #[topic]
+    pub asset: Address,
+    pub allowed: bool,
+}
+
+/// Alias retained for older integrators that keyed on the previous topic name.
 #[contractevent(topics = ["niffyinsure", "allowed_asset_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AllowedAssetUpdated {
     #[topic]
     pub asset: Address,
     pub allowed: bool,
+}
+
+/// Emitted by `admin_sweep` / treasury capital movements (issue #1427).
+#[contractevent(topics = ["niffyinsure", "treasury_swept"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TreasurySwept {
+    #[topic]
+    pub asset: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+    pub at_ledger: u32,
 }
 
 #[contractevent(topics = ["niffyinsure", "voting_duration_updated"])]
@@ -139,8 +161,29 @@ struct PauseToggled {
     /// Numeric reason code derived from `PauseReason` (0=SecurityIncident, 1=UpgradePending,
     /// 2=SolvencyRisk, 3=Regulatory). On unpause this field is 0 (reason cleared).
     pub reason_code: u32,
+    pub global: bool,
     pub bind_paused: bool,
     pub claims_paused: bool,
+}
+
+/// Scope code for Paused / Unpaused events: 0=global, 1=bind, 2=claims.
+#[contractevent(topics = ["niffyinsure", "paused"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PausedEvent {
+    #[topic]
+    pub admin: Address,
+    /// 0 = global, 1 = bind, 2 = claims
+    pub scope: u32,
+    pub reason_code: u32,
+}
+
+#[contractevent(topics = ["niffyinsure", "unpaused"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UnpausedEvent {
+    #[topic]
+    pub admin: Address,
+    /// 0 = global (full unpause), 1 = bind, 2 = claims
+    pub scope: u32,
 }
 
 #[contractevent(topics = ["niffyinsure", "protocol_fee_updated"])]
@@ -164,6 +207,62 @@ struct FeeRecipientUpdated {
 struct MinSolvencyRatioUpdated {
     pub old_bps: u32,
     pub new_bps: u32,
+}
+
+/// Unified config change event required by protocol parameter issues.
+/// `old` / `new` are String-encoded prior/new values (decimal for numeric keys,
+/// strkey for addresses).
+#[contractevent(topics = ["niffyinsure", "config_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ConfigUpdated {
+    #[topic]
+    pub key: String,
+    pub old: String,
+    pub new: String,
+}
+
+fn encode_u32(env: &Env, value: u32) -> String {
+    let mut buf = [0u8; 10];
+    let mut n = value;
+    if n == 0 {
+        return String::from_str(env, "0");
+    }
+    let mut i = 10usize;
+    while n > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    String::from_str(env, core::str::from_utf8(&buf[i..]).unwrap())
+}
+
+fn encode_i128(env: &Env, value: i128) -> String {
+    if value == 0 {
+        return String::from_str(env, "0");
+    }
+    let negative = value < 0;
+    let mut n = if negative { -value } else { value };
+    let mut buf = [0u8; 41];
+    let mut i = 41usize;
+    while n > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    if negative {
+        i -= 1;
+        buf[i] = b'-';
+    }
+    String::from_str(env, core::str::from_utf8(&buf[i..]).unwrap())
+}
+
+fn emit_config_updated(env: &Env, key: &str, old: String, new: String) {
+    ConfigUpdated {
+        key: String::from_str(env, key),
+        old,
+        new,
+    }
+    .publish(env);
 }
 
 #[contractevent(topics = ["niffyinsure", "treasury_depositor_updated"])]
@@ -208,13 +307,14 @@ impl NiffyInsure {
     /// seed the default premium table so quote generation is deterministic.
     pub fn initialize(env: Env, admin: Address, token: Address) -> Result<(), InitError> {
         admin.require_auth();
-        if env.storage().instance().has(&storage::DataKey::Admin) {
+        if storage::has_admin(&env) {
             return Err(InitError::AlreadyInitialized);
         }
         admin::require_non_zero_addr(&env, &admin);
         admin::require_non_zero_addr(&env, &token);
         storage::set_admin(&env, &admin);
         storage::set_token(&env, &token);
+        storage::set_init_ledger(&env, env.ledger().sequence());
         storage::set_multiplier_table(&env, &premium::default_multiplier_table(&env));
         storage::set_allowed_asset(&env, &token, true);
         storage::set_protocol_fee_bps(&env, 0);
@@ -237,13 +337,16 @@ impl NiffyInsure {
         soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
     }
 
-    /// Returns human-readable contract identity: name, version, and network hint.
-    /// All fields are compile-time constants. No storage reads, no auth required.
+    /// Returns contract identity used by backend and deploy tooling:
+    /// version, admin, token, and the ledger at which `initialize` ran.
     pub fn get_contract_metadata(env: Env) -> types::ContractMetadata {
         types::ContractMetadata {
             name: soroban_sdk::String::from_str(&env, env!("CARGO_PKG_NAME")),
             version: soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION")),
             network_passphrase_hint: soroban_sdk::String::from_str(&env, "Stellar Testnet"),
+            admin: storage::get_admin(&env),
+            token: storage::get_token(&env),
+            init_ledger: storage::get_init_ledger(&env).unwrap_or(0),
         }
     }
 
@@ -282,16 +385,16 @@ impl NiffyInsure {
     pub fn generate_premium(
         env: Env,
         input: types::RiskInput,
-        base_amount: i128,
+        coverage: i128,
         include_breakdown: bool,
-    ) -> Result<types::PremiumQuote, validate::Error> {
+    ) -> Result<types::QuoteResult, validate::Error> {
         policy::generate_premium(
             &env,
             input.region,
             input.age_band,
             input.coverage,
             input.safety_score,
-            base_amount,
+            coverage,
             include_breakdown,
             None,
         )
@@ -302,17 +405,17 @@ impl NiffyInsure {
     pub fn generate_premium_for_asset(
         env: Env,
         input: types::RiskInput,
-        base_amount: i128,
+        coverage: i128,
         include_breakdown: bool,
         asset: Address,
-    ) -> Result<types::PremiumQuote, validate::Error> {
+    ) -> Result<types::QuoteResult, validate::Error> {
         policy::generate_premium(
             &env,
             input.region,
             input.age_band,
             input.coverage,
             input.safety_score,
-            base_amount,
+            coverage,
             include_breakdown,
             Some(&asset),
         )
@@ -369,8 +472,11 @@ impl NiffyInsure {
             53 => validate::Error::ClaimNotProcessing,
             54 => validate::Error::RollingClaimCapExceeded,
             55 => validate::Error::PayoutDeadlineNotReached,
-            56 => validate::Error::InsufficientEvidence,
-            57 => validate::Error::CooldownActive,
+            56 => validate::Error::ClaimBelowMinAmount,
+            57 => validate::Error::ClaimAboveMaxAmount,
+            69 => validate::Error::InsufficientEvidence,
+            70 => validate::Error::CooldownActive,
+            73 => validate::Error::CalculatorVersionMismatch,
             80 => validate::Error::DuplicateEvidence,
             81 => validate::Error::PageSizeTooLarge,
             86 => validate::Error::EvidenceUrlTooLong,
@@ -422,7 +528,15 @@ impl NiffyInsure {
     }
 
     /// Admin-only: add or remove an asset from the allowlist.
-    /// Always emits `asset_set` (idempotent — even if the state is unchanged).
+    ///
+    /// Always emits `AssetAllowlistUpdated` (idempotent — even if unchanged).
+    ///
+    /// # Delisting behaviour (issue #1425)
+    ///
+    /// Setting `allowed = false` blocks **new** binds and renewals for `asset`.
+    /// Existing policies denominated in that asset remain valid: claims may still
+    /// be filed and paid against the bound asset (grandfathering). Admin payout
+    /// asset overrides must still be allowlisted at payout time.
     pub fn set_allowed_asset(
         env: Env,
         asset: Address,
@@ -434,6 +548,14 @@ impl NiffyInsure {
         admin::check_and_update_gov_cooldown(&env);
         storage::bump_instance(&env);
         claim::set_allowed_asset(&env, &asset, allowed);
+        if allowed {
+            storage::set_asset_decimals(&env, &asset, decimals);
+        }
+        AssetAllowlistUpdated {
+            asset: asset.clone(),
+            allowed,
+        }
+        .publish(&env);
         AllowedAssetUpdated {
             asset: asset.clone(),
             allowed,
@@ -524,7 +646,7 @@ impl NiffyInsure {
         commit_reveal::set_phases(
             &env,
             claim_id,
-            &commit_reveal::CommitRevealPhases {
+            &types::CommitRevealPhases {
                 commit_phase_end_ledger,
                 reveal_phase_end_ledger,
             },
@@ -691,6 +813,12 @@ impl NiffyInsure {
             new_bps: fee_bps,
         }
         .publish(&env);
+        emit_config_updated(
+            &env,
+            "protocol_fee_bps",
+            encode_u32(&env, old),
+            encode_u32(&env, fee_bps),
+        );
         Ok(())
     }
 
@@ -702,10 +830,11 @@ impl NiffyInsure {
         let old = storage::get_fee_recipient(&env);
         storage::set_fee_recipient(&env, &recipient);
         FeeRecipientUpdated {
-            old_recipient: old,
-            new_recipient: recipient,
+            old_recipient: old.clone(),
+            new_recipient: recipient.clone(),
         }
         .publish(&env);
+        emit_config_updated(&env, "fee_recipient", old.to_string(), recipient.to_string());
         Ok(())
     }
 
@@ -725,6 +854,12 @@ impl NiffyInsure {
             new_bps: ratio_bps,
         }
         .publish(&env);
+        emit_config_updated(
+            &env,
+            "min_solvency_ratio_bps",
+            encode_u32(&env, old),
+            encode_u32(&env, ratio_bps),
+        );
         Ok(())
     }
 
@@ -944,11 +1079,11 @@ impl NiffyInsure {
     }
 
     pub fn voter_registry_len(env: Env) -> u32 {
-        storage::get_voters(&env).len()
+        storage::voter_registry_len(&env)
     }
 
     pub fn voter_registry_contains(env: Env, holder: Address) -> bool {
-        storage::get_voters(&env).iter().any(|v| v == holder)
+        storage::voter_registry_contains(&env, &holder)
     }
 
     /// Remove an ineligible address from the voter registry.
@@ -996,9 +1131,7 @@ impl NiffyInsure {
         let admin = storage::get_admin(&env);
         admin.require_auth();
         admin::check_and_update_gov_cooldown(&env);
-        env.storage()
-            .instance()
-            .remove(&storage::DataKey::CalcAddress);
+        storage::clear_calc_address(&env);
         calculator::clear_expected_calc_version(&env);
         admin::emit_admin_action(&env, &admin, "clear_calculator");
     }
@@ -1256,6 +1389,13 @@ impl NiffyInsure {
     }
 
     /// Read-only: retrieve a persisted policy by (holder, policy_id).
+    ///
+    /// **TTL:** This and the other policy read entrypoints (`get_policies_batch`,
+    /// `list_policies`, `get_policy_counter`, `has_policy`, `get_active_policy_count`,
+    /// `holder_active_policy_count`, `get_inactive_policies`, `get_nonce`) perform
+    /// storage **gets only** and do **not** bump persistent TTLs. TTL extension is
+    /// reserved for mutating paths and dedicated keeper bump helpers so read-only
+    /// RPC/simulation traffic cannot extend ledger rent.
     pub fn get_policy(env: Env, holder: Address, policy_id: u32) -> Option<types::Policy> {
         storage::get_policy(&env, &holder, policy_id)
     }
@@ -1440,26 +1580,46 @@ impl NiffyInsure {
         storage::get_policy_expired_event_end_ledger(&env, &holder, policy_id)
     }
 
-    /// Keeper hook: when `ledger_sequence >= policy.end_ledger`, emit [`policy::PolicyExpired`]
-    /// once per policy term (see `policy` module docs for notification delay). Reverts if the
-    /// policy does not exist or is not yet expired.
+    /// Keeper hook: process expired policies for `holder`.
+    ///
+    /// `policy_ids` is bounded to [`types::PROCESS_EXPIRED_MAX`]; excess IDs are
+    /// ignored (silent clamp) so keepers stay within simulation budgets.
+    ///
+    /// **Idempotent:** already-inactive / already-notified policies succeed as
+    /// no-ops. IDs that are not yet at `end_ledger` (event path) or not past
+    /// `end + grace` (deactivation path) are skipped without failing the batch.
+    /// Missing IDs are skipped. Returns the number of IDs that reached the
+    /// deactivation / expiry-notification path successfully.
     pub fn process_expired(
         env: Env,
         holder: Address,
-        policy_id: u32,
-    ) -> Result<(), policy::PolicyError> {
-        // Record expiry event when now >= end_ledger (even during grace period).
-        // Deactivate when now >= end + grace (after grace period ends).
-        let result = policy::process_expired(&env, holder.clone(), policy_id);
-        // Also attempt lifecycle deactivation; ignore NotYetExpired (still in grace).
-        let _ = policy_lifecycle::process_expired(&env, holder, policy_id).map_err(|e| match e {
-            policy_lifecycle::PolicyError::PolicyNotFound => policy::PolicyError::NotFound,
-            policy_lifecycle::PolicyError::PolicyLapseNotReached => {
-                policy::PolicyError::NotYetExpired
+        policy_ids: Vec<u32>,
+    ) -> Result<u32, policy::PolicyError> {
+        let cap = (policy_ids.len() as u32).min(types::PROCESS_EXPIRED_MAX);
+        let mut processed: u32 = 0;
+        for i in 0..cap {
+            let policy_id = policy_ids.get(i).unwrap();
+            // Record expiry event when now >= end_ledger (even during grace).
+            match policy::process_expired(&env, holder.clone(), policy_id) {
+                Ok(()) => {}
+                Err(policy::PolicyError::NotFound) => continue,
+                Err(policy::PolicyError::NotYetExpired) => continue,
+                Err(e) => return Err(e),
             }
-            _ => policy::PolicyError::NotYetExpired,
-        });
-        result
+            // Deactivate when now >= end + grace; ignore "not yet lapsed".
+            match policy_lifecycle::process_expired(&env, holder.clone(), policy_id) {
+                Ok(()) => {
+                    processed = processed.saturating_add(1);
+                }
+                Err(policy_lifecycle::PolicyError::PolicyNotFound) => {}
+                Err(policy_lifecycle::PolicyError::PolicyLapseNotReached) => {
+                    // Event may have been recorded while still in grace.
+                    processed = processed.saturating_add(1);
+                }
+                Err(_) => {}
+            }
+        }
+        Ok(processed)
     }
 
     /// Renew before `end_ledger` (renewal window). If already expired, emits [`policy::PolicyExpired`]
@@ -1495,8 +1655,10 @@ impl NiffyInsure {
         policy_lifecycle::terminate_policy(&env, holder, policy_id, reason)
     }
 
-    /// Transfer policy ownership to `new_holder`. Authenticated by current holder.
-    /// Reverts if an open claim exists or `new_holder == holder`.
+    /// Transfer policy ownership to `new_holder`.
+    /// Requires **both** current holder and new holder auth. Reverts if an open
+    /// claim exists, the policy is inactive, or `new_holder == holder`.
+    /// Does not reset `strike_count` or claim history (see `policy::transfer_policy`).
     pub fn transfer_policy(
         env: Env,
         holder: Address,
@@ -1538,6 +1700,11 @@ impl NiffyInsure {
 
     pub fn cancel_admin(env: Env) {
         admin::cancel_admin(&env);
+    }
+
+    /// Alias for [`Self::cancel_admin`] (two-step rotation API name).
+    pub fn cancel_admin_proposal(env: Env) {
+        admin::cancel_admin_proposal(&env);
     }
 
     // ── Role management (Issue #1161) ─────────────────────────────────────────
@@ -1889,10 +2056,10 @@ impl NiffyInsure {
     // Read-only methods continue to work for transparency.
     // ═════════════════════════════════════════════════════════════════════════════
 
-    /// Pause the contract with a structured reason.
+    /// Pause the contract with a structured reason (sets global + bind + claims).
     ///
     /// `reason` is stored on-chain so incident responders can read it via simulation
-    /// without authentication. Emits `PauseToggled` with the reason code.
+    /// without authentication. Emits `Paused` and `PauseToggled` with the reason code.
     pub fn pause(env: Env, admin: Address, reason: types::PauseReason) {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
@@ -1902,10 +2069,17 @@ impl NiffyInsure {
 
         let flags = storage::get_pause_flags(&env);
         let reason_code = pause_reason_to_code(&reason);
+        PausedEvent {
+            admin: admin.clone(),
+            scope: 0,
+            reason_code,
+        }
+        .publish(&env);
         PauseToggled {
             admin: admin.clone(),
             paused: true,
             reason_code,
+            global: flags.global,
             bind_paused: flags.bind_paused,
             claims_paused: flags.claims_paused,
         }
@@ -1914,20 +2088,25 @@ impl NiffyInsure {
     }
 
     /// Unpause the contract. Clears the stored pause reason.
-    /// Emits `PauseToggled` with `paused=false` and `reason_code=0`.
+    /// Emits `Unpaused` and `PauseToggled` with `paused=false` and `reason_code=0`.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         assert!(admin == stored_admin, "only admin can unpause");
         storage::set_paused(&env, false);
-        // Clear the pause reason on unpause.
         storage::set_pause_reason(&env, None);
 
         let flags = storage::get_pause_flags(&env);
+        UnpausedEvent {
+            admin: admin.clone(),
+            scope: 0,
+        }
+        .publish(&env);
         PauseToggled {
             admin: admin.clone(),
             paused: false,
             reason_code: 0,
+            global: flags.global,
             bind_paused: flags.bind_paused,
             claims_paused: flags.claims_paused,
         }
@@ -1947,10 +2126,17 @@ impl NiffyInsure {
         storage::set_pause_reason(&env, Some(reason.clone()));
 
         let reason_code = pause_reason_to_code(&reason);
+        PausedEvent {
+            admin: admin.clone(),
+            scope: 1,
+            reason_code,
+        }
+        .publish(&env);
         PauseToggled {
             admin: admin.clone(),
             paused: true,
             reason_code,
+            global: flags.global,
             bind_paused: flags.bind_paused,
             claims_paused: flags.claims_paused,
         }
@@ -1970,10 +2156,17 @@ impl NiffyInsure {
         storage::set_pause_reason(&env, Some(reason.clone()));
 
         let reason_code = pause_reason_to_code(&reason);
+        PausedEvent {
+            admin: admin.clone(),
+            scope: 2,
+            reason_code,
+        }
+        .publish(&env);
         PauseToggled {
             admin: admin.clone(),
             paused: true,
             reason_code,
+            global: flags.global,
             bind_paused: flags.bind_paused,
             claims_paused: flags.claims_paused,
         }
@@ -2054,13 +2247,18 @@ impl NiffyInsure {
 
     /// Admin or delegated oracle: set fraud score (0–100) for a claim.
     /// High-score claims require elevated quorum at finalization.
+    /// Accepts the admin key or any operator with the `SetFraudScore` scope.
     pub fn set_claim_fraud_score(
         env: Env,
         caller: Address,
         claim_id: u64,
         score: u32,
     ) -> Result<(), validate::Error> {
-        caller.require_auth();
+        delegation::require_admin_or_scope(
+            &env,
+            &caller,
+            types::DelegatedScopeKind::SetFraudScore,
+        )?;
         claim::set_claim_fraud_score(&env, &caller, claim_id, score)
     }
 
@@ -2103,6 +2301,12 @@ impl NiffyInsure {
         let old_amount = storage::get_min_coverage_amount(&env);
         storage::set_min_coverage_amount(&env, amount);
         events::emit_min_coverage_amount_updated(&env, &admin, old_amount, amount);
+        emit_config_updated(
+            &env,
+            "min_coverage_amount",
+            encode_i128(&env, old_amount),
+            encode_i128(&env, amount),
+        );
         Ok(())
     }
 
@@ -2176,6 +2380,7 @@ impl NiffyInsure {
     }
 
     /// Dust claims below min and over-coverage claims above max will revert.
+    /// Bounds must be strictly positive and satisfy `min_claim_amount <= max_claim_amount`.
     pub fn admin_set_asset_claim_bounds(
         env: Env,
         asset: Address,
@@ -2184,7 +2389,7 @@ impl NiffyInsure {
     ) -> Result<(), validate::Error> {
         let _admin = admin::require_admin(&env);
         admin::check_and_update_gov_cooldown(&env);
-        if min_claim_amount < 0 || max_claim_amount < min_claim_amount {
+        if min_claim_amount <= 0 || max_claim_amount <= 0 || min_claim_amount > max_claim_amount {
             return Err(validate::Error::ClaimAmountZero);
         }
         storage::set_allowed_asset_config(
@@ -2340,6 +2545,8 @@ impl NiffyInsure {
     }
 
     /// Authorized depositor-only: transfer capital into the treasury and emit an event.
+    ///
+    /// Asset must be allowlisted. Uses CEI via [`token::transfer_in`].
     pub fn deposit_treasury(
         env: Env,
         depositor: Address,
@@ -2353,11 +2560,14 @@ impl NiffyInsure {
         if !storage::is_authorized_depositor(&env, &depositor) {
             return Err(validate::Error::UnauthorizedTreasuryDepositor);
         }
+        if !storage::is_allowed_asset(&env, &asset) {
+            return Err(validate::Error::InvalidAsset);
+        }
 
         depositor.require_auth();
 
-        let client = soroban_sdk::token::TokenClient::new(&env, &asset);
-        client.transfer(&depositor, env.current_contract_address(), &amount);
+        // CEI: ledger credit then SEP-41 transfer into the contract.
+        crate::token::transfer_in(&env, &depositor, &asset, amount)?;
 
         TreasuryDeposited {
             depositor,
@@ -2367,6 +2577,91 @@ impl NiffyInsure {
         }
         .publish(&env);
 
+        Ok(())
+    }
+
+    /// Read-only: internal ledger treasury balance for `asset` (issue #1426).
+    ///
+    /// This is the bookkeeping counter, not the raw SEP-41 balance. Use
+    /// [`Self::get_treasury_balance`] for the configured treasury's token balance
+    /// of the default protocol token.
+    pub fn get_ledger_treasury_balance(env: Env, asset: Address) -> i128 {
+        ledger::get_treasury_balance(&env, &asset)
+    }
+
+    /// Read-only: reserved coverage for `asset`.
+    pub fn get_reserved_coverage(env: Env, asset: Address) -> i128 {
+        ledger::get_reserved_coverage(&env, &asset)
+    }
+
+    /// Read-only: lifetime premiums collected for `asset`.
+    pub fn get_total_premiums(env: Env, asset: Address) -> i128 {
+        ledger::get_total_premiums(&env, &asset)
+    }
+
+    /// Read-only: lifetime paid claims for `asset`.
+    pub fn get_total_paid(env: Env, asset: Address) -> i128 {
+        ledger::get_total_paid(&env, &asset)
+    }
+
+    /// Admin treasury sweep with per-ledger cap and under-reserve protection (issue #1427).
+    ///
+    /// - `to` must be an allowlisted payout recipient when it is a contract.
+    /// - Amount must not exceed `max_sweep_per_ledger` cumulative for this ledger.
+    /// - Remaining internal treasury must stay `>= reserved_coverage`.
+    pub fn admin_sweep(
+        env: Env,
+        asset: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), AdminError> {
+        storage::bump_instance(&env);
+        let admin = admin::require_treasury_admin(&env);
+        if amount <= 0 {
+            return Err(AdminError::InvalidSweepAmount);
+        }
+        if !storage::is_allowed_asset(&env, &asset) {
+            return Err(AdminError::AssetNotAllowlisted);
+        }
+        if to.executable().is_some() && !storage::is_allowed_payout_recipient(&env, &to) {
+            return Err(AdminError::InvalidAddress);
+        }
+
+        // Under-reserve check against internal ledger (regardless of cap).
+        if amount > ledger::available_to_sweep(&env, &asset) {
+            return Err(AdminError::ProtectedBalanceViolation);
+        }
+
+        // Per-ledger withdrawal limit
+        if let Some(max_sweep) = storage::get_max_sweep_per_ledger(&env) {
+            let now = env.ledger().sequence();
+            let last_sweep = storage::get_last_sweep_ledger(&env);
+            let mut cumulative = 0i128;
+            if last_sweep == Some(now) {
+                cumulative = storage::get_cumulative_swept_this_ledger(&env);
+            }
+            let new_cumulative = cumulative
+                .checked_add(amount)
+                .ok_or(AdminError::SweepLedgerLimitExceeded)?;
+            if new_cumulative > max_sweep {
+                return Err(AdminError::SweepLedgerLimitExceeded);
+            }
+            storage::set_last_sweep_ledger(&env, now);
+            storage::set_cumulative_swept_this_ledger(&env, new_cumulative);
+        }
+
+        // Effects then interaction (CEI).
+        ledger::record_sweep(&env, &asset, amount).map_err(|_| AdminError::ProtectedBalanceViolation)?;
+        crate::token::sweep_asset(&env, &asset, &to, amount);
+
+        TreasurySwept {
+            asset,
+            to,
+            amount,
+            at_ledger: env.ledger().sequence(),
+        }
+        .publish(&env);
+        admin::emit_admin_action(&env, &admin, "admin_sweep");
         Ok(())
     }
 
@@ -2512,13 +2807,33 @@ impl NiffyInsure {
             storage::PERSISTENT_TTL_THRESHOLD,
             storage::PERSISTENT_TTL_EXTEND_TO,
         );
-        storage::add_voter(&env, &holder);
+        let _ = storage::add_voter(&env, &holder);
         // Issue #812: index the seeded policy.
         storage::index_new_policy(&env, &holder, policy_id, &policy);
     }
 
     pub fn test_remove_voter(env: Env, holder: Address) {
         storage::remove_voter(&env, &holder);
+    }
+
+    /// Test-only: register `holder` in the voter registry without binding a policy.
+    pub fn test_add_voter(env: Env, holder: Address) -> Result<(), validate::Error> {
+        storage::voters_ensure_holder(&env, &holder)
+    }
+
+    /// Test-only: read the claim voter snapshot.
+    pub fn test_get_claim_voters(env: Env, claim_id: u64) -> Vec<Address> {
+        storage::get_claim_voters(&env, claim_id)
+    }
+
+    /// Test-only: set per-policy last-resolved ledger for cooldown tests.
+    pub fn test_set_last_claim_resolved(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+        ledger: u32,
+    ) {
+        storage::set_last_claim_resolved_ledger(&env, &holder, policy_id, ledger);
     }
 
     /// Test-only: force a seeded policy's `is_active` flag and `start_ledger`

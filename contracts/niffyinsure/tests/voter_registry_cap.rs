@@ -7,10 +7,7 @@
 #![cfg(test)]
 
 use niffyinsure::{storage::MAX_ELIGIBLE_VOTERS, NiffyInsureClient};
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, Env, Vec,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
 fn setup() -> (Env, NiffyInsureClient<'static>, Address) {
     let env = Env::default();
@@ -31,7 +28,7 @@ fn registration_at_cap_succeeds() {
 
     for _ in 0..MAX_ELIGIBLE_VOTERS {
         let voter = Address::generate(&env);
-        client.test_add_voter(voter);
+        client.test_add_voter(&voter);
     }
 
     assert_eq!(client.voter_registry_len(), MAX_ELIGIBLE_VOTERS);
@@ -46,7 +43,7 @@ fn registration_over_cap_reverts() {
     // Fill the registry to capacity.
     for _ in 0..MAX_ELIGIBLE_VOTERS {
         let voter = Address::generate(&env);
-        client.test_add_voter(voter);
+        client.test_add_voter(&voter);
     }
     assert_eq!(client.voter_registry_len(), MAX_ELIGIBLE_VOTERS);
 
@@ -67,13 +64,13 @@ fn removal_followed_by_re_registration_succeeds() {
     let voter = Address::generate(&env);
 
     // Register, remove, then re-register.
-    client.test_add_voter(voter.clone());
+    client.test_add_voter(&voter.clone());
     assert!(client.voter_registry_contains(&voter));
 
     client.admin_remove_voter(&voter);
     assert!(!client.voter_registry_contains(&voter));
 
-    client.test_add_voter(voter.clone());
+    client.test_add_voter(&voter.clone());
     assert!(client.voter_registry_contains(&voter));
     assert_eq!(client.voter_registry_len(), 1);
 }
@@ -88,14 +85,14 @@ fn removal_frees_slot_for_new_registration() {
     let mut voters = Vec::new(&env);
     for _ in 0..MAX_ELIGIBLE_VOTERS - 1 {
         let voter = Address::generate(&env);
-        client.test_add_voter(voter.clone());
+        client.test_add_voter(&voter.clone());
         voters.push_back(voter);
     }
     assert_eq!(client.voter_registry_len(), MAX_ELIGIBLE_VOTERS - 1);
 
     // Add one more to reach exactly the cap.
     let last_voter = Address::generate(&env);
-    client.test_add_voter(last_voter.clone());
+    client.test_add_voter(&last_voter.clone());
     assert_eq!(client.voter_registry_len(), MAX_ELIGIBLE_VOTERS);
 
     // Remove one voter to free a slot.
@@ -105,6 +102,6 @@ fn removal_frees_slot_for_new_registration() {
 
     // A new registration now succeeds because a slot was freed.
     let new_voter = Address::generate(&env);
-    client.test_add_voter(new_voter);
+    client.test_add_voter(&new_voter);
     assert_eq!(client.voter_registry_len(), MAX_ELIGIBLE_VOTERS);
 }

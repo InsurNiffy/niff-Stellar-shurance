@@ -33,8 +33,7 @@
 //! New variants are appended to `validate::Error`; see that module for the
 //! full list.
 
-use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Env};
-use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{Address, BytesN, Env};
 
 use crate::{events::EVENT_SCHEMA_VERSION, storage, validate::Error};
 
@@ -69,48 +68,21 @@ pub struct VoteRevealed {
     pub at_ledger: u32,
 }
 
-// ── Phase storage ─────────────────────────────────────────────────────────────
-
-/// Ledger boundaries for a single claim's commit-reveal cycle.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CommitRevealPhases {
-    /// Last ledger (inclusive) during which commitments are accepted.
-    pub commit_phase_end_ledger: u32,
-    /// Last ledger (inclusive) during which reveals are accepted.
-    /// Must be strictly greater than `commit_phase_end_ledger`.
-    pub reveal_phase_end_ledger: u32,
-}
-
-fn phases_key(claim_id: u64) -> storage::DataKey {
-    storage::DataKey::CommitRevealPhases(claim_id)
-}
-
-fn commitment_key(claim_id: u64, voter: &Address) -> storage::DataKey {
-    storage::DataKey::VoteCommitment(claim_id, voter.clone())
-}
+pub use crate::types::CommitRevealPhases;
 
 // ── Phase helpers ─────────────────────────────────────────────────────────────
 
 pub fn set_phases(env: &Env, claim_id: u64, phases: &CommitRevealPhases) {
-    let key = phases_key(claim_id);
-    env.storage().persistent().set(&key, phases);
-    env.storage().persistent().extend_ttl(
-        &key,
-        storage::PERSISTENT_TTL_THRESHOLD,
-        storage::PERSISTENT_TTL_EXTEND_TO,
-    );
+    storage::set_commit_reveal_phases(env, claim_id, phases);
 }
 
 pub fn get_phases(env: &Env, claim_id: u64) -> Option<CommitRevealPhases> {
-    env.storage().persistent().get(&phases_key(claim_id))
+    storage::get_commit_reveal_phases(env, claim_id)
 }
 
 /// `true` when the voter has a stored commitment for `claim_id`.
 pub fn has_commitment(env: &Env, claim_id: u64, voter: &Address) -> bool {
-    env.storage()
-        .persistent()
-        .has(&commitment_key(claim_id, voter))
+    storage::has_vote_commitment(env, claim_id, voter)
 }
 
 /// `true` when the voter successfully revealed (a `Vote` entry exists).
@@ -146,17 +118,11 @@ pub fn commit_vote(
         return Err(Error::CommitPhaseEnded);
     }
 
-    let key = commitment_key(claim_id, voter);
-    if env.storage().persistent().has(&key) {
+    if storage::has_vote_commitment(env, claim_id, voter) {
         return Err(Error::DuplicateVote);
     }
 
-    env.storage().persistent().set(&key, &commitment);
-    env.storage().persistent().extend_ttl(
-        &key,
-        storage::PERSISTENT_TTL_THRESHOLD,
-        storage::PERSISTENT_TTL_EXTEND_TO,
-    );
+    storage::set_vote_commitment(env, claim_id, voter, &commitment);
 
     VoteCommitted {
         claim_id,
@@ -207,15 +173,10 @@ pub fn reveal_vote(
         return Err(Error::RevealPhaseEnded);
     }
 
-    let commit_key = commitment_key(claim_id, voter);
-    let stored: BytesN<32> = env
-        .storage()
-        .persistent()
-        .get(&commit_key)
+    let stored: BytesN<32> = storage::get_vote_commitment(env, claim_id, voter)
         .ok_or(Error::CommitmentNotFound)?;
 
-    let vote_key = storage::DataKey::Vote(claim_id, voter.clone());
-    if env.storage().persistent().has(&vote_key) {
+    if storage::has_vote(env, claim_id, voter) {
         return Err(Error::DuplicateVote);
     }
 
@@ -239,12 +200,7 @@ pub fn reveal_vote(
         return Err(Error::CommitmentMismatch);
     }
 
-    env.storage().persistent().set(&vote_key, &vote);
-    env.storage().persistent().extend_ttl(
-        &vote_key,
-        storage::PERSISTENT_TTL_THRESHOLD,
-        storage::PERSISTENT_TTL_EXTEND_TO,
-    );
+    storage::set_vote(env, claim_id, voter, &vote);
 
     // Apply to claim tallies — only revealed ballots are counted.
     let mut claim = storage::get_claim(env, claim_id).ok_or(Error::ClaimNotFound)?;
@@ -270,28 +226,4 @@ pub fn reveal_vote(
     .publish(env);
 
     Ok(())
-}
-
-/// Hash helper for tests and off-chain commit construction:
-/// `SHA-256(vote_byte || salt || voter_xdr)`.
-///
-/// The voter address is included so commitments are non-transferable between
-/// voters — copying a commitment to a different voter address will fail reveal.
-pub fn commitment_hash(
-    env: &Env,
-    vote: crate::types::VoteOption,
-    salt: &BytesN<32>,
-    voter: &Address,
-) -> BytesN<32> {
-    let vote_byte: u8 = match vote {
-        crate::types::VoteOption::Approve => 0x00,
-        crate::types::VoteOption::Reject => 0x01,
-    };
-    let mut preimage = soroban_sdk::Bytes::new(env);
-    preimage.push_back(vote_byte);
-    let salt_bytes: soroban_sdk::Bytes = salt.clone().into();
-    preimage.append(&salt_bytes);
-    let voter_bytes = voter.to_xdr(env);
-    preimage.append(&voter_bytes);
-    env.crypto().sha256(&preimage).into()
 }

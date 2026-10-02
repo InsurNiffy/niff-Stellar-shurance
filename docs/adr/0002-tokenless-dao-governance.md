@@ -46,6 +46,7 @@ The backend (`backend/src/governance/`) enforces eligibility checks against the 
 
 ### Neutral / mitigations
 - Sybil risk is partially mitigated by the non-zero premium cost of purchasing a policy and by off-chain KYC gating for large-coverage policies.
+- **On-chain voter registry (Issue #1438):** membership is address-keyed and bucketed for storage safety (`VoterBucket` / `VoterMember`). Auto-add on first active policy and remove at zero active policies implements “one address ↔ active coverage,” **not** unique-human identity. `MAX_ELIGIBLE_VOTERS` and `max_voters_per_claim` bound gas and per-claim electorate size; they do not prevent wallet farming. Claim snapshots exclude the claimant and may deterministically subsample when the registry exceeds the per-claim cap.
 - Future ADR may introduce reputation scoring or staking-without-token mechanisms if apathy becomes a problem.
 - Admin multisig key rotation procedure is documented in `backend/docs/admin-role-assignment.md`.
 

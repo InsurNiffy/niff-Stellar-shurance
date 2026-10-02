@@ -108,6 +108,17 @@ jobs:
       - name: Build WASM
         run: cargo build --release --target wasm32v1-none --workspace
 
+      - name: WASM size check
+        run: |
+          WASM=target/wasm32v1-none/release/niffyinsure.wasm
+          BUDGET_BYTES=204800
+          SIZE=$(wc -c < "${WASM}")
+          echo "niffyinsure.wasm size: ${SIZE} bytes (budget: ${BUDGET_BYTES})"
+          if [ "${SIZE}" -gt "${BUDGET_BYTES}" ]; then
+            echo "ERROR: WASM size ${SIZE} exceeds budget ${BUDGET_BYTES}" >&2
+            exit 1
+          fi
+
   contract-tests-matrix:
     name: Contract tests (${{ matrix.soroban_sdk }})
     runs-on: ubuntu-latest

@@ -1,40 +1,44 @@
 //! Cross-contract client for the external PremiumCalculator contract.
 //!
-//! # Failure behaviour (fail-closed)
+//! # Failure behaviour (fail-open with alert)
 //!
-//! When a calculator address is configured the policy contract delegates all
-//! premium computation to it. If that cross-contract call fails — calculator
-//! contract error, pause, unreachable/misconfigured address, version mismatch,
-//! or host abort — the error is **propagated** to the caller as a typed
-//! [`Error`] (`CalculatorCallFailed`, `CalculatorPaused`, or
-//! `CalculatorVersionMismatch`). The transaction aborts; there is **no**
-//! silent fallback to the local engine while a calculator is configured.
+//! Decision: **fail-open to the in-contract engine**, never mis-price from a
+//! broken/paused/wrong-ABI calculator.
 //!
-//! Local `premium::compute_premium` is used **only** when no calculator
-//! address is stored, so existing deployments without an external calculator
-//! keep working without migration.
+//! When a calculator address is configured the policy contract prefers the
+//! external `compute`. If that call fails — pause, ABI mismatch, host abort,
+//! unreachable address, or typed calc error — the contract **falls back** to
+//! the local `premium::compute_premium` engine and emits
+//! [`CalculatorFallback`] so operators can alert. This keeps quotes and binds
+//! available while making degradation visible.
 //!
-//! When no calculator address is stored the contract falls back to the
-//! built-in `premium::compute_premium` logic so existing deployments keep
-//! working without migration.
+//! ## Why fail-open (not fail-closed)
+//!
+//! - Mis-pricing from a wrong ABI or paused calculator is worse than using the
+//!   audited local engine with an explicit ops signal.
+//! - Fail-closed would hard-stop all binds/quotes during calculator outages.
+//! - The `CalculatorFallback` event gives SRE the same signal a hard error
+//!   would, without stranding policyholders.
+//!
+//! Local `premium::compute_premium` is also used when no calculator address is
+//! stored (default / pre-migration deployments).
 //!
 //! # ABI version pin
 //!
 //! Integrators should pin against `PremiumCalculator::abi_version()` (stable
-//! `u32`). On each successful external `compute`, this contract records that
-//! ABI version in instance storage (`get_last_calc_abi_version`). Admins can
-//! also set an expected ABI via `set_calculator_with_version`; mismatches
-//! return `Error::CalculatorVersionMismatch`.
+//! `u32`). On each successful external `compute` during a bind path, this
+//! contract may record that ABI version (`get_last_calc_abi_version`). Admins
+//! set an expected ABI via `set_calculator_with_version`; mismatches trigger
+//! fallback (not a hard error).
 //!
-//! After either contract upgrades, compare:
-//! `niffyinsure.get_last_calc_abi_version()` vs `calculator.abi_version()`
-//! (and optionally `get_expected_calc_version()`).
+//! Quote paths pass `persist_abi = false` so simulation-friendly reads never
+//! write instance storage.
 
-use soroban_sdk::{contractclient, Address, Env};
+use soroban_sdk::{contractclient, contractevent, Address, Env};
 
 use crate::{
     premium, storage,
-    types::{AgeBand, CoverageTier, PremiumQuote, RegionTier, RiskInput},
+    types::{AgeBand, CalcSource, CoverageTier, PremiumQuote, RegionTier, RiskInput},
     validate::Error,
 };
 
@@ -84,6 +88,16 @@ pub struct CalcResult {
     pub config_version: u32,
 }
 
+/// Emitted when the contract falls back from an external calculator to the
+/// in-contract premium engine. Ops should alert on this event.
+#[contractevent(topics = ["niffyinsure", "calculator_fallback"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CalculatorFallback {
+    /// Why the external path was abandoned (stable short tag).
+    pub reason: soroban_sdk::Symbol,
+    pub calculator: Address,
+}
+
 // ── contractclient! binding ───────────────────────────────────────────────────
 
 /// Generated client for the PremiumCalculator contract.
@@ -98,54 +112,30 @@ pub trait PremiumCalculatorTrait {
 
 // ── Calculator versioning ─────────────────────────────────────────────────────
 
-/// Storage key for the expected calculator ABI version.
-/// When set, every cross-contract call asserts the calculator's `abi_version()`
-/// matches this value before proceeding.
 const CALC_EXPECTED_VERSION_KEY: &str = "calc_exp_ver";
-
-/// Storage key for the ABI version observed on the last successful `compute`.
 const CALC_LAST_ABI_VERSION_KEY: &str = "calc_last_abi";
 
-/// Store the expected calculator ABI version in instance storage.
 pub fn set_expected_calc_version(env: &Env, version: u32) {
-    env.storage().instance().set(
-        &soroban_sdk::Symbol::new(env, CALC_EXPECTED_VERSION_KEY),
-        &version,
-    );
+    storage::set_expected_calc_version(env, version);
 }
 
-/// Read the expected calculator ABI version (None = version check disabled).
 pub fn get_expected_calc_version(env: &Env) -> Option<u32> {
-    env.storage()
-        .instance()
-        .get(&soroban_sdk::Symbol::new(env, CALC_EXPECTED_VERSION_KEY))
+    storage::get_expected_calc_version(env)
 }
 
-/// Remove the expected calculator ABI version (disables version check).
 pub fn clear_expected_calc_version(env: &Env) {
-    env.storage()
-        .instance()
-        .remove(&soroban_sdk::Symbol::new(env, CALC_EXPECTED_VERSION_KEY));
+    storage::clear_expected_calc_version(env);
 }
 
 fn set_last_calc_abi_version(env: &Env, version: u32) {
-    env.storage().instance().set(
-        &soroban_sdk::Symbol::new(env, CALC_LAST_ABI_VERSION_KEY),
-        &version,
-    );
+    storage::set_last_calc_abi_version(env, version);
 }
 
-/// ABI version from the last successful external calculator `compute`, if any.
 pub fn get_last_calc_abi_version(env: &Env) -> Option<u32> {
-    env.storage()
-        .instance()
-        .get(&soroban_sdk::Symbol::new(env, CALC_LAST_ABI_VERSION_KEY))
+    storage::get_last_calc_abi_version(env)
 }
 
 /// Admin helper: atomically update the calculator contract address and expected ABI version.
-/// Both are written together or neither is written (Soroban transactions are atomic).
-///
-/// Pass `expected_version = 0` to disable version checking.
 pub fn set_calculator_with_version(env: &Env, calculator: &Address, expected_version: u32) {
     storage::set_calc_address(env, calculator);
     if expected_version == 0 {
@@ -159,16 +149,11 @@ pub fn set_calculator_with_version(env: &Env, calculator: &Address, expected_ver
 
 /// Compute a premium quote, routing to the external calculator when configured.
 ///
-/// `asset` is used to look up an asset-specific multiplier table when no
-/// external calculator is configured. Pass `None` to use the global default.
+/// Returns `(quote, source)` so callers can surface `calc_source` on
+/// [`crate::types::QuoteResult`].
 ///
-/// # Routing / failure semantics
-///
-/// - If `CalcAddress` is set → cross-contract call. Any failure (including
-///   pause, version mismatch, host abort, typed calc errors) is returned as a
-///   typed [`Error`]. **No local fallback** while a calculator is configured.
-/// - If `CalcAddress` is absent → local `premium::compute_premium` fallback,
-///   using the asset-specific table when available.
+/// `persist_abi`: when `true` (bind path), records last successful ABI version.
+/// When `false` (read-only quote / simulation), never writes storage.
 pub fn compute_quote(
     env: &Env,
     input: &RiskInput,
@@ -177,79 +162,126 @@ pub fn compute_quote(
     quote_ttl: u32,
     asset: Option<&Address>,
 ) -> Result<PremiumQuote, Error> {
+    let (quote, _) = compute_quote_with_source(
+        env,
+        input,
+        base_amount,
+        include_breakdown,
+        quote_ttl,
+        asset,
+        true,
+    )?;
+    Ok(quote)
+}
+
+/// Read-only quote path: never persists calculator ABI metadata.
+pub fn compute_quote_readonly(
+    env: &Env,
+    input: &RiskInput,
+    base_amount: i128,
+    include_breakdown: bool,
+    quote_ttl: u32,
+    asset: Option<&Address>,
+) -> Result<(PremiumQuote, CalcSource), Error> {
+    compute_quote_with_source(
+        env,
+        input,
+        base_amount,
+        include_breakdown,
+        quote_ttl,
+        asset,
+        false,
+    )
+}
+
+fn compute_quote_with_source(
+    env: &Env,
+    input: &RiskInput,
+    base_amount: i128,
+    include_breakdown: bool,
+    quote_ttl: u32,
+    asset: Option<&Address>,
+    persist_abi: bool,
+) -> Result<(PremiumQuote, CalcSource), Error> {
     match storage::get_calc_address(env) {
-        // Fail closed: once a calculator is configured, any failure (pause, ABI pin
-        // mismatch, unreachable address, or call failure) is propagated — never a
-        // silent fallback to the local engine.
-        Some(calc_addr) => call_external(env, &calc_addr, input, base_amount, quote_ttl),
-        None => call_local(env, input, base_amount, include_breakdown, quote_ttl, asset),
+        Some(calc_addr) => {
+            match try_call_external(env, &calc_addr, input, base_amount, quote_ttl, persist_abi) {
+                Ok(quote) => Ok((quote, CalcSource::External)),
+                Err(reason) => {
+                    emit_fallback(env, &calc_addr, reason);
+                    let quote =
+                        call_local(env, input, base_amount, include_breakdown, quote_ttl, asset)?;
+                    Ok((quote, CalcSource::Local))
+                }
+            }
+        }
+        None => {
+            let quote = call_local(env, input, base_amount, include_breakdown, quote_ttl, asset)?;
+            Ok((quote, CalcSource::Local))
+        }
     }
 }
 
-fn call_external(
+fn emit_fallback(env: &Env, calculator: &Address, reason: &'static str) {
+    CalculatorFallback {
+        reason: soroban_sdk::Symbol::new(env, reason),
+        calculator: calculator.clone(),
+    }
+    .publish(env);
+}
+
+fn try_call_external(
     env: &Env,
     calc_addr: &Address,
     input: &RiskInput,
     base_amount: i128,
     quote_ttl: u32,
-) -> Result<PremiumQuote, Error> {
+    persist_abi: bool,
+) -> Result<PremiumQuote, &'static str> {
     let client = PremiumCalculatorClient::new(env, calc_addr);
 
-    // ABI pin: if an expected version is configured, assert it matches
-    // the calculator's reported abi_version before calling compute.
-    // Uses try_abi_version (not the panicking abi_version) so an unreachable
-    // or misbehaving calculator address surfaces as a typed CalculatorCallFailed
-    // instead of aborting the whole transaction.
-    let actual_abi = client
-        .try_abi_version()
-        .map_err(|_| Error::CalculatorCallFailed)?
-        .map_err(|_| Error::CalculatorCallFailed)?;
+    // try_* so a failing calculator never aborts the whole transaction.
+    let actual_abi = match client.try_abi_version() {
+        Ok(Ok(v)) => v,
+        _ => return Err("call_failed"),
+    };
+
     if let Some(expected_ver) = get_expected_calc_version(env) {
         if actual_abi != expected_ver {
-            return Err(Error::CalculatorVersionMismatch);
+            return Err("wrong_abi");
         }
     }
 
     let calc_input = to_calc_input(input, base_amount);
 
-    // try_compute returns:
-    //   Ok(Ok(CalcResult))          — success
-    //   Ok(Err(conversion_err))     — type conversion failure (treat as call failed)
-    //   Err(Ok(CalcError))          — calculator returned a typed error
-    //   Err(Err(InvokeError))       — host-level abort / panic
-    let result = client.try_compute(&calc_input).map_err(|outer_err| {
-        match outer_err {
-            // Typed contract error — distinguish Paused (code 17) from others
-            Ok(calc_err) => {
-                use soroban_sdk::InvokeError;
-                // CalcError is a contracterror; convert to InvokeError to read code
-                let invoke: InvokeError = calc_err.into();
-                match invoke {
-                    InvokeError::Contract(17) => Error::CalculatorPaused,
-                    _ => Error::CalculatorCallFailed,
-                }
+    let result = match client.try_compute(&calc_input) {
+        Ok(Ok(r)) => r,
+        Ok(Err(_)) => return Err("call_failed"),
+        Err(Ok(calc_err)) => {
+            use soroban_sdk::InvokeError;
+            let invoke: InvokeError = calc_err.into();
+            match invoke {
+                InvokeError::Contract(17) => return Err("paused"),
+                _ => return Err("call_failed"),
             }
-            // Host abort / panic
-            Err(_) => Error::CalculatorCallFailed,
         }
-    })?;
+        Err(Err(_)) => return Err("panicking"),
+    };
 
-    // Inner Ok: successful deserialization of CalcResult
-    let calc_result = result.map_err(|_| Error::CalculatorCallFailed)?;
-
-    // Record the ABI we successfully bound against (queryable after upgrades).
-    set_last_calc_abi_version(env, actual_abi);
+    if persist_abi {
+        set_last_calc_abi_version(env, actual_abi);
+    }
 
     let current_ledger = env.ledger().sequence();
     let valid_until_ledger = current_ledger
         .checked_add(quote_ttl)
-        .ok_or(Error::Overflow)?;
+        .ok_or("call_failed")?;
 
     Ok(PremiumQuote {
-        total_premium: calc_result.premium,
-        line_items: None, // external calculator does not return line items
+        total_premium: result.premium,
+        line_items: None,
         valid_until_ledger,
-        config_version: calc_result.config_version,
+        config_version: result.config_version,
     })
 }
 
@@ -282,8 +314,6 @@ fn call_local(
         config_version: computation.config_version,
     })
 }
-
-// ── Type conversion ───────────────────────────────────────────────────────────
 
 fn to_calc_input(input: &RiskInput, base_amount: i128) -> CalcInput {
     CalcInput {

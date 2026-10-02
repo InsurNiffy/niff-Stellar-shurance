@@ -24,6 +24,7 @@ import { NonceService } from './nonce.service';
 import { WalletSignatureService } from './wallet-signature.service';
 import { normalizeAddress } from '../common/utils/normalize-address';
 import { RefreshTokenService } from './refresh-token.service';
+import { JwtKeyService } from './jwt-key.service';
 
 @Injectable()
 export class WalletAuthService {
@@ -35,6 +36,7 @@ export class WalletAuthService {
     private readonly configService: ConfigService,
     private readonly refreshTokenService: RefreshTokenService,
     private readonly walletSignatureService: WalletSignatureService,
+    private readonly jwtKeyService: JwtKeyService,
   ) {}
 
   private get domain(): string {
@@ -129,9 +131,15 @@ export class WalletAuthService {
     // Access token: 15 minutes (hard-coded; not configurable to prevent accidental extension)
     const ACCESS_TTL = 15 * 60;
     const now = Math.floor(Date.now() / 1000);
+    const signingKey = this.jwtKeyService.signingKey;
     // scope='user' — explicitly not admin; exp set via signOptions only
+    // kid header enables secret rotation without invalidating in-flight tokens
     const payload = { sub: canonicalKey, walletAddress: canonicalKey, scope: 'user', iat: now };
-    const token = this.jwtService.sign(payload, { expiresIn: ACCESS_TTL });
+    const token = this.jwtService.sign(payload, {
+      expiresIn: ACCESS_TTL,
+      secret: signingKey.secret,
+      header: { alg: 'HS256', kid: signingKey.kid },
+    });
     const expiresAt = new Date((now + ACCESS_TTL) * 1000).toISOString();
 
     const refreshToken = await this.refreshTokenService.issue(canonicalKey);
@@ -145,8 +153,13 @@ export class WalletAuthService {
 
     const ACCESS_TTL = 15 * 60;
     const now = Math.floor(Date.now() / 1000);
+    const signingKey = this.jwtKeyService.signingKey;
     const payload = { sub: walletAddress, walletAddress, scope: 'user', iat: now };
-    const token = this.jwtService.sign(payload, { expiresIn: ACCESS_TTL });
+    const token = this.jwtService.sign(payload, {
+      expiresIn: ACCESS_TTL,
+      secret: signingKey.secret,
+      header: { alg: 'HS256', kid: signingKey.kid },
+    });
     const expiresAt = new Date((now + ACCESS_TTL) * 1000).toISOString();
 
     const newRefreshToken = await this.refreshTokenService.issue(walletAddress);

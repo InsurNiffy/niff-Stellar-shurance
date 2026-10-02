@@ -6,16 +6,19 @@ on:
       - main
     paths:
       - 'backend/**'
+      - 'contracts/**'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     branches:
       - main
     paths:
       - 'backend/**'
+      - 'contracts/**'
       - '.github/workflows/backend-ci.yml'
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: backend-ci-${{ github.ref }}
@@ -74,3 +77,16 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Check premium golden-vector parity
+        run: |
+          CONTRACT_VECTORS="../contracts/niffyinsure/golden-vectors.json"
+          BACKEND_VECTORS="src/premium/golden-vectors.json"
+          if [ -f "$CONTRACT_VECTORS" ]; then
+            CONTRACT_SEM=$(node -e "const v=require('$CONTRACT_VECTORS'); console.log(v._meta?.contractSemver ?? '')")
+            BACKEND_SEM=$(node -e "const v=require('./$BACKEND_VECTORS'); console.log(v._meta?.contractSemver ?? '')")
+            if [ "$CONTRACT_SEM" != "$BACKEND_SEM" ]; then
+              echo "::error::Contract golden vectors ($CONTRACT_SEM) differ from backend copy ($BACKEND_SEM). Run scripts/refresh-vectors.ts and commit src/premium/golden-vectors.json."
+              exit 1
+            fi
+          fi

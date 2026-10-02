@@ -12,17 +12,14 @@ pub const IMAGE_URL_MAX_LEN: u32 = 128;
 pub const MAX_EVIDENCE_URL_BYTES: u32 = 2048;
 /// Default evidence attachment limit when admin config is unset.
 pub const IMAGE_URLS_MAX: u32 = 5;
-/// Maximum byte length of a single evidence URL accepted by `file_claim`.
-///
-/// Rationale: Soroban host functions cap total invocation argument size, and
-/// `Vec<ClaimEvidenceEntry>` is passed inline in every `file_claim` call. An
-/// unbounded (or very long) URL string multiplies storage cost per claim and
-/// pushes a batch of evidence entries toward the Soroban argument size limit.
-/// 128 bytes comfortably fits IPFS CIDs and allowlisted gateway URLs while
-/// keeping per-claim storage cost predictable.
-pub const MAX_EVIDENCE_URL_BYTES: u32 = 128;
 pub const REASON_MAX_LEN: u32 = 128;
 pub const SAFETY_SCORE_MAX: u32 = 100;
+/// Max byte length for `metadata_uri` on bind / admin update.
+///
+/// Sized for `ipfs://…` CIDs and short `https://` document URLs while staying
+/// well under Soroban argument-size pressure when packed into
+/// [`InitiatePolicyOptions`].
+pub const MAX_METADATA_URI_BYTES: u32 = 256;
 
 // ── Rejection side-effect thresholds ─────────────────────────────────────────
 //
@@ -87,12 +84,12 @@ pub const QUORUM_BPS_MAX: u32 = 10_000;
 /// One full turn-out / 100% weight in bps (used in the quorum formula below).
 pub const QUORUM_BPS_DENOMINATOR: u32 = 10_000;
 
-/// Absolute maximum protocol fee in basis points.
-pub const PROTOCOL_FEE_BPS_MAX: u32 = 1_000;
+/// Absolute maximum protocol fee in basis points (20%).
+pub const PROTOCOL_FEE_BPS_MAX: u32 = 2_000;
 
-/// Solvency threshold bounds in basis points. `100_000` = 1,000%.
+/// Solvency threshold bounds in basis points. `10_000` = 100%.
 pub const MIN_SOLVENCY_RATIO_BPS_MIN: u32 = 0;
-pub const MIN_SOLVENCY_RATIO_BPS_MAX: u32 = 100_000;
+pub const MIN_SOLVENCY_RATIO_BPS_MAX: u32 = 10_000;
 
 /// Hard cap on `page_size` for `get_inactive_policies`.
 pub const INACTIVE_POLICIES_PAGE_SIZE_MAX: u32 = 20;
@@ -382,6 +379,10 @@ pub enum PauseReason {
 /// never panics or skips records.
 pub const PAGE_SIZE_MAX: u32 = 20;
 
+/// Hard cap on `policy_ids` processed per `process_expired` call.
+/// Matches [`PAGE_SIZE_MAX`] so keepers stay within simulation budgets.
+pub const PROCESS_EXPIRED_MAX: u32 = PAGE_SIZE_MAX;
+
 /// Maximum `(holder, policy_id)` pairs in a single `get_policies_batch` call.
 ///
 /// Intentionally equals [`PAGE_SIZE_MAX`]: each lookup is a separate storage read, so
@@ -402,6 +403,17 @@ pub const CLAIM_BATCH_GET_MAX: u32 = PAGE_SIZE_MAX;
 pub struct PolicyLookupKey {
     pub holder: Address,
     pub policy_id: u32,
+}
+
+/// Ledger boundaries for a single claim's commit-reveal cycle.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommitRevealPhases {
+    /// Last ledger (inclusive) during which commitments are accepted.
+    pub commit_phase_end_ledger: u32,
+    /// Last ledger (inclusive) during which reveals are accepted.
+    /// Must be strictly greater than `commit_phase_end_ledger`.
+    pub reveal_phase_end_ledger: u32,
 }
 
 /// Lightweight policy summary returned by `list_policies`.
@@ -611,10 +623,34 @@ pub enum MultiplierKey {
     SafetyDiscount,
 }
 
-#[contractevent(topics = ["niffyinsure", "premium_table_updated"])]
+/// Emitted when the global multiplier table is replaced (`update_multiplier_table`).
+/// Carries the new table version counter so indexers can track pricing config.
+#[contractevent(topics = ["niffyinsure", "multiplier_table_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PremiumTableUpdated {
+pub struct MultiplierTableUpdated {
     pub version: u32,
+}
+
+/// Backward-compatible alias for [`MultiplierTableUpdated`].
+pub type PremiumTableUpdated = MultiplierTableUpdated;
+
+/// Which engine produced a quote.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CalcSource {
+    Local,
+    External,
+}
+
+/// Read-only quote result returned by `generate_premium` / `generate_premium_for_asset`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuoteResult {
+    pub premium: i128,
+    pub coverage: i128,
+    pub asset: Option<Address>,
+    pub table_version: u32,
+    pub calc_source: CalcSource,
 }
 
 /// Emitted by `admin_set_premium_multiplier` for each granular update.
@@ -819,8 +855,8 @@ pub struct PremiumQuote {
 
 /// Human-readable identity information returned by `get_contract_metadata`.
 ///
-/// All fields are compile-time constants; no storage reads occur on the call path.
-/// Safe to call via simulation without authentication.
+/// After `initialize`, includes the live admin, treasury token, and init ledger.
+/// Safe to call via simulation without authentication once initialized.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractMetadata {
@@ -828,6 +864,9 @@ pub struct ContractMetadata {
     pub version: String,
     /// Short hint identifying the target Stellar network (non-binding, for tooling convenience).
     pub network_passphrase_hint: String,
+    pub admin: Address,
+    pub token: Address,
+    pub init_ledger: u32,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1033,6 +1072,10 @@ pub struct DelegationPermissions {
     pub can_set_asset_config: bool,
     /// Operator may call set_reinsurance_contract.
     pub can_set_reinsurance: bool,
+    /// Operator may call process_payout (approved claim disbursement).
+    pub can_process_payout: bool,
+    /// Operator may call voter management functions (add/remove voters, set weights).
+    pub can_manage_voters: bool,
 }
 
 /// On-chain delegation record stored per operator address.
@@ -1048,12 +1091,24 @@ pub struct DelegationRecord {
 }
 
 /// Discrete permission scope exposed by `list_active_delegated_scopes` (Issue #1149).
+///
+/// # Admin-only operations (operators can never perform these)
+///
+/// The following operations are restricted to the admin key at all times;
+/// scoped operators cannot be granted these via delegation:
+///   - `rotate_admin` / `accept_admin` — key rotation
+///   - `unpause` — restoring contract operation after an emergency pause
+///   - `grant_delegation` / `revoke_delegation` — operators cannot sub-delegate
+///   - `drain` / `sweep` — treasury extraction
+///   - All `admin_set_*` governance parameter setters
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DelegatedScopeKind {
     SetFraudScore,
     SetAssetConfig,
     SetReinsurance,
+    ProcessPayout,
+    ManageVoters,
 }
 
 /// One active delegated scope for an operator address.

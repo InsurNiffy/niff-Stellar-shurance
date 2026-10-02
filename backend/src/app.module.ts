@@ -36,6 +36,7 @@ import { AppLoggerService } from './common/logger/app-logger.service';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
 import { BetaCalculatorsController } from './experimental/beta-calculators.controller';
 import { XdrDecodeController } from './experimental/xdr-decode.controller';
+import { PingController } from './routes/ping.controller';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 import { DeprecationHeadersInterceptor } from './common/versioning/deprecation-headers.interceptor';
 import { V1SunsetInterceptor } from './common/versioning/v1-sunset.interceptor';
@@ -43,6 +44,7 @@ import { RejectUnversionedApiMiddleware } from './common/versioning/reject-unver
 import { LastSeenInterceptor } from './common/interceptors/last-seen.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { PostsModule } from './posts/posts.module';
+import { HorizonModule } from './horizon/horizon.module';
 
 /** Mutation routes that require idempotency key support (issue #363). */
 const IDEMPOTENCY_ROUTES = [
@@ -99,8 +101,9 @@ const IDEMPOTENCY_ROUTES = [
     FeedsModule,
     AssetsModule,
     PostsModule,
+    HorizonModule,
   ],
-  controllers: [OracleHooksController, BetaCalculatorsController, XdrDecodeController],
+  controllers: [OracleHooksController, BetaCalculatorsController, XdrDecodeController, PingController],
   providers: [
     RequestContextMiddleware,
     AppLoggerService,

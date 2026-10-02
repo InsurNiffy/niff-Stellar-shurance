@@ -77,8 +77,12 @@ fn approve_and_pay(
     voter_b: &Address,
     claim_id: u64,
 ) {
+    // Claimant is excluded from the filing snapshot, so with two seeded voters
+    // a single approve can already meet the default 50% participation quorum.
     client.vote_on_claim(voter_a, &claim_id, &VoteOption::Approve);
-    client.vote_on_claim(voter_b, &claim_id, &VoteOption::Approve);
+    if client.get_claim(&claim_id).status == ClaimStatus::Processing {
+        client.vote_on_claim(voter_b, &claim_id, &VoteOption::Approve);
+    }
     assert_eq!(client.get_claim(&claim_id).status, ClaimStatus::Approved);
     client.process_claim(&claim_id);
     assert_eq!(client.get_claim(&claim_id).status, ClaimStatus::Paid);
@@ -101,7 +105,7 @@ fn single_claim_at_cap_succeeds() {
         &AgeBand::Adult,
         &CoverageType::Standard,
         &80,
-        &500_000i128,
+        &1_000_000i128,
         &token,
         &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
     );
@@ -141,7 +145,7 @@ fn two_claims_summing_to_cap_succeed() {
         &AgeBand::Adult,
         &CoverageType::Standard,
         &80,
-        &500_000i128,
+        &1_000_000i128,
         &token,
         &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
     );
@@ -198,7 +202,7 @@ fn file_claim_over_cap_fails() {
         &AgeBand::Adult,
         &CoverageType::Standard,
         &80,
-        &500_000i128,
+        &1_000_000i128,
         &token,
         &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
     );
@@ -241,7 +245,7 @@ fn cap_lowered_after_file_does_not_block_payout() {
         &AgeBand::Adult,
         &CoverageType::Standard,
         &80,
-        &500_000i128,
+        &1_000_000i128,
         &token,
         &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
     );
@@ -263,9 +267,7 @@ fn cap_lowered_after_file_does_not_block_payout() {
     // Stricter cap applies to new filings only; this approved claim must still pay.
     let _ = client.try_set_rolling_claim_cap(&50_000i128).unwrap();
 
-    client.vote_on_claim(&v1, &claim_id, &VoteOption::Approve);
-    client.vote_on_claim(&v2, &claim_id, &VoteOption::Approve);
-    client.process_claim(&claim_id);
+    approve_and_pay(&env, &client, &v1, &v2, claim_id);
 
     assert_eq!(client.get_claim(&claim_id).status, ClaimStatus::Paid);
     assert_eq!(
@@ -290,7 +292,7 @@ fn window_rollover_resets_cumulative() {
         &AgeBand::Adult,
         &CoverageType::Standard,
         &80,
-        &500_000i128,
+        &1_000_000i128,
         &token,
         &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
     );
@@ -340,7 +342,7 @@ fn rolling_cap_resets_across_policy_renewal() {
         &AgeBand::Adult,
         &CoverageType::Standard,
         &80,
-        &500_000i128,
+        &1_000_000i128,
         &token,
         &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
     );
@@ -410,7 +412,7 @@ fn rolling_cap_window_boundary_ledgers() {
         &AgeBand::Adult,
         &CoverageType::Standard,
         &80,
-        &500_000i128,
+        &1_000_000i128,
         &token,
         &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
     );

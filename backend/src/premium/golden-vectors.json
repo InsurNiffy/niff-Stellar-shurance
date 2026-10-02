@@ -1,0 +1,137 @@
+{
+  "_meta": {
+    "contractSemver": "1.0.0",
+    "description": "Golden vectors for premium engine parity. Generated from contracts/niffyinsure test suite.",
+    "note": "All monetary values are in stroops. Rates are in basis points (1 bp = 0.01%)."
+  },
+  "vectors": [
+    {
+      "id": "standard_low_risk",
+      "description": "Low-risk policy, no deductible, full safety discount",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "100",
+        "deductibleAmount": null
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "10000",
+        "ageFactor": "10000",
+        "coverageMult": "10000"
+      },
+      "expectedPremium": "4500000"
+    },
+    {
+      "id": "standard_mid_risk",
+      "description": "Mid-risk policy, partial safety discount, no deductible",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "50",
+        "deductibleAmount": null
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "10000",
+        "ageFactor": "10000",
+        "coverageMult": "10000"
+      },
+      "expectedPremium": "4750000"
+    },
+    {
+      "id": "standard_no_safety",
+      "description": "No safety discount applied",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "0",
+        "deductibleAmount": null
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "10000",
+        "ageFactor": "10000",
+        "coverageMult": "10000"
+      },
+      "expectedPremium": "5000000"
+    },
+    {
+      "id": "high_risk_region_premium",
+      "description": "High-risk region doubles the premium",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "0",
+        "deductibleAmount": null
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "20000",
+        "ageFactor": "10000",
+        "coverageMult": "10000"
+      },
+      "expectedPremium": "10000000"
+    },
+    {
+      "id": "with_deductible",
+      "description": "Deductible reduces premium",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "0",
+        "deductibleAmount": "1000000"
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "10000",
+        "ageFactor": "10000",
+        "coverageMult": "10000"
+      },
+      "expectedPremium": "4000000"
+    },
+    {
+      "id": "deductible_exceeds_premium_floor",
+      "description": "Deductible larger than premium — returns floor of 1",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "99",
+        "deductibleAmount": "999999999"
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "10000",
+        "ageFactor": "10000",
+        "coverageMult": "10000"
+      },
+      "expectedPremium": "1"
+    },
+    {
+      "id": "age_factor_senior",
+      "description": "Senior age band increases premium 50%",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "0",
+        "deductibleAmount": null
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "10000",
+        "ageFactor": "15000",
+        "coverageMult": "10000"
+      },
+      "expectedPremium": "7500000"
+    },
+    {
+      "id": "coverage_tier_comprehensive",
+      "description": "Comprehensive coverage doubles base premium",
+      "input": {
+        "baseAmount": "100000000",
+        "safetyScore": "0",
+        "deductibleAmount": null
+      },
+      "table": {
+        "riskRate": "500",
+        "regionFactor": "10000",
+        "ageFactor": "10000",
+        "coverageMult": "20000"
+      },
+      "expectedPremium": "10000000"
+    }
+  ]
+}

@@ -29,7 +29,7 @@ use niffyinsure::{
 };
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    Address, Env,
+    vec, Address, Env,
 };
 
 fn setup() -> (Env, NiffyInsureClient<'static>, Address) {
@@ -113,7 +113,7 @@ fn valid_active_to_inactive_via_process_expired_after_grace() {
     env.ledger()
         .with_mut(|l| l.sequence_number = end.saturating_add(grace));
 
-    client.process_expired(&holder, &1u32);
+    client.process_expired(&holder, &vec![&env, 1u32]);
 
     let policy = client.get_policy(&holder, &1u32).unwrap();
     assert!(
@@ -188,11 +188,9 @@ fn invalid_process_expired_absent_policy() {
     let (env, client, _admin) = setup();
     let holder = Address::generate(&env);
 
-    let err = client
-        .try_process_expired(&holder, &1u32)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(err, RenewPolicyError::NotFound);
+    // Missing IDs are skipped (idempotent batch); nothing processed.
+    let processed = client.process_expired(&holder, &vec![&env, 1u32]);
+    assert_eq!(processed, 0u32);
 }
 
 // ── Invalid: out-of-order on inactive / never-activated ───────────────────────
@@ -296,12 +294,9 @@ fn invalid_process_expired_before_lapse() {
     let holder = Address::generate(&env);
     let end = 5_000u32;
     seed_active(&client, &holder, end);
-    // now (1000) << end — must not deactivate.
-    let err = client
-        .try_process_expired(&holder, &1u32)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(err, RenewPolicyError::NotYetExpired);
+    // now (1000) << end — batch skips not-yet-expired IDs (idempotent keeper).
+    let processed = client.process_expired(&holder, &vec![&env, 1u32]);
+    assert_eq!(processed, 0u32);
 
     let policy = client.get_policy(&holder, &1u32).unwrap();
     assert!(policy.is_active, "policy must remain active before lapse");

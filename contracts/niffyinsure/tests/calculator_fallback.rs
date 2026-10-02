@@ -1,16 +1,16 @@
 #![cfg(test)]
 
-//! Calculator cross-contract call failure behaviour (fail-closed).
-//!
-//! When a calculator address is configured, a failing call must surface a
-//! typed error — never silently fall back to the local premium engine.
+//! Calculator cross-contract call failure behaviour (fail-open + CalculatorFallback).
 
 use niffyinsure::{
-    types::{AgeBand, CoverageTier, RegionTier, RiskInput},
+    types::{AgeBand, CalcSource, CoverageTier, RegionTier, RiskInput},
     NiffyInsureClient,
 };
-use premium_calculator::PremiumCalculatorClient;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use premium_calculator::{PremiumCalculatorClient, ABI_VERSION};
+use soroban_sdk::{
+    testutils::{Address as _, Events},
+    Address, Env,
+};
 
 fn risk() -> RiskInput {
     RiskInput {
@@ -39,6 +39,14 @@ fn setup_calculator(env: &Env, admin: &Address) -> Address {
     calc_id
 }
 
+fn assert_fallback_emitted(env: &Env) {
+    let events = env.events().all();
+    assert!(
+        events.events().len() > 0,
+        "CalculatorFallback must be emitted when falling back"
+    );
+}
+
 #[test]
 fn no_calculator_uses_local_engine_successfully() {
     let (_env, client, _) = setup_policy();
@@ -46,64 +54,90 @@ fn no_calculator_uses_local_engine_successfully() {
         .try_generate_premium(&risk(), &10_000_000i128, &false)
         .unwrap()
         .unwrap();
-    assert!(quote.total_premium > 0);
+    assert!(quote.premium > 0);
+    assert_eq!(quote.calc_source, CalcSource::Local);
 }
 
 #[test]
-fn paused_calculator_returns_typed_paused_error_not_local_fallback() {
+fn happy_path_external_calculator_returns_external_source() {
     let (env, client, admin) = setup_policy();
     let calc_id = setup_calculator(&env, &admin);
-    let calc = PremiumCalculatorClient::new(&env, &calc_id);
-    calc.set_paused(&true);
-
-    client.set_calculator(&calc_id);
-
-    // initiate_policy / renew go through compute_quote. generate_premium is
-    // local-only today — exercise compute_quote via a bind path that uses it.
-    // Use env.as_contract to call calculator::compute_quote directly.
-    let input = risk();
-    let result = env.as_contract(&client.address, || {
-        niffyinsure::calculator::compute_quote(&env, &input, 10_000_000, false, 100, None)
-    });
-
-    assert_eq!(
-        result,
-        Err(niffyinsure::validate::Error::CalculatorPaused),
-        "paused calculator must return CalculatorPaused, not a local quote"
-    );
-}
-
-#[test]
-fn unreachable_calculator_returns_calculator_call_failed() {
-    let (env, client, _) = setup_policy();
-    // Point at an address with no deployed contract → host invoke failure.
-    let bogus = Address::generate(&env);
-    client.set_calculator(&bogus);
+    client.set_calculator_with_version(&calc_id, &ABI_VERSION);
 
     let input = risk();
-    let result = env.as_contract(&client.address, || {
-        niffyinsure::calculator::compute_quote(&env, &input, 10_000_000, false, 100, None)
-    });
-
-    assert_eq!(
-        result,
-        Err(niffyinsure::validate::Error::CalculatorCallFailed),
-        "unreachable calculator must return CalculatorCallFailed (fail-closed)"
-    );
-}
-
-#[test]
-fn successful_external_calculator_call_returns_quote() {
-    let (env, client, admin) = setup_policy();
-    let calc_id = setup_calculator(&env, &admin);
-    client.set_calculator(&calc_id);
-
-    let input = risk();
-    let quote = env
+    let (quote, source) = env
         .as_contract(&client.address, || {
-            niffyinsure::calculator::compute_quote(&env, &input, 10_000_000, false, 100, None)
+            niffyinsure::calculator::compute_quote_readonly(
+                &env, &input, 10_000_000, false, 100, None,
+            )
         })
         .expect("successful calculator call");
 
     assert!(quote.total_premium > 0);
+    assert_eq!(source, CalcSource::External);
+}
+
+#[test]
+fn paused_calculator_falls_back_to_local_and_emits_event() {
+    let (env, client, admin) = setup_policy();
+    let calc_id = setup_calculator(&env, &admin);
+    let calc = PremiumCalculatorClient::new(&env, &calc_id);
+    calc.set_paused(&true);
+    client.set_calculator(&calc_id);
+
+    let _ = env.events().all(); // drain
+    let input = risk();
+    let (quote, source) = env
+        .as_contract(&client.address, || {
+            niffyinsure::calculator::compute_quote_readonly(
+                &env, &input, 10_000_000, false, 100, None,
+            )
+        })
+        .expect("paused calculator must fall back to local");
+
+    assert!(quote.total_premium > 0);
+    assert_eq!(source, CalcSource::Local);
+    assert_fallback_emitted(&env);
+}
+
+#[test]
+fn wrong_abi_falls_back_to_local_and_emits_event() {
+    let (env, client, admin) = setup_policy();
+    let calc_id = setup_calculator(&env, &admin);
+    client.set_calculator_with_version(&calc_id, &999u32);
+
+    let _ = env.events().all();
+    let input = risk();
+    let (quote, source) = env
+        .as_contract(&client.address, || {
+            niffyinsure::calculator::compute_quote_readonly(
+                &env, &input, 10_000_000, false, 100, None,
+            )
+        })
+        .expect("wrong ABI must fall back to local");
+
+    assert!(quote.total_premium > 0);
+    assert_eq!(source, CalcSource::Local);
+    assert_fallback_emitted(&env);
+}
+
+#[test]
+fn panicking_unreachable_calculator_falls_back_to_local() {
+    let (env, client, _) = setup_policy();
+    let bogus = Address::generate(&env);
+    client.set_calculator(&bogus);
+
+    let _ = env.events().all();
+    let input = risk();
+    let (quote, source) = env
+        .as_contract(&client.address, || {
+            niffyinsure::calculator::compute_quote_readonly(
+                &env, &input, 10_000_000, false, 100, None,
+            )
+        })
+        .expect("unreachable calculator must fall back to local");
+
+    assert!(quote.total_premium > 0);
+    assert_eq!(source, CalcSource::Local);
+    assert_fallback_emitted(&env);
 }

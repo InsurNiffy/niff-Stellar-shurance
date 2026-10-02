@@ -72,3 +72,9 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 <!-- handsoff-issue-1479 -->
 - #1479: Backend — Claim deadline and payout keeper jobs
+
+<!-- handsoff-issue-818 -->
+- #818: Contract — Claim ID overflow guard: u64 counter saturation handling and test
+
+<!-- handsoff-issue-1446 -->
+- #1446: Contract — Claim withdrawal and supplementary evidence

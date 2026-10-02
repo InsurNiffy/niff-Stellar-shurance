@@ -10,7 +10,10 @@ import { AuthController } from './auth.controller';
 import { AuthIdentityService } from './auth-identity.service';
 import { TokenBlacklistService } from './token-blacklist.service';
 import { WalletSignatureService } from './wallet-signature.service';
+import { JwtKeyService } from './jwt-key.service';
 import { CacheModule } from '../cache/cache.module';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
 
 @Module({
   imports: [
@@ -26,7 +29,7 @@ import { CacheModule } from '../cache/cache.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [JwtStrategy, WalletAuthService, NonceService, RefreshTokenService, AuthIdentityService, TokenBlacklistService, WalletSignatureService],
-  exports: [PassportModule, JwtModule, AuthIdentityService, TokenBlacklistService],
+  providers: [JwtStrategy, WalletAuthService, NonceService, RefreshTokenService, AuthIdentityService, TokenBlacklistService, WalletSignatureService, JwtAuthGuard, RolesGuard],
+  exports: [PassportModule, JwtModule, AuthIdentityService, TokenBlacklistService, JwtAuthGuard, RolesGuard],
 })
 export class AuthModule {}

@@ -1,10 +1,11 @@
 //! Calculator ABI version pin: expected pin + last-successful recording.
+//! Wrong ABI triggers fail-open fallback (see calculator_fallback.rs).
 
 #![cfg(test)]
 
 use niffyinsure::{
     calculator,
-    types::{AgeBand, CoverageTier, RegionTier, RiskInput},
+    types::{AgeBand, CalcSource, CoverageTier, RegionTier, RiskInput},
     NiffyInsureClient,
 };
 use premium_calculator::{PremiumCalculator, PremiumCalculatorClient, ABI_VERSION};
@@ -43,7 +44,7 @@ fn abi_version_exposed_by_calculator() {
 }
 
 #[test]
-fn last_calc_abi_version_recorded_on_successful_compute() {
+fn last_calc_abi_version_recorded_on_successful_compute_bind_path() {
     let (env, insure_id, insure, _admin, calc_id) = setup_with_calc();
     assert!(insure.get_last_calc_abi_version().is_none());
 
@@ -70,18 +71,35 @@ fn matching_abi_pin_allows_normal_operation() {
 }
 
 #[test]
-fn version_mismatch_rejects_when_pin_differs() {
+fn version_mismatch_falls_back_without_recording_abi() {
     let (env, insure_id, insure, _admin, calc_id) = setup_with_calc();
 
     insure.set_calculator_with_version(&calc_id, &999u32);
     assert_eq!(insure.get_expected_calc_version(), Some(999u32));
 
-    let err = env.as_contract(&insure_id, || {
-        calculator::compute_quote(&env, &sample_risk(), 1_000_000, false, 100, None)
-    });
-    assert_eq!(
-        err,
-        Err(niffyinsure::validate::Error::CalculatorVersionMismatch)
-    );
+    let (quote, source) = env
+        .as_contract(&insure_id, || {
+            calculator::compute_quote_readonly(&env, &sample_risk(), 1_000_000, false, 100, None)
+        })
+        .expect("wrong ABI falls back to local");
+    assert!(quote.total_premium > 0);
+    assert_eq!(source, CalcSource::Local);
     assert!(insure.get_last_calc_abi_version().is_none());
+}
+
+#[test]
+fn readonly_quote_does_not_persist_abi_version() {
+    let (env, insure_id, insure, _admin, calc_id) = setup_with_calc();
+    insure.set_calculator_with_version(&calc_id, &ABI_VERSION);
+
+    let (_quote, source) = env
+        .as_contract(&insure_id, || {
+            calculator::compute_quote_readonly(&env, &sample_risk(), 1_000_000, false, 100, None)
+        })
+        .unwrap();
+    assert_eq!(source, CalcSource::External);
+    assert!(
+        insure.get_last_calc_abi_version().is_none(),
+        "quote path must not write last_calc_abi_version"
+    );
 }
