@@ -2,6 +2,52 @@
 
 This document outlines the procedure for rolling back database migrations in the NiffyInsure backend system.
 
+## CI Migration Dry-Run
+
+Every pull request that touches `backend/**` triggers the **`migration-diff`** CI job. This job:
+
+1. **Spins up a shadow Postgres database** and applies all existing migrations via `prisma migrate deploy`.
+2. **Runs `prisma migrate diff`** to compute the SQL that would be generated for any pending schema changes:
+   ```bash
+   npx prisma migrate diff \
+     --from-local-db \
+     --to-schema-datamodel prisma/schema.prisma \
+     --script
+   ```
+3. **Uploads `migration-diff.sql`** as a CI artifact (retained 30 days) so reviewers can inspect it without running anything locally.
+4. **Fails the job if destructive statements are detected** — specifically any `DROP TABLE`, `DROP COLUMN`, `DROP INDEX`, `DROP CONSTRAINT`, or `ALTER TABLE … ALTER COLUMN` that could cause data loss.
+
+### Bypass label
+
+If a destructive migration is intentional (e.g., removing a deprecated column after a data-migration release), add the **`migration-bypass-destructive`** label to the PR before CI runs (or re-run the job after adding it). This label:
+
+- Requires a second reviewer to approve before merging.
+- Must be removed again after the PR merges.
+- **Never use for unplanned or unreviewed drops.**
+
+### Reviewing the diff artifact
+
+1. Open the PR's **Checks** tab and find the `migration-diff` job.
+2. Download **`migration-diff-<sha>.zip`** from the job's artifact panel.
+3. Open `migration-diff.sql` and confirm the SQL is safe (no unintended drops, no column-type coercions that truncate data).
+4. If anything looks wrong, push a schema fix **before** requesting review.
+
+### Running the diff locally
+
+```bash
+# Start a local Postgres instance (or point DATABASE_URL at your dev DB)
+export DATABASE_URL="postgresql://prisma:prisma@localhost:5432/niffyinsure_diff"
+
+# Apply existing migrations
+npx prisma migrate deploy
+
+# Generate the diff
+npx prisma migrate diff \
+  --from-local-db \
+  --to-schema-datamodel prisma/schema.prisma \
+  --script
+```
+
 ## Prerequisites
 
 - Access to the production database

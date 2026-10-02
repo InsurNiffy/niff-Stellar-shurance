@@ -151,20 +151,34 @@ The policy contract (`calculator.rs`) maps calculator errors as follows:
 | `Err(Ok(CalcError::*))` | `CalculatorCallFailed` | Other typed calculator errors |
 | `Err(Err(InvokeError))` | `CalculatorCallFailed` | Host-level abort/panic/undeployed |
 
-### Fail-Closed Semantics
+### Fail-Open Semantics (with CalculatorFallback)
 
-The integration follows **fail-closed** semantics:
-- Calculator errors propagate to the caller (no silent fallback during cross-contract call)
-- Undeployed calculator → `CalculatorCallFailed` (host-level `InvokeError`)
-- Paused calculator → `CalculatorPaused` (explicit error code 17)
+**Decision: fail-open to the in-contract engine.**
 
-### Fallback Behavior
+When a calculator address is configured and the external `compute` / ABI check
+fails (pause, wrong ABI, host abort, unreachable address), the policy contract:
 
-**Local engine fallback** only applies when:
-- `CalcAddress` is **not set** (no calculator configured)
-- NOT when calculator call fails (fail-closed)
+1. Emits `CalculatorFallback { reason, calculator }` so ops can alert.
+2. Computes the premium with the audited local `premium::compute_premium` engine.
 
-This prevents silent degradation masking operational issues.
+**Reasoning**
+
+- Mis-pricing from a wrong ABI or paused calculator is worse than using the
+  known-good local engine with an explicit ops signal.
+- Fail-closed would hard-stop all binds/quotes during calculator outages.
+- The fallback event gives SRE the same visibility a hard error would, without
+  stranding policyholders.
+
+Local engine is also used when `CalcAddress` is **not set** (default / pre-
+migration deployments). That path does **not** emit `CalculatorFallback`.
+
+Quote entrypoints use `try_*` / `compute_quote_readonly` so a failing calculator
+never aborts the transaction and never writes ABI metadata (simulation-safe).
+
+### Previous Fail-Closed Note
+
+Earlier revisions documented fail-closed behaviour. That is **superseded** by
+this fail-open + `CalculatorFallback` policy (issues #1431).
 
 ## Type Compatibility
 

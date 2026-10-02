@@ -394,6 +394,12 @@ export class HorizonService {
     });
   }
 
+  async getBalances(account: string): Promise<{ balances: unknown[] }> {
+    const data = await this.getAccount(account);
+    const balances = Array.isArray(data["balances"]) ? (data["balances"] as unknown[]) : [];
+    return { balances };
+  }
+
   async getLedger(ledgerSequence: number): Promise<Record<string, unknown>> {
     if (!Number.isInteger(ledgerSequence) || ledgerSequence < 0) {
       throw new BadRequestException("Ledger sequence must be a non-negative integer");

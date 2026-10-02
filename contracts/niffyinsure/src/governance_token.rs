@@ -35,7 +35,7 @@
 
 use soroban_sdk::{contractevent, contracttype, Address, Env};
 
-use crate::storage::DataKey;
+use crate::storage;
 
 /// Minimal stub type so future exports have a stable name without pulling in token logic.
 #[contracttype]
@@ -78,10 +78,7 @@ pub fn governance_token_effective_enabled(env: &Env) -> bool {
     if !cfg!(feature = "governance-token") {
         return false;
     }
-    env.storage()
-        .instance()
-        .get::<_, bool>(&DataKey::GovernanceTokenRuntimeEnabled)
-        .unwrap_or(false)
+    storage::get_governance_token_runtime_enabled(env)
 }
 
 /// Runtime flag write — **no-op** unless `governance-token` feature is enabled.
@@ -89,16 +86,12 @@ pub fn set_governance_token_runtime_enabled(env: &Env, enabled: bool) {
     if !cfg!(feature = "governance-token") {
         return;
     }
-    env.storage()
-        .instance()
-        .set(&DataKey::GovernanceTokenRuntimeEnabled, &enabled);
+    storage::set_governance_token_runtime_enabled(env, enabled);
 }
 
 #[cfg(feature = "governance-token")]
 pub fn get_governance_token_address(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::GovernanceTokenAddress)
+    storage::get_governance_token_address(env)
 }
 
 #[cfg(not(feature = "governance-token"))]
@@ -108,9 +101,7 @@ pub fn get_governance_token_address(_env: &Env) -> Option<Address> {
 
 #[cfg(feature = "governance-token")]
 pub fn set_governance_token_address(env: &Env, token: &Address) {
-    env.storage()
-        .instance()
-        .set(&DataKey::GovernanceTokenAddress, token);
+    storage::set_governance_token_address(env, token);
 }
 
 #[cfg(not(feature = "governance-token"))]
@@ -142,4 +133,3 @@ mod tests {
         assert!(!governance_token_effective_enabled(&env));
     }
 }
-// Implementation complete

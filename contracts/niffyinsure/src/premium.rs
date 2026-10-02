@@ -13,8 +13,8 @@
 use crate::{
     premium_pure, storage,
     types::{
-        AgeBand, CoverageTier, MultiplierKey, MultiplierTable, PremiumMultiplierUpdated,
-        PremiumQuoteLineItem, PremiumTableUpdated, RegionTier, RiskInput,
+        AgeBand, CoverageTier, MultiplierKey, MultiplierTable, MultiplierTableUpdated,
+        PremiumMultiplierUpdated, PremiumQuoteLineItem, RegionTier, RiskInput,
     },
     validate::Error,
 };
@@ -68,9 +68,9 @@ pub fn get_table_for_asset(env: &Env, asset: &Address) -> MultiplierTable {
 }
 
 pub fn update_multiplier_table(env: &Env, new_table: &MultiplierTable) -> Result<(), Error> {
-    validate_multiplier_table(env, new_table)?;
+    validate_table(env, new_table)?;
     storage::set_multiplier_table(env, new_table);
-    PremiumTableUpdated {
+    MultiplierTableUpdated {
         version: new_table.version,
     }
     .publish(env);
@@ -120,6 +120,16 @@ pub fn admin_set_premium_multiplier(
         key,
         old_value,
         new_value: value,
+    }
+    .publish(env);
+
+    // Bump the table version counter and emit MultiplierTableUpdated so
+    // indexers see a monotonic version stream for every pricing change.
+    let mut bumped = storage::get_multiplier_table(env);
+    bumped.version = bumped.version.saturating_add(1);
+    storage::set_multiplier_table(env, &bumped);
+    MultiplierTableUpdated {
+        version: bumped.version,
     }
     .publish(env);
 
@@ -180,7 +190,9 @@ pub fn build_line_items(env: &Env, computation: &PremiumComputation) -> Vec<Prem
 
 // ── Multiplier table validation (Env-dependent) ───────────────────────────────
 
-fn validate_multiplier_table(env: &Env, table: &MultiplierTable) -> Result<(), Error> {
+/// Validate every table with shape/bounds checks before storing.
+/// Version must be strictly greater than the currently stored global table.
+pub fn validate_table(env: &Env, table: &MultiplierTable) -> Result<(), Error> {
     let current = storage::get_multiplier_table(env);
     if table.version <= current.version {
         return Err(Error::InvalidConfigVersion);
@@ -250,6 +262,10 @@ pub fn admin_set_asset_premium_table(
             validate_asset_table(env, asset, t)?;
             storage::set_asset_premium_table(env, asset, t);
             crate::events::emit_asset_premium_table_set(env, asset, t.version, false);
+            MultiplierTableUpdated {
+                version: t.version,
+            }
+            .publish(env);
         }
     }
 

@@ -10,7 +10,7 @@ use niffyinsure::types::{PolicyStatus, POLICIES_BY_STATUS_PAGE_SIZE_MAX, Termina
 use niffyinsure::{validate::Error as ValidateError, NiffyInsureClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    Address, Env, IntoVal, Vec,
+    vec, Address, Env, IntoVal, Vec,
 };
 
 fn setup() -> (Env, NiffyInsureClient<'static>, Address, Address) {
@@ -106,7 +106,7 @@ fn get_policies_by_status_expired_by_keeper() {
         info.timestamp = 12345;
     });
 
-    client.process_expired(&holder, &1);
+    client.process_expired(&holder, &vec![&env, 1u32]);
 
     let active = client.get_policies_by_status(&PolicyStatus::Active, &0, &10);
     assert_eq!(active.len(), 0u32, "no Active after process_expired");

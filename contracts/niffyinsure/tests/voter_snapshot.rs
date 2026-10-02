@@ -95,10 +95,11 @@ fn snapshot_voter_count_is_immutable_after_filing() {
     let voter2 = Address::generate(&env);
 
     seed(&client, &claimant, 50_000);
-    // Only claimant in registry at filing.
+    // Only claimant in registry at filing → after exclude-claimant, count is 0.
     let cid = file(&env, &client, &claimant);
 
     let count_at_filing = client.get_claim(&cid).eligible_voter_count;
+    assert_eq!(count_at_filing, 0);
 
     // Add another voter after filing.
     seed(&client, &voter2, 50_000);
@@ -106,6 +107,36 @@ fn snapshot_voter_count_is_immutable_after_filing() {
     // Count must not change.
     let count_after = client.get_claim(&cid).eligible_voter_count;
     assert_eq!(count_at_filing, count_after);
+}
+
+#[test]
+fn snapshot_excludes_claimant() {
+    let (env, client, _, _) = setup();
+    let claimant = Address::generate(&env);
+    let voter = Address::generate(&env);
+    seed(&client, &claimant, 50_000);
+    seed(&client, &voter, 50_000);
+    let cid = file(&env, &client, &claimant);
+    let snap = client.test_get_claim_voters(&cid);
+    assert!(!snap.iter().any(|a| a == claimant));
+    assert!(snap.iter().any(|a| a == voter));
+    assert_eq!(snap.len(), 1);
+}
+
+#[test]
+fn snapshot_respects_max_voters_per_claim() {
+    let (env, client, _, _) = setup();
+    let claimant = Address::generate(&env);
+    seed(&client, &claimant, 50_000);
+    for _ in 0..6 {
+        let v = Address::generate(&env);
+        seed(&client, &v, 50_000);
+    }
+    client.admin_set_max_voters_per_claim(&2u32);
+    let cid = file(&env, &client, &claimant);
+    let snap = client.test_get_claim_voters(&cid);
+    assert_eq!(snap.len(), 2);
+    assert!(!snap.iter().any(|a| a == claimant));
 }
 
 // ── Voter in snapshot can cast a vote ────────────────────────────────────────

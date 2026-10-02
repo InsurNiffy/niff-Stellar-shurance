@@ -38,6 +38,36 @@ export class HealthController {
     @Optional() private readonly prisma?: PrismaService,
   ) {}
 
+  @Get('live')
+  @ApiOperation({ summary: 'Liveness probe — process is up' })
+  @ApiResponse({ status: 200, description: 'Process is running' })
+  live(@Res() res: Response): void {
+    res.status(200).json({ status: 'up' });
+  }
+
+  @Get('ready')
+  @ApiOperation({ summary: 'Readiness probe — critical dependencies reachable' })
+  @ApiResponse({ status: 200, description: 'Ready to serve traffic' })
+  @ApiResponse({ status: 503, description: 'Not ready' })
+  async ready(@Res() res: Response): Promise<void> {
+    const [db, redis] = await Promise.all([
+      runProbe(async () => {
+        await this.prismaHealth.isHealthy('db');
+        return { status: 'up' as const };
+      }, 3_000),
+      runProbe(async () => {
+        const up = await checkRedisHealth();
+        return { status: (up ? 'up' : 'down') as ComponentStatus };
+      }, 3_000),
+    ]);
+
+    const ready = db.status === 'up' && redis.status === 'up';
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'up' : 'down',
+      components: { db, redis },
+    });
+  }
+
   @Get()
   @ApiOperation({ summary: 'Component-level health check' })
   @ApiResponse({ status: 200, description: 'All components healthy' })

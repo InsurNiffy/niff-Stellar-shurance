@@ -63,8 +63,8 @@ fn get_admin_panics_when_instance_storage_expired() {
 }
 
 /// `propose_admin` calls `require_admin` internally, which reads the Admin key
-/// and calls `require_auth()`. With the Admin key gone, it panics with
-/// `AdminError::Unauthorized` rather than a generic unhandled error.
+/// and calls `require_auth()`. With the Admin key gone, it returns
+/// `AdminError::NotInitialized` rather than a generic unhandled error.
 #[test]
 fn propose_admin_returns_unauthorized_when_instance_storage_expired() {
     let (env, client, _admin, _token, contract_id) = setup();
@@ -72,7 +72,7 @@ fn propose_admin_returns_unauthorized_when_instance_storage_expired() {
     let new_admin = Address::generate(&env);
 
     let err = client.try_propose_admin(&new_admin).err().unwrap().unwrap();
-    assert_eq!(err, AdminError::Unauthorized.into());
+    assert_eq!(err, AdminError::NotInitialized.into());
 }
 
 /// `set_allowed_asset` calls `require_admin` internally. Confirms that
@@ -88,7 +88,7 @@ fn set_allowed_asset_returns_unauthorized_when_instance_storage_expired() {
         .err()
         .unwrap()
         .unwrap();
-    assert_eq!(err, AdminError::Unauthorized.into());
+    assert_eq!(err, AdminError::NotInitialized.into());
 }
 
 /// After expiry the contract can be re-initialized via `initialize()`.

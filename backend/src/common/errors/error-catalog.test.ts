@@ -10,6 +10,12 @@ describe('ERROR_CATALOG structure', () => {
     expect(CATALOG_ENTRIES.length).toBeGreaterThan(0);
   });
 
+  it('no two entries share the same code string', () => {
+    const codes = CATALOG_ENTRIES.map(([, e]) => e.code);
+    const unique = new Set(codes);
+    expect(unique.size).toBe(codes.length);
+  });
+
   it.each(CATALOG_ENTRIES)('%s has required fields', (code, entry) => {
     expect(entry.code).toBe(code);
     expect(typeof entry.httpStatus).toBe('number');

@@ -6,7 +6,7 @@
 #![cfg(test)]
 
 use premium_calculator::{
-    types::{AgeBand, CalcInput, CoverageTier, MultiplierTable, RegionTier, SCALE},
+    types::{AgeBand, CalcInput, CoverageTier, MultiplierTable, RegionTier},
     CalcError, PremiumCalculator, PremiumCalculatorClient,
 };
 use soroban_sdk::{map, testutils::Address as _, Address, Env};
@@ -90,8 +90,9 @@ fn compute_happy_path_returns_positive_premium() {
 #[test]
 fn compute_applies_multipliers_deterministically() {
     let (_env, client, _admin) = setup();
-    // Medium(10000) * Adult(10000) * Standard(10000) * safety(10000 - 50%*2000)
-    // = base * 1 * 1 * 1 * 0.9 = 900_000
+    // Pure engine (ceil region/age/coverage, floor safety):
+    // Medium(10000) * Adult(10000) * Standard(10000) * safety(9000) on base 1_000_000
+    // = 900_000
     let input = CalcInput {
         region: RegionTier::Medium,
         age_band: AgeBand::Adult,
@@ -100,10 +101,29 @@ fn compute_applies_multipliers_deterministically() {
         base_amount: 1_000_000,
     };
     let result = client.compute(&input);
-    let safety = SCALE - (50i128 * 2_000 / 100);
-    let expected =
-        (((1_000_000i128 * 10_000 / SCALE) * 10_000 / SCALE) * 10_000 / SCALE) * safety / SCALE;
-    assert_eq!(result.premium, expected.max(1));
+    assert_eq!(result.premium, 900_000);
+}
+
+#[test]
+fn compute_parity_with_in_contract_golden_vectors() {
+    let (_env, client, _admin) = setup();
+    let high_young_premium = CalcInput {
+        region: RegionTier::High,
+        age_band: AgeBand::Young,
+        coverage: CoverageTier::Premium,
+        safety_score: 80,
+        base_amount: 12_345_678,
+    };
+    assert_eq!(client.compute(&high_young_premium).premium, 22_749_999);
+
+    let low_senior_basic = CalcInput {
+        region: RegionTier::Low,
+        age_band: AgeBand::Senior,
+        coverage: CoverageTier::Basic,
+        safety_score: 0,
+        base_amount: 7_654_321,
+    };
+    assert_eq!(client.compute(&low_senior_basic).premium, 6_733_890);
 }
 
 #[test]

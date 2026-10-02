@@ -112,7 +112,7 @@ pub fn initiate_policy(
 
     storage::set_policy(env, &holder, policy_id, &policy);
     storage::increment_holder_active_policies(env, &holder);
-    storage::voters_ensure_holder(env, &holder);
+    let _ = storage::voters_ensure_holder(env, &holder);
     // Issue #812: index the new policy for status-based queries.
     storage::index_new_policy(env, &holder, policy_id, &policy);
 
@@ -122,11 +122,17 @@ pub fn initiate_policy(
 /// Holder-initiated termination. Blocks while `OpenClaimCount(holder, policy_id) > 0`.
 /// Calculates a pro-rata refund of unused premium and transfers it from treasury to holder.
 ///
-/// Refund formula: `premium * remaining_ledgers / total_ledgers`
-/// where `remaining_ledgers = max(0, end_ledger - now)` and
+/// # Product decision — pro-rata refund
+/// Holder-initiated voluntary termination refunds unused premium:
+/// `premium * remaining_ledgers / total_ledgers` where
+/// `remaining_ledgers = max(0, end_ledger - now)` and
 /// `total_ledgers = end_ledger - start_ledger`.
+/// Admin terminations intentionally pay **no** automatic refund (governance /
+/// fraud / regulatory exits). Lapse via `process_expired` pays no refund.
 ///
-/// Termination is blocked if any claim on this policy is in `Processing` status.
+/// # Open claims
+/// Termination is blocked while any claim is open or in `Processing` status
+/// (unless admin sets `allow_open_claims` on `admin_terminate_policy`).
 pub fn terminate_policy(
     env: &Env,
     holder: Address,
@@ -276,9 +282,14 @@ fn terminate_inner(
 
     // Transfer refund from treasury to holder (only for holder-initiated termination).
     // Admin terminations do not trigger automatic refunds.
+    // Release reserved coverage regardless of refund path (issue #1426).
+    let _ = crate::ledger::release_coverage(env, &policy.asset, policy.coverage);
     if !by_admin && refund_amount > 0 {
         let treasury = storage::get_treasury(env);
-        token::transfer(env, &policy.asset, &treasury, holder, refund_amount);
+        // CEI: debit internal treasury before host transfer.
+        let _ = crate::ledger::record_payout_out(env, &policy.asset, refund_amount, 0);
+        // Grandfathered bound asset (may be delisted — issue #1425).
+        token::transfer_bound_asset(env, &policy.asset, &treasury, holder, refund_amount);
     }
 
     emit_policy_terminated(

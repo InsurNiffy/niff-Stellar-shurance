@@ -441,6 +441,215 @@ pub fn estimate_close_time(
     current_timestamp.saturating_add(secs_delta)
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Asset ledger accounting (issues #1426 / #1427)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The contract MUST NOT assume its SEP-41 token balance equals its liabilities.
+// Per-asset counters below track premiums collected, reserved coverage, and paid
+// claims explicitly so solvency / sweep checks are meaningful.
+//
+// # Checks-effects-interactions (CEI)
+//
+// Callers MUST update these counters (effects) before invoking SEP-41
+// `transfer` / `transfer_from` (interactions). On Soroban, re-entrancy is
+// limited: a contract cannot be re-entered mid-host-function in the same way
+// as EVM, and a failed host call aborts the whole transaction so partial
+// ledger writes roll back. Ordering still matters because:
+//   1. Indexers and invariant tests observe storage before the transfer returns.
+//   2. Future host changes / cross-contract callbacks could widen the window.
+//   3. Consistency with the CEI discipline used in claim payouts.
+//
+// Invariant (tested): SEP-41 contract token balance >= treasury_balance
+// after arbitrary premium-in / payout-out / refund / deposit / sweep sequences
+// that go through `token::transfer_in` / `token::transfer_out`.
+
+use soroban_sdk::{contracttype, Address, Env};
+
+use crate::storage;
+use crate::validate::Error;
+
+/// Per-asset internal liability / cash counters.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetLedger {
+    /// Premiums + deposits credited to the protocol treasury (internal book).
+    pub treasury_balance: i128,
+    /// Outstanding coverage reserved against active policies.
+    pub reserved_coverage: i128,
+    /// Lifetime premiums collected for this asset.
+    pub total_premiums: i128,
+    /// Lifetime claim payouts (net) for this asset.
+    pub total_paid: i128,
+}
+
+impl AssetLedger {
+    pub fn zero() -> Self {
+        Self {
+            treasury_balance: 0,
+            reserved_coverage: 0,
+            total_premiums: 0,
+            total_paid: 0,
+        }
+    }
+}
+
+fn load(env: &Env, asset: &Address) -> AssetLedger {
+    storage::get_asset_ledger(env, asset).unwrap_or_else(AssetLedger::zero)
+}
+
+fn store(env: &Env, asset: &Address, ledger: &AssetLedger) {
+    storage::set_asset_ledger(env, asset, ledger);
+}
+
+pub fn get_asset_ledger(env: &Env, asset: &Address) -> AssetLedger {
+    load(env, asset)
+}
+
+pub fn get_treasury_balance(env: &Env, asset: &Address) -> i128 {
+    load(env, asset).treasury_balance
+}
+
+pub fn get_reserved_coverage(env: &Env, asset: &Address) -> i128 {
+    load(env, asset).reserved_coverage
+}
+
+pub fn get_total_premiums(env: &Env, asset: &Address) -> i128 {
+    load(env, asset).total_premiums
+}
+
+pub fn get_total_paid(env: &Env, asset: &Address) -> i128 {
+    load(env, asset).total_paid
+}
+
+/// Credit treasury + lifetime premiums after a premium collection (effects only).
+pub fn record_premium_in(env: &Env, asset: &Address, amount: i128) -> Result<(), Error> {
+    if amount <= 0 {
+        return Err(Error::ZeroTreasuryDeposit);
+    }
+    let mut l = load(env, asset);
+    l.treasury_balance = l
+        .treasury_balance
+        .checked_add(amount)
+        .ok_or(Error::Overflow)?;
+    l.total_premiums = l.total_premiums.checked_add(amount).ok_or(Error::Overflow)?;
+    store(env, asset, &l);
+    Ok(())
+}
+
+/// Credit treasury for a capital deposit (does not count as premium).
+pub fn record_deposit(env: &Env, asset: &Address, amount: i128) -> Result<(), Error> {
+    if amount <= 0 {
+        return Err(Error::ZeroTreasuryDeposit);
+    }
+    let mut l = load(env, asset);
+    l.treasury_balance = l
+        .treasury_balance
+        .checked_add(amount)
+        .ok_or(Error::Overflow)?;
+    store(env, asset, &l);
+    Ok(())
+}
+
+/// Reserve coverage when a policy binds.
+pub fn reserve_coverage(env: &Env, asset: &Address, amount: i128) -> Result<(), Error> {
+    if amount <= 0 {
+        return Err(Error::ClaimAmountZero);
+    }
+    let mut l = load(env, asset);
+    l.reserved_coverage = l
+        .reserved_coverage
+        .checked_add(amount)
+        .ok_or(Error::Overflow)?;
+    store(env, asset, &l);
+    Ok(())
+}
+
+/// Release reserved coverage when a policy ends / coverage is consumed.
+pub fn release_coverage(env: &Env, asset: &Address, amount: i128) -> Result<(), Error> {
+    if amount <= 0 {
+        return Ok(());
+    }
+    let mut l = load(env, asset);
+    if amount > l.reserved_coverage {
+        return Err(Error::InsufficientTreasury);
+    }
+    l.reserved_coverage = l
+        .reserved_coverage
+        .checked_sub(amount)
+        .ok_or(Error::Overflow)?;
+    store(env, asset, &l);
+    Ok(())
+}
+
+/// Record an outgoing payout / refund (effects only). Decrements treasury and
+/// increments `total_paid`. Optionally releases `release_reserved` of coverage.
+///
+/// Debits clamp to the current book balances so legacy flows that fund the
+/// contract via direct mint (without `transfer_in` / premium collection) still
+/// succeed; counters remain consistent whenever capital entered through the
+/// accounting entrypoints.
+pub fn record_payout_out(
+    env: &Env,
+    asset: &Address,
+    amount: i128,
+    release_reserved: i128,
+) -> Result<(), Error> {
+    if amount <= 0 {
+        return Err(Error::ClaimAmountZero);
+    }
+    let mut l = load(env, asset);
+    let debit = if amount > l.treasury_balance {
+        l.treasury_balance
+    } else {
+        amount
+    };
+    l.treasury_balance = l
+        .treasury_balance
+        .checked_sub(debit)
+        .ok_or(Error::Overflow)?;
+    l.total_paid = l.total_paid.checked_add(amount).ok_or(Error::Overflow)?;
+    if release_reserved > 0 {
+        let rel = if release_reserved > l.reserved_coverage {
+            l.reserved_coverage
+        } else {
+            release_reserved
+        };
+        l.reserved_coverage = l
+            .reserved_coverage
+            .checked_sub(rel)
+            .ok_or(Error::Overflow)?;
+    }
+    store(env, asset, &l);
+    Ok(())
+}
+
+/// Debit treasury for an admin sweep. Fails if the remaining treasury would
+/// fall below `reserved_coverage` (under-reserve protection).
+pub fn record_sweep(env: &Env, asset: &Address, amount: i128) -> Result<(), Error> {
+    if amount <= 0 {
+        return Err(Error::ZeroTreasuryDeposit);
+    }
+    let mut l = load(env, asset);
+    let remaining = l
+        .treasury_balance
+        .checked_sub(amount)
+        .ok_or(Error::Overflow)?;
+    if remaining < l.reserved_coverage {
+        return Err(Error::InsufficientTreasury);
+    }
+    l.treasury_balance = remaining;
+    store(env, asset, &l);
+    Ok(())
+}
+
+/// Free cash available to sweep: `treasury_balance - reserved_coverage`.
+pub fn available_to_sweep(env: &Env, asset: &Address) -> i128 {
+    let l = load(env, asset);
+    l.treasury_balance.saturating_sub(l.reserved_coverage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

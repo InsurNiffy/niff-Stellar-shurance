@@ -161,3 +161,40 @@ describe('HealthController', () => {
     expect(res.body.components.horizon.responseTimeMs).toBeDefined();
   });
 });
+
+describe('HealthController — liveness and readiness probes', () => {
+  let app: INestApplication;
+
+  afterEach(async () => {
+    await app?.close();
+  });
+
+  it('GET /health/live returns 200', async () => {
+    app = await buildApp({});
+    const res = await request(app.getHttpServer()).get('/health/live');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('up');
+  });
+
+  it('GET /health/ready returns 200 when db and redis are up', async () => {
+    app = await buildApp({});
+    const res = await request(app.getHttpServer()).get('/health/ready');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('up');
+  });
+
+  it('GET /health/ready returns 503 when db is down', async () => {
+    app = await buildApp({ prisma: makePrismaHealth(false) });
+    const res = await request(app.getHttpServer()).get('/health/ready');
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('down');
+    expect(res.body.components.db.status).toBe('down');
+  });
+
+  it('GET /health/ready returns 503 when redis is down', async () => {
+    app = await buildApp({ redis: false });
+    const res = await request(app.getHttpServer()).get('/health/ready');
+    expect(res.status).toBe(503);
+    expect(res.body.components.redis.status).toBe('down');
+  });
+});

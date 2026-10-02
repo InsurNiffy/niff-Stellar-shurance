@@ -1,28 +1,62 @@
+//! Centralized Soroban storage accessors.
+//!
+//! **Invariant:** this module is the *only* production module that may call
+//! `env.storage()`. All other modules must go through the typed getters/setters
+//! below. A lint-style unit test (`storage_access_lint`) enforces the rule.
+//!
+//! # Storage tiers
+//!
+//! | Tier | Keys | Notes |
+//! |------|------|-------|
+//! | **Instance** | Admin, Token, Pause*, counters, config | Loaded on every call — keep small |
+//! | **Persistent** | Policy, Claim, Vote, indexes | Long-lived; bumped on every write/hot read |
+//! | **Temporary** | HolderNonce, short-lived locks | Cheap; expire unless refreshed |
+//!
+//! # Pause matrix (operation × flag)
+//!
+//! | Operation | global | bind | claims |
+//! |-----------|--------|------|--------|
+//! | Reads / metadata | ✅ | ✅ | ✅ |
+//! | `withdraw_claim` | ✅ | ✅ | ✅ |
+//! | `initiate_policy` / renew / bind | ❌ | ❌ | ✅ |
+//! | `file_claim` / vote / finalize / payout | ❌ | ✅ | ❌ |
+//! | Admin pause/unpause / rotation | ✅ | ✅ | ✅ |
+//!
+//! ✅ = allowed, ❌ = blocked when that flag is set. Global pause blocks bind
+//! and claims groups; reads and `withdraw_claim` stay available so users are
+//! not trapped.
+
 use soroban_sdk::{contracttype, Address, Env, Map, String, Vec};
 
 use crate::ledger;
 use crate::types::{
-    Claim, MultiplierTable, Policy, PolicyLookupKey, PolicyStatus, RollingClaimWindowState,
+    Claim, MultiplierTable, Policy, PolicyLookupKey, RollingClaimWindowState,
     VoteDelegation, VoteOption,
 };
+use crate::validate;
 
 // ── TTL constants ─────────────────────────────────────────────────────────────
 ///
 /// # TTL Management Strategy
 ///
-/// Soroban persistent storage entries expire when their TTL reaches zero.
+/// Derived from Stellar's ~5s ledger close time (`ledger::SECS_PER_LEDGER`):
+/// - 1 day  ≈ 17_280 ledgers
+/// - 1 week ≈ 120_960 ledgers
+/// - 1 year ≈ 6_307_200 ledgers
+///
+/// Soroban persistent/instance entries expire when their TTL reaches zero.
 /// This contract uses a systematic approach to prevent data loss:
 ///
 /// ## Constants and Their Relationships
 ///
-/// - `PERSISTENT_TTL_THRESHOLD` (100,000 ledgers ~ 5.8 days): When remaining TTL
-///   falls below this threshold, `extend_ttl` operations will extend the entry.
-///
-/// - `PERSISTENT_TTL_EXTEND_TO` (6,000,000 ledgers ~ 1 year): Target TTL after
-///   extension. Provides ~12x buffer over maximum policy duration (518,400 ledgers ~ 30 days).
-///
-/// - `DEFAULT_TTL_ALERT_THRESHOLD` (600,000 ledgers ~ 1 month): Default alert
-///   threshold for TTL expiry notifications (10% of PERSISTENT_TTL_EXTEND_TO).
+/// - `INSTANCE_BUMP` / `PERSISTENT_BUMP` (= `PERSISTENT_TTL_EXTEND_TO`,
+///   6,000,000 ledgers ≈ 347 days @ 5s): target live TTL after every bump.
+/// - `PERSISTENT_TTL_THRESHOLD` (100,000 ledgers ≈ 5.8 days): when remaining TTL
+///   falls below this, `extend_ttl` re-extends toward the bump target.
+/// - `TEMPORARY_BUMP` (172_800 ledgers ≈ 10 days): short-lived nonce/lock TTL.
+/// - `TEMPORARY_TTL_THRESHOLD` (17_280 ledgers ≈ 1 day): temporary extend gate.
+/// - `DEFAULT_TTL_ALERT_THRESHOLD` (600,000 ledgers ≈ 1 month): default alert
+///   threshold for TTL expiry notifications (10% of PERSISTENT bump).
 ///
 /// ## Policy Duration Relationship
 ///
@@ -43,6 +77,20 @@ use crate::types::{
 pub const PERSISTENT_TTL_THRESHOLD: u32 = 100_000;
 /// Target TTL after extension (in ledgers, ~1 year).
 pub const PERSISTENT_TTL_EXTEND_TO: u32 = 6_000_000;
+
+/// Instance-storage bump target (ledgers). Same magnitude as persistent —
+/// instance is loaded on every call, so we keep it alive for a full year.
+pub const INSTANCE_BUMP: u32 = PERSISTENT_TTL_EXTEND_TO;
+/// Persistent-storage bump target (ledgers). Alias of [`PERSISTENT_TTL_EXTEND_TO`].
+pub const PERSISTENT_BUMP: u32 = PERSISTENT_TTL_EXTEND_TO;
+/// Temporary-storage bump target (~10 days @ 5s/ledger) for nonces/locks.
+pub const TEMPORARY_BUMP: u32 = 172_800;
+/// Temporary extend threshold (~1 day @ 5s/ledger).
+pub const TEMPORARY_TTL_THRESHOLD: u32 = 17_280;
+
+/// Hard cap on policies per holder. Unbounded `Vec` growth in a single entry
+/// is not allowed; counters + paginated reads replace per-holder lists.
+pub const MAX_POLICIES_PER_HOLDER: u32 = 256;
 
 // ── Claim voter snapshot TTL (persistent `ClaimVoters`) ───────────────────────
 //
@@ -65,6 +113,15 @@ pub const CLAIM_VOTER_SNAPSHOT_EXTEND_TO: u32 =
 // ── DataKey ───────────────────────────────────────────────────────────────────
 
 /// Exhaustive enumeration of every storage key used by the contract.
+///
+/// ## Instance-tier keys (loaded on every call — keep the set small)
+///
+/// `Admin`, `PendingAdmin`, `PendingAdminExpiry`, `Token`, `Treasury`,
+/// `ProtocolFeeBps`, `FeeRecipient`, `MinSolvencyRatioBps`, `PremiumTable`,
+/// `CalcAddress`, `Voters`, `ClaimCounter`, `Paused`, `PauseReason`,
+/// `PendingAdminAction`, sweep/governance config, role admins, `InitLedger`,
+/// and other unit config flags. Do **not** put per-policy or per-claim payloads
+/// in instance storage.
 #[contracttype]
 pub enum DataKey {
     // ── Instance tier ────────────────────────────────────────────────────
@@ -73,6 +130,8 @@ pub enum DataKey {
     /// Expiry ledger for pending admin proposal (time lock).
     PendingAdminExpiry,
     Token,
+    /// Ledger sequence at which `initialize` succeeded (instance).
+    InitLedger,
     /// Address where collected premiums are sent.
     Treasury,
     /// Basis-point protocol fee deducted from each premium payment.
@@ -85,7 +144,16 @@ pub enum DataKey {
     CalcAddress,
     /// Boolean allowlist flag per asset contract address.
     AllowedAsset(Address),
+    /// Legacy single-vec voter registry (migrated once into `VoterBucket`s).
     Voters,
+    /// Fixed-size voter registry bucket (persistent) → `Vec<Address>`.
+    VoterBucket(u32),
+    /// Number of allocated voter buckets (instance; small metadata).
+    VoterBucketCount,
+    /// Membership index for O(1) contains (persistent).
+    VoterMember(Address),
+    /// Cached voter registry length (instance).
+    VoterRegistryLen,
     ClaimCounter,
     Paused,
     /// Active pause reason when the contract is paused.
@@ -274,6 +342,9 @@ pub enum DataKey {
     // ── Issue #782: Token decimal normalization ───────────────────────────────
     /// Stored decimals for an allowlisted asset (queried at bind time).
     AssetDecimals(Address),
+    // ── Issue #1426: Per-asset internal ledger accounting ─────────────────────
+    /// Internal liability counters for an asset (treasury, reserved, premiums, paid).
+    AssetLedger(Address),
 }
 
 pub fn has_open_claim(env: &Env, holder: &Address, policy_id: u32) -> bool {
@@ -294,20 +365,35 @@ pub fn set_open_claim(env: &Env, holder: &Address, policy_id: u32, open: bool) {
 pub fn bump_instance(env: &Env) {
     env.storage()
         .instance()
-        .extend_ttl(PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .extend_ttl(PERSISTENT_TTL_THRESHOLD, INSTANCE_BUMP);
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
+pub fn has_admin(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::Admin)
+}
+
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
+    bump_instance(env);
+}
+
+pub fn try_get_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Admin)
 }
 
 pub fn get_admin(env: &Env) -> Address {
-    env.storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .expect("contract not initialised: admin missing")
+    try_get_admin(env).expect("contract not initialised: admin missing")
+}
+
+pub fn set_init_ledger(env: &Env, ledger: u32) {
+    env.storage().instance().set(&DataKey::InitLedger, &ledger);
+    bump_instance(env);
+}
+
+pub fn get_init_ledger(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::InitLedger)
 }
 
 pub fn set_pending_admin(env: &Env, pending: &Address) {
@@ -548,10 +634,15 @@ pub fn get_grace_period_ledgers(env: &Env) -> u32 {
 
 pub fn set_calc_address(env: &Env, addr: &Address) {
     env.storage().instance().set(&DataKey::CalcAddress, addr);
+    bump_instance(env);
 }
 
 pub fn get_calc_address(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::CalcAddress)
+}
+
+pub fn clear_calc_address(env: &Env) {
+    env.storage().instance().remove(&DataKey::CalcAddress);
 }
 
 // ── Premium table ─────────────────────────────────────────────────────────────
@@ -586,52 +677,64 @@ pub fn is_allowed_asset(env: &Env, asset: &Address) -> bool {
 // PAUSE SYSTEM
 //
 // Granular pause flags for operational flexibility:
-//   - bind_paused: blocks new policy initiation/renewal
-//   - claims_paused: blocks filing claims and voting
+//   - global: blocks bind + claims groups (reads + withdraw_claim stay up)
+//   - bind:   blocks new policy initiation/renewal
+//   - claims: blocks filing claims, voting, and payouts
 //
-// Read-only methods continue to work for transparency.
-// Admin-triggered payouts (process_claim) continue during pause to avoid trapping funds.
+// See module-level pause matrix docs above.
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Pause flags: separate controls for binding new policies vs filing claims.
-/// Both false by default (unpaused state).
+/// Which operation group an entrypoint belongs to for pause checks.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum PauseScope {
+    /// Policy bind / renew / initiate.
+    Bind = 0,
+    /// Claim filing, voting, finalize, payout.
+    Claims = 1,
+    /// Anything blocked by a global pause (bind ∪ claims).
+    Global = 2,
+}
+
+/// Pause flags: global + separate bind/claims controls.
+/// All false by default (unpaused state).
 #[contracttype]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PauseFlags {
+    pub global: bool,
     pub bind_paused: bool,
     pub claims_paused: bool,
 }
 
-/// Central assertion: panics if ANY pause flag is set.
-/// Use for entrypoints that should be blocked by any pause.
-pub fn assert_not_paused(env: &Env) {
-    if is_paused(env) {
+/// Central assertion: panics when `scope` is blocked by the active flags.
+pub fn assert_not_paused(env: &Env, scope: PauseScope) {
+    let flags = get_pause_flags(env);
+    let blocked = match scope {
+        PauseScope::Bind => flags.global || flags.bind_paused,
+        PauseScope::Claims => flags.global || flags.claims_paused,
+        PauseScope::Global => flags.global || flags.bind_paused || flags.claims_paused,
+    };
+    if blocked {
         panic!("protocol paused for maintenance");
     }
 }
 
 /// Assertion for policy binding operations (initiate/renew policy).
-/// Only blocks if bind_paused is true.
 pub fn assert_bind_not_paused(env: &Env) {
-    let flags = get_pause_flags(env);
-    if flags.bind_paused {
-        panic!("protocol paused for maintenance: policy binding disabled");
-    }
+    assert_not_paused(env, PauseScope::Bind);
 }
 
 /// Assertion for claim operations (file claim, vote, finalize).
-/// Only blocks if claims_paused is true.
+/// Does **not** apply to `withdraw_claim` (always available).
 pub fn assert_claims_not_paused(env: &Env) {
-    let flags = get_pause_flags(env);
-    if flags.claims_paused {
-        panic!("protocol paused for maintenance: claims disabled");
-    }
+    assert_not_paused(env, PauseScope::Claims);
 }
 
-/// Get current pause state (legacy compatibility - returns true if ANY flag is set).
+/// Returns true if any pause flag is set.
 pub fn is_paused(env: &Env) -> bool {
     let flags = get_pause_flags(env);
-    flags.bind_paused || flags.claims_paused
+    flags.global || flags.bind_paused || flags.claims_paused
 }
 
 /// Get detailed pause flags.
@@ -642,18 +745,21 @@ pub fn get_pause_flags(env: &Env) -> PauseFlags {
         .unwrap_or_default()
 }
 
-/// Set full pause state (legacy compatibility - sets both flags).
+/// Set full pause state (legacy: sets global + bind + claims together).
 pub fn set_paused(env: &Env, paused: bool) {
     let flags = PauseFlags {
+        global: paused,
         bind_paused: paused,
         claims_paused: paused,
     };
     env.storage().instance().set(&DataKey::Paused, &flags);
+    bump_instance(env);
 }
 
 /// Set granular pause flags.
 pub fn set_pause_flags(env: &Env, flags: &PauseFlags) {
     env.storage().instance().set(&DataKey::Paused, flags);
+    bump_instance(env);
 }
 
 /// Set the pause reason. Pass `None` to clear (on unpause).
@@ -686,14 +792,34 @@ pub fn next_claim_id(env: &Env) -> Result<u64, crate::validate::Error> {
     Ok(next)
 }
 
-// ── Voters (instance) ─────────────────────────────────────────────────────────
+// ── Voters (bucketed instance storage) ────────────────────────────────────────
+//
+// # Layout
+// Voters are stored in fixed-size **persistent** buckets (`VoterBucket(i)` of
+// capacity [`VOTER_BUCKET_SIZE`]) plus instance metadata (`VoterBucketCount`,
+// `VoterRegistryLen`) and persistent `VoterMember(Address) -> bool` for O(1)
+// membership. Buckets/members use persistent storage so the instance blob
+// cannot grow without bound as the registry approaches [`MAX_ELIGIBLE_VOTERS`].
+//
+// # Sybil-resistance assumption
+// Eligibility is **one address per active policy holder**: an address enters the
+// registry when it first binds an active policy (or via admin batch), and is
+// removed when its active-policy count hits zero. There is **no** on-chain
+// proof that distinct addresses belong to distinct real-world identities.
+// Known limits: a determined actor can open many wallets and buy cheap policies
+// to inflate voting power; economic cost of premiums and off-chain KYC for
+// large coverage are the only mitigations (see ADR-0002). Caps
+// (`MAX_ELIGIBLE_VOTERS`, `max_voters_per_claim`) bound gas/storage impact, not
+// Sybil identity.
+//
+// # Legacy migration
+// Pre-bucket deployments stored a single `DataKey::Voters` vector. The first
+// registry read/write that observes that key redistributes addresses into
+// buckets and removes the legacy key.
 
-pub fn get_voters(env: &Env) -> Vec<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::Voters)
-        .unwrap_or_else(|| Vec::new(env))
-}
+/// Addresses per `VoterBucket` entry. Chosen so ~5 000 voters fit in ~80 buckets
+/// while keeping each entry well under Soroban value-size pressure.
+pub const VOTER_BUCKET_SIZE: u32 = 64;
 
 /// Hard cap on the size of the voter registry. Enforced atomically across an
 /// entire `add_voters_batch` call so a batch that would exceed the cap reverts
@@ -702,65 +828,381 @@ pub fn get_voters(env: &Env) -> Vec<Address> {
 /// # Gas safety rationale
 ///
 /// Soroban charges CPU instructions per storage read and write. An unbounded
-/// voter registry means that `get_voters` (which reads the entire `Vec<Address>`
-/// from persistent storage) and iteration over it during snapshot creation or
-/// finalization would consume an ever-growing share of the per-transaction
-/// instruction budget. At 5 000 entries the worst-case read is still well
-/// within the default Soroban budget (≈ 100 M instructions); beyond that the
-/// cost grows linearly and risks hitting the limit during snapshot creation or
-/// claim finalization loops. The cap is set to 5 000 because:
+/// voter registry means that `get_voters` (which reads every bucket) and
+/// iteration during snapshot creation or finalization would consume an
+/// ever-growing share of the per-transaction instruction budget. At 5 000
+/// entries the worst-case read is still well within the default Soroban budget
+/// (≈ 100 M instructions); beyond that the cost grows linearly and risks
+/// hitting the limit during snapshot creation or claim finalization loops.
+/// The cap is set to 5 000 because:
 ///   - Typical governance protocols have far fewer voters.
-///   - 5 000 addresses × ~200 instructions each ≈ 1 M instructions, leaving
+///   - 5 000 addresses × ~200 instructions each ≈ 1 M instructions, leaving
 ///     ample headroom for the rest of the transaction logic.
 ///   - A larger cap would not meaningfully improve decentralisation but would
 ///     make gas costs unpredictable and risk transaction failure.
 pub const MAX_ELIGIBLE_VOTERS: u32 = 5_000;
+
+fn get_voter_bucket_count(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::VoterBucketCount)
+        .unwrap_or(0)
+}
+
+fn set_voter_bucket_count(env: &Env, count: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::VoterBucketCount, &count);
+}
+
+fn get_voter_bucket(env: &Env, index: u32) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::VoterBucket(index))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn set_voter_bucket(env: &Env, index: u32, bucket: &Vec<Address>) {
+    let key = DataKey::VoterBucket(index);
+    env.storage().persistent().set(&key, bucket);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+}
+
+fn remove_voter_bucket(env: &Env, index: u32) {
+    let key = DataKey::VoterBucket(index);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+fn set_voter_member(env: &Env, addr: &Address, present: bool) {
+    let key = DataKey::VoterMember(addr.clone());
+    if present {
+        env.storage().persistent().set(&key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    } else if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+fn voter_member_get(env: &Env, holder: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::VoterMember(holder.clone()))
+        .unwrap_or(false)
+}
+
+fn set_voter_registry_len_raw(env: &Env, len: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::VoterRegistryLen, &len);
+}
+
+/// O(1) registry length (maintained by add/remove; refreshed on legacy migrate).
+pub fn voter_registry_len(env: &Env) -> u32 {
+    migrate_legacy_voters_if_needed(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::VoterRegistryLen)
+        .unwrap_or(0)
+}
+
+/// O(1) membership via `VoterMember` index (falls back after migrate).
+pub fn voter_registry_contains(env: &Env, holder: &Address) -> bool {
+    migrate_legacy_voters_if_needed(env);
+    voter_member_get(env, holder)
+}
+
+/// One-shot redistribution of legacy `DataKey::Voters` into buckets.
+fn migrate_legacy_voters_if_needed(env: &Env) {
+    if !env.storage().instance().has(&DataKey::Voters) {
+        return;
+    }
+    let legacy: Vec<Address> = env
+        .storage()
+        .instance()
+        .get(&DataKey::Voters)
+        .unwrap_or_else(|| Vec::new(env));
+    env.storage().instance().remove(&DataKey::Voters);
+
+    // Reset bucket state then re-append (legacy vec is already unique).
+    let old_count = get_voter_bucket_count(env);
+    for i in 0..old_count {
+        remove_voter_bucket(env, i);
+    }
+    set_voter_bucket_count(env, 0);
+    set_voter_registry_len_raw(env, 0);
+
+    for addr in legacy.iter() {
+        append_voter_unchecked(env, &addr);
+    }
+}
+
+/// Append without membership/cap checks (caller guarantees uniqueness + headroom).
+fn append_voter_unchecked(env: &Env, holder: &Address) {
+    let bucket_count = get_voter_bucket_count(env);
+    if bucket_count == 0 {
+        let mut bucket = Vec::new(env);
+        bucket.push_back(holder.clone());
+        set_voter_bucket(env, 0, &bucket);
+        set_voter_bucket_count(env, 1);
+    } else {
+        let last = bucket_count - 1;
+        let mut bucket = get_voter_bucket(env, last);
+        if bucket.len() >= VOTER_BUCKET_SIZE {
+            let mut bucket = Vec::new(env);
+            bucket.push_back(holder.clone());
+            set_voter_bucket(env, bucket_count, &bucket);
+            set_voter_bucket_count(env, bucket_count + 1);
+        } else {
+            bucket.push_back(holder.clone());
+            set_voter_bucket(env, last, &bucket);
+        }
+    }
+    set_voter_member(env, holder, true);
+    let len = env
+        .storage()
+        .instance()
+        .get::<_, u32>(&DataKey::VoterRegistryLen)
+        .unwrap_or(0)
+        .saturating_add(1);
+    set_voter_registry_len_raw(env, len);
+}
+
+pub fn get_voters(env: &Env) -> Vec<Address> {
+    migrate_legacy_voters_if_needed(env);
+    let bucket_count = get_voter_bucket_count(env);
+    let mut out = Vec::new(env);
+    for i in 0..bucket_count {
+        let bucket = get_voter_bucket(env, i);
+        for addr in bucket.iter() {
+            out.push_back(addr);
+        }
+    }
+    out
+}
 
 /// Batch-register `addresses` as voters, skipping addresses already present
 /// (in storage or earlier in the same batch) so duplicates cannot corrupt the
 /// registry or double-count. The `MAX_ELIGIBLE_VOTERS` cap is checked against
 /// the final, de-duplicated size of the registry *before* any write happens,
 /// so a batch that would exceed the cap reverts atomically with zero partial
-/// writes, returning [`validate::Error::VoterRegistryFull`].
+/// writes, returning [`crate::validate::Error::VoterRegistryFull`].
 ///
 /// Returns the list of addresses actually added (in call order), which the
 /// caller uses to emit one `VoterAdded` event per address.
-pub fn add_voters_batch(env: &Env, addresses: &Vec<Address>) -> Result<Vec<Address>, validate::Error> {
-    let mut voters = get_voters(env);
+pub fn add_voters_batch(env: &Env, addresses: &Vec<Address>) -> Result<Vec<Address>, crate::validate::Error> {
+    migrate_legacy_voters_if_needed(env);
     let mut to_add: Vec<Address> = Vec::new(env);
 
     for addr in addresses.iter() {
-        let mut already_present = false;
-        for v in voters.iter() {
+        if voter_registry_contains(env, &addr) {
+            continue;
+        }
+        let mut already_in_batch = false;
+        for v in to_add.iter() {
             if v == addr {
-                already_present = true;
+                already_in_batch = true;
                 break;
             }
         }
-        if !already_present {
-            for v in to_add.iter() {
-                if v == addr {
-                    already_present = true;
-                    break;
-                }
-            }
-        }
-        if !already_present {
+        if !already_in_batch {
             to_add.push_back(addr.clone());
         }
     }
 
-    let projected_len = voters.len().saturating_add(to_add.len());
+    let projected_len = voter_registry_len(env).saturating_add(to_add.len());
     if projected_len > MAX_ELIGIBLE_VOTERS {
-        return Err(validate::Error::VoterRegistryFull);
+        return Err(crate::validate::Error::VoterRegistryFull);
     }
 
     for addr in to_add.iter() {
-        voters.push_back(addr.clone());
+        append_voter_unchecked(env, &addr);
     }
-    set_voters(env, &voters);
 
     Ok(to_add)
+}
+
+/// Legacy helper retained for tests that rewrite the full list.
+pub fn set_voters(env: &Env, voters: &Vec<Address>) {
+    migrate_legacy_voters_if_needed(env);
+    // Clear existing buckets + membership.
+    let old_count = get_voter_bucket_count(env);
+    for i in 0..old_count {
+        let bucket = get_voter_bucket(env, i);
+        for addr in bucket.iter() {
+            set_voter_member(env, &addr, false);
+        }
+        remove_voter_bucket(env, i);
+    }
+    set_voter_bucket_count(env, 0);
+    set_voter_registry_len_raw(env, 0);
+    for addr in voters.iter() {
+        if !voter_registry_contains(env, &addr) {
+            append_voter_unchecked(env, &addr);
+        }
+    }
+}
+
+/// Add `holder` to the voter set (if not already present) and increment
+/// their active-policy count by 1.
+///
+/// Reverts with [`crate::validate::Error::VoterRegistryFull`] when the registry
+/// is already at [`MAX_ELIGIBLE_VOTERS`].
+pub fn add_voter(env: &Env, holder: &Address) -> Result<(), crate::validate::Error> {
+    let mut voters = get_voters(env);
+    let mut found = false;
+    for v in voters.iter() {
+        if v == *holder {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        if voters.len() >= MAX_ELIGIBLE_VOTERS {
+            return Err(validate::Error::VoterRegistryFull);
+        }
+        append_voter_unchecked(env, holder);
+    }
+
+    let key = DataKey::ActivePolicyCount(holder.clone());
+    let count: u32 = env.storage().instance().get(&key).unwrap_or(0);
+    env.storage().instance().set(&key, &(count + 1));
+    Ok(())
+}
+
+pub fn increment_holder_active_policies(env: &Env, holder: &Address) {
+    let key = DataKey::ActivePolicyCount(holder.clone());
+    let count: u32 = env.storage().instance().get(&key).unwrap_or(0);
+    env.storage().instance().set(&key, &(count + 1));
+}
+
+pub fn decrement_holder_active_policies(env: &Env, holder: &Address) {
+    let key = DataKey::ActivePolicyCount(holder.clone());
+    let next = get_active_policy_count(env, holder).saturating_sub(1);
+    env.storage().instance().set(&key, &next);
+}
+
+pub fn get_holder_active_policy_count(env: &Env, holder: &Address) -> u32 {
+    get_active_policy_count(env, holder)
+}
+
+pub fn voters_ensure_holder(env: &Env, holder: &Address) -> Result<(), crate::validate::Error> {
+    let mut voters = get_voters(env);
+    let mut found = false;
+    for v in voters.iter() {
+        if v == *holder {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        if voters.len() >= MAX_ELIGIBLE_VOTERS {
+            return Err(validate::Error::VoterRegistryFull);
+        }
+        append_voter_unchecked(env, holder);
+    }
+    Ok(())
+}
+
+/// Removes `holder` from the voter list (no-op if absent).
+///
+/// Uses swap-with-last within the bucketed layout so removal stays O(buckets)
+/// in storage traffic and never materialises the full registry in one value
+/// (critical near [`MAX_ELIGIBLE_VOTERS`] where a full rewrite exceeds budget).
+pub fn remove_voter(env: &Env, holder: &Address) {
+    migrate_legacy_voters_if_needed(env);
+    if !voter_registry_contains(env, holder) {
+        return;
+    }
+
+    let bucket_count = get_voter_bucket_count(env);
+    let mut found_bucket: Option<u32> = None;
+    let mut found_offset: u32 = 0;
+    for i in 0..bucket_count {
+        let bucket = get_voter_bucket(env, i);
+        for j in 0..bucket.len() {
+            if bucket.get(j).unwrap() == *holder {
+                found_bucket = Some(i);
+                found_offset = j;
+                break;
+            }
+        }
+        if found_bucket.is_some() {
+            break;
+        }
+    }
+    let Some(bi) = found_bucket else {
+        set_voter_member(env, holder, false);
+        return;
+    };
+
+    let last_bi = bucket_count.saturating_sub(1);
+    let last_bucket = get_voter_bucket(env, last_bi);
+    let last_offset = last_bucket.len().saturating_sub(1);
+    let tail = last_bucket.get(last_offset).unwrap();
+
+    if bi == last_bi {
+        // Same-bucket remove: swap with last element (if needed), then pop.
+        let mut bucket = last_bucket;
+        if found_offset != last_offset {
+            bucket.set(found_offset, tail);
+        }
+        let mut truncated = Vec::new(env);
+        for j in 0..last_offset {
+            truncated.push_back(bucket.get(j).unwrap());
+        }
+        if truncated.is_empty() {
+            remove_voter_bucket(env, last_bi);
+            set_voter_bucket_count(env, last_bi);
+        } else {
+            set_voter_bucket(env, last_bi, &truncated);
+        }
+    } else {
+        // Cross-bucket: overwrite target slot with last element, then pop last bucket.
+        let mut target = get_voter_bucket(env, bi);
+        target.set(found_offset, tail);
+        set_voter_bucket(env, bi, &target);
+
+        let mut truncated = Vec::new(env);
+        for j in 0..last_offset {
+            truncated.push_back(last_bucket.get(j).unwrap());
+        }
+        if truncated.is_empty() {
+            remove_voter_bucket(env, last_bi);
+            set_voter_bucket_count(env, last_bi);
+        } else {
+            set_voter_bucket(env, last_bi, &truncated);
+        }
+    }
+
+    set_voter_member(env, holder, false);
+    let len = voter_registry_len(env).saturating_sub(1);
+    set_voter_registry_len_raw(env, len);
+}
+
+pub fn voters_remove_holder(env: &Env, holder: &Address) {
+    remove_voter(env, holder);
+}
+
+/// Returns the number of active policies for `holder` (vote weight).
+pub fn get_active_policy_count(env: &Env, holder: &Address) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ActivePolicyCount(holder.clone()))
+        .unwrap_or(0)
+}
+
+pub fn get_open_claim_count(env: &Env, holder: &Address, policy_id: u32) -> u32 {
+    if has_open_claim(env, holder, policy_id) {
+        1
+    } else {
+        0
+    }
 }
 
 // ── Governance proposals ─────────────────────────────────────────────────────
@@ -812,105 +1254,6 @@ pub fn has_proposal_vote(env: &Env, proposal_id: u64, voter: &Address) -> bool {
         .has(&DataKey::ProposalVote(proposal_id, voter.clone()))
 }
 
-pub fn set_voters(env: &Env, voters: &Vec<Address>) {
-    env.storage().instance().set(&DataKey::Voters, voters);
-}
-
-/// Add `holder` to the voter set (if not already present) and increment
-/// their active-policy count by 1.
-///
-/// Reverts with [`validate::Error::VoterRegistryFull`] when the registry
-/// is already at [`MAX_ELIGIBLE_VOTERS`].
-pub fn add_voter(env: &Env, holder: &Address) -> Result<(), validate::Error> {
-    let mut voters = get_voters(env);
-    let mut found = false;
-    for v in voters.iter() {
-        if v == *holder {
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        if voters.len() >= MAX_ELIGIBLE_VOTERS as usize {
-            return Err(validate::Error::VoterRegistryFull);
-        }
-        voters.push_back(holder.clone());
-    }
-    set_voters(env, &voters);
-
-    let key = DataKey::ActivePolicyCount(holder.clone());
-    let count: u32 = env.storage().instance().get(&key).unwrap_or(0);
-    env.storage().instance().set(&key, &(count + 1));
-    Ok(())
-}
-
-pub fn increment_holder_active_policies(env: &Env, holder: &Address) {
-    let key = DataKey::ActivePolicyCount(holder.clone());
-    let count: u32 = env.storage().instance().get(&key).unwrap_or(0);
-    env.storage().instance().set(&key, &(count + 1));
-}
-
-pub fn decrement_holder_active_policies(env: &Env, holder: &Address) {
-    let key = DataKey::ActivePolicyCount(holder.clone());
-    let next = get_active_policy_count(env, holder).saturating_sub(1);
-    env.storage().instance().set(&key, &next);
-}
-
-pub fn get_holder_active_policy_count(env: &Env, holder: &Address) -> u32 {
-    get_active_policy_count(env, holder)
-}
-
-pub fn voters_ensure_holder(env: &Env, holder: &Address) -> Result<(), validate::Error> {
-    let mut voters = get_voters(env);
-    let mut found = false;
-    for v in voters.iter() {
-        if v == *holder {
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        if voters.len() >= MAX_ELIGIBLE_VOTERS as usize {
-            return Err(validate::Error::VoterRegistryFull);
-        }
-        voters.push_back(holder.clone());
-        set_voters(env, &voters);
-    }
-    Ok(())
-}
-
-/// Removes `holder` from the voter list (no-op if absent).
-pub fn remove_voter(env: &Env, holder: &Address) {
-    let voters = get_voters(env);
-    let mut updated: Vec<Address> = Vec::new(env);
-    for v in voters.iter() {
-        if v != *holder {
-            updated.push_back(v);
-        }
-    }
-    set_voters(env, &updated);
-}
-
-pub fn voters_remove_holder(env: &Env, holder: &Address) {
-    remove_voter(env, holder);
-}
-
-/// Returns the number of active policies for `holder` (vote weight).
-pub fn get_active_policy_count(env: &Env, holder: &Address) -> u32 {
-    env.storage()
-        .instance()
-        .get(&DataKey::ActivePolicyCount(holder.clone()))
-        .unwrap_or(0)
-}
-
-pub fn get_open_claim_count(env: &Env, holder: &Address, policy_id: u32) -> u32 {
-    if has_open_claim(env, holder, policy_id) {
-        1
-    } else {
-        0
-    }
-}
-
 // ── Policy counter (persistent) ───────────────────────────────────────────────
 
 pub fn get_policy_counter(env: &Env, holder: &Address) -> u32 {
@@ -946,10 +1289,13 @@ pub fn get_policy_counter(env: &Env, holder: &Address) -> u32 {
 pub fn next_policy_id(env: &Env, holder: &Address) -> u32 {
     let key = DataKey::PolicyCounter(holder.clone());
     let next: u32 = env.storage().persistent().get(&key).unwrap_or(0u32) + 1;
+    if next > MAX_POLICIES_PER_HOLDER {
+        panic!("max policies per holder exceeded");
+    }
     env.storage().persistent().set(&key, &next);
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_BUMP);
     next
 }
 
@@ -966,13 +1312,26 @@ pub fn set_policy(env: &Env, holder: &Address, policy_id: u32, policy: &Policy) 
     env.storage().persistent().set(&key, policy);
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_BUMP);
 }
 
 pub fn get_policy(env: &Env, holder: &Address, policy_id: u32) -> Option<Policy> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Policy(holder.clone(), policy_id))
+    let key = DataKey::Policy(holder.clone(), policy_id);
+    let policy = env.storage().persistent().get(&key);
+    if policy.is_some() {
+        // Hot read: keep active policies alive.
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_BUMP);
+    }
+    policy
+}
+
+pub fn remove_policy(env: &Env, holder: &Address, policy_id: u32) {
+    let key = DataKey::Policy(holder.clone(), policy_id);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
 }
 
 // ── Issue #812: Policy status index (persistent) ─────────────────────────────
@@ -1135,11 +1494,18 @@ pub fn set_claim(env: &Env, claim: &Claim) {
     env.storage().persistent().set(&key, claim);
     env.storage()
         .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_BUMP);
 }
 
 pub fn get_claim(env: &Env, claim_id: u64) -> Option<Claim> {
-    env.storage().persistent().get(&DataKey::Claim(claim_id))
+    let key = DataKey::Claim(claim_id);
+    let claim = env.storage().persistent().get(&key);
+    if claim.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_BUMP);
+    }
+    claim
 }
 
 // ── Vote (persistent) ─────────────────────────────────────────────────────────
@@ -1240,16 +1606,81 @@ pub fn delegated_vote_weight(
 }
 
 // ── Claim voters snapshot (persistent) ───────────────────────────────────────
+//
+// # Snapshot construction (`snapshot_claim_voters`)
+// 1. Load the global voter registry in stable bucket order.
+// 2. **Exclude the claimant** (self-vote is never eligible).
+// 3. If the eligible count exceeds `max_voters_per_claim`, deterministically
+//    sample a subset of size `max` seeded by `claim_id`:
+//    - Walk indices `0..eligible.len()` in registry order.
+//    - Use a 64-bit LCG (`state = state * 6364136223846793005 + 1`) seeded
+//      with `claim_id ^ 0x9E3779B97F4A7C15` to run a partial Fisher–Yates
+//      shuffle on the first `max` positions.
+//    - Persist the first `max` addresses after the shuffle.
+// The algorithm is pure (no `Env` randomness) so two nodes replaying the same
+// claim always produce the identical electorate.
 
-pub fn snapshot_claim_voters(env: &Env, claim_id: u64) {
+pub fn snapshot_claim_voters(env: &Env, claim_id: u64, claimant: &Address) {
     let voters = get_voters(env);
+    let mut eligible: Vec<Address> = Vec::new(env);
+    for v in voters.iter() {
+        if v != *claimant {
+            eligible.push_back(v);
+        }
+    }
+
+    let max = get_max_voters_per_claim(env);
+    let selected = if eligible.len() > max {
+        sample_voters_by_claim_id(env, &eligible, max, claim_id)
+    } else {
+        eligible
+    };
+
     let key = DataKey::ClaimVoters(claim_id);
-    env.storage().persistent().set(&key, &voters);
+    env.storage().persistent().set(&key, &selected);
     env.storage().persistent().extend_ttl(
         &key,
         CLAIM_VOTER_SNAPSHOT_TTL_THRESHOLD,
         CLAIM_VOTER_SNAPSHOT_EXTEND_TO,
     );
+}
+
+/// Deterministic subset selection for oversized electorates (see module docs).
+fn sample_voters_by_claim_id(
+    env: &Env,
+    eligible: &Vec<Address>,
+    max: u32,
+    claim_id: u64,
+) -> Vec<Address> {
+    let n = eligible.len();
+    if max == 0 || n == 0 {
+        return Vec::new(env);
+    }
+    let take = max.min(n);
+    // Copy into a working vec for in-place partial Fisher–Yates.
+    let mut work: Vec<Address> = Vec::new(env);
+    for v in eligible.iter() {
+        work.push_back(v);
+    }
+    let mut state = claim_id ^ 0x9E3779B97F4A7C15u64;
+    for i in 0..take {
+        state = state
+            .wrapping_mul(6364136223846793005u64)
+            .wrapping_add(1);
+        let rem = (n - i) as u64;
+        let j = i + (state % rem) as u32;
+        if i != j {
+            let a = work.get(i).unwrap();
+            let b = work.get(j).unwrap();
+            work.set(i, b);
+            work.set(j, a);
+        }
+    }
+    let mut out: Vec<Address> = Vec::new(env);
+    for i in 0..take {
+        out.push_back(work.get(i).unwrap());
+    }
+    out
 }
 
 pub fn set_claim_voters(env: &Env, claim_id: u64, voters: &Vec<Address>) {
@@ -1664,7 +2095,7 @@ pub fn set_policy_expired_event_end_ledger(
 
 pub fn get_holder_nonce(env: &Env, holder: &Address) -> u64 {
     env.storage()
-        .persistent()
+        .temporary()
         .get(&DataKey::HolderNonce(holder.clone()))
         .unwrap_or(0u64)
 }
@@ -1675,10 +2106,10 @@ pub fn increment_holder_nonce(env: &Env, holder: &Address) -> u64 {
         .checked_add(1)
         .unwrap_or_else(|| panic!("holder nonce overflow"));
     let key = DataKey::HolderNonce(holder.clone());
-    env.storage().persistent().set(&key, &next);
+    env.storage().temporary().set(&key, &next);
     env.storage()
-        .persistent()
-        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        .temporary()
+        .extend_ttl(&key, TEMPORARY_TTL_THRESHOLD, TEMPORARY_BUMP);
     next
 }
 
@@ -1856,15 +2287,17 @@ pub fn bump_policy_ttl(env: &Env, holder: &Address, policy_id: u32) -> bool {
     env.storage().persistent().extend_ttl(
         &policy_key,
         PERSISTENT_TTL_THRESHOLD,
-        PERSISTENT_TTL_EXTEND_TO,
+        PERSISTENT_BUMP,
     );
 
     let counter_key = DataKey::PolicyCounter(holder.clone());
-    env.storage().persistent().extend_ttl(
-        &counter_key,
-        PERSISTENT_TTL_THRESHOLD,
-        PERSISTENT_TTL_EXTEND_TO,
-    );
+    if env.storage().persistent().has(&counter_key) {
+        env.storage().persistent().extend_ttl(
+            &counter_key,
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_BUMP,
+        );
+    }
 
     true
 }
@@ -2610,4 +3043,18 @@ pub fn get_asset_decimals(env: &Env, asset: &Address) -> Option<u32> {
     env.storage()
         .instance()
         .get(&DataKey::AssetDecimals(asset.clone()))
+}
+
+// ── Issue #1426: Per-asset internal ledger accounting ─────────────────────────
+
+pub fn set_asset_ledger(env: &Env, asset: &Address, ledger: &crate::ledger::AssetLedger) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AssetLedger(asset.clone()), ledger);
+}
+
+pub fn get_asset_ledger(env: &Env, asset: &Address) -> Option<crate::ledger::AssetLedger> {
+    env.storage()
+        .instance()
+        .get(&DataKey::AssetLedger(asset.clone()))
 }

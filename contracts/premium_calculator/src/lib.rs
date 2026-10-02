@@ -1,15 +1,28 @@
+//! Pure premium calculation functions — no `Env` dependency.
+//!
+//! # Sharing with `niffyinsure` (issue #1428)
+//!
+//! The authoritative staged formula and golden vectors live in
+//! `contracts/niffyinsure/src/premium_pure.rs` and
+//! `contracts/niffyinsure/testdata/golden-vectors.json`.
+//!
+//! **Choice:** do not duplicate that module here. This calculator contract keeps
+//! a thin on-chain `compute` entrypoint for cross-contract quotes; numerical
+//! parity with niffyinsure is enforced by the golden-vector suite. A shared
+//! crate was considered but deferred because error enums differ and both crates
+//! already ship independently deployable WASMs. Prefer `#[path]` / workspace
+//! extraction if a third consumer appears.
 #![no_std]
 
 mod errors;
+mod premium_pure;
 mod storage;
 pub mod types;
 
 pub use errors::CalcError;
+pub use premium_pure::{compute_premium as pure_compute_premium, PureInput};
 use soroban_sdk::{contract, contractevent, contractimpl, Address, Env};
-use types::{
-    CalcInput, CalcResult, MultiplierTable, MAX_MULTIPLIER, MAX_SAFETY_DISCOUNT, MIN_MULTIPLIER,
-    SCALE,
-};
+use types::{CalcInput, CalcResult, MultiplierTable, MAX_MULTIPLIER, MAX_SAFETY_DISCOUNT, MIN_MULTIPLIER};
 
 /// Stable ABI identifier for cross-contract integrators (e.g. `niffyinsure`).
 /// Bump only when `CalcInput` / `CalcResult` / entrypoint shape breaks compatibility.
@@ -43,15 +56,22 @@ impl PremiumCalculator {
     }
 
     /// Core pricing entrypoint — called cross-contract by the policy contract.
+    /// Delegates arithmetic to the shared pure engine (`premium_pure`).
     pub fn compute(env: Env, input: CalcInput) -> Result<CalcResult, CalcError> {
         if storage::is_paused(&env) {
             return Err(CalcError::Paused);
         }
         let table = storage::get_table(&env).ok_or(CalcError::NotInitialized)?;
-        let premium = compute_premium(&input, &table)?;
+        let pure_input = PureInput {
+            region: input.region,
+            age_band: input.age_band,
+            coverage: input.coverage,
+            safety_score: input.safety_score,
+        };
+        let computation = premium_pure::compute_premium(&pure_input, input.base_amount, &table)?;
         Ok(CalcResult {
-            premium,
-            config_version: table.version,
+            premium: computation.total_premium,
+            config_version: computation.config_version,
         })
     }
 
@@ -93,7 +113,7 @@ impl PremiumCalculator {
         Ok(())
     }
 
-    /// Admin: pause/unpause the calculator (bind-fail-closed when paused).
+    /// Admin: pause/unpause the calculator.
     pub fn set_paused(env: Env, paused: bool) -> Result<(), CalcError> {
         let admin = storage::get_admin(&env).ok_or(CalcError::NotInitialized)?;
         admin.require_auth();
@@ -103,40 +123,8 @@ impl PremiumCalculator {
     }
 }
 
-// ── Internal math ─────────────────────────────────────────────────────────────
-
-fn compute_premium(input: &CalcInput, table: &MultiplierTable) -> Result<i128, CalcError> {
-    if input.base_amount <= 0 {
-        return Err(CalcError::InvalidBaseAmount);
-    }
-    if input.safety_score > 100 {
-        return Err(CalcError::SafetyScoreOutOfRange);
-    }
-
-    let r = table
-        .region
-        .get(input.region.clone())
-        .ok_or(CalcError::MissingRegionMultiplier)?;
-    let a = table
-        .age
-        .get(input.age_band.clone())
-        .ok_or(CalcError::MissingAgeMultiplier)?;
-    let c = table
-        .coverage
-        .get(input.coverage.clone())
-        .ok_or(CalcError::MissingCoverageMultiplier)?;
-
-    let earned = mul_ratio(input.safety_score as i128, table.safety_discount, 100)?;
-    let safety = checked_sub(SCALE, earned)?;
-
-    let v = mul_ratio(input.base_amount, r, SCALE)?;
-    let v = mul_ratio(v, a, SCALE)?;
-    let v = mul_ratio(v, c, SCALE)?;
-    let v = mul_ratio(v, safety, SCALE)?;
-    Ok(v.max(1))
-}
-
-fn validate_table(t: &MultiplierTable) -> Result<(), CalcError> {
+/// Validate every row before persisting a multiplier table.
+pub fn validate_table(t: &MultiplierTable) -> Result<(), CalcError> {
     if t.region.len() != 3u32 {
         return Err(CalcError::MissingRegionMultiplier);
     }
@@ -166,23 +154,6 @@ fn validate_table(t: &MultiplierTable) -> Result<(), CalcError> {
         return Err(CalcError::SafetyDiscountOutOfBounds);
     }
     Ok(())
-}
-
-fn mul_ratio(amount: i128, num: i128, den: i128) -> Result<i128, CalcError> {
-    if amount < 0 || num < 0 || den < 0 {
-        return Err(CalcError::NegativePremiumNotSupported);
-    }
-    if den == 0 {
-        return Err(CalcError::DivideByZero);
-    }
-    amount
-        .checked_mul(num)
-        .ok_or(CalcError::Overflow)
-        .map(|p| p / den)
-}
-
-fn checked_sub(a: i128, b: i128) -> Result<i128, CalcError> {
-    a.checked_sub(b).ok_or(CalcError::Overflow)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -365,20 +336,27 @@ mod tests {
     }
 
     #[test]
-    fn mul_ratio_divide_by_zero_returns_typed_error() {
-        let err = mul_ratio(100, 1, 0).unwrap_err();
-        assert_eq!(err, CalcError::DivideByZero);
+    fn compute_matches_pure_engine_golden_vector() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        // Same golden vector as niffyinsure::premium tests:
+        // Medium/Adult/Standard/safety=50, base=1_000_000 → 900_000
+        let result = client.compute(&sample_input(&env));
+        assert_eq!(result.premium, 900_000);
     }
 
     #[test]
-    fn mul_ratio_negative_returns_typed_error() {
-        let err = mul_ratio(-1, 1, SCALE).unwrap_err();
-        assert_eq!(err, CalcError::NegativePremiumNotSupported);
-    }
-
-    #[test]
-    fn mul_ratio_overflow_returns_typed_error() {
-        let err = mul_ratio(i128::MAX, 2, 1).unwrap_err();
-        assert_eq!(err, CalcError::Overflow);
+    fn compute_matches_high_young_premium_golden_vector() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let input = CalcInput {
+            region: RegionTier::High,
+            age_band: AgeBand::Young,
+            coverage: CoverageTier::Premium,
+            safety_score: 80,
+            base_amount: 12_345_678,
+        };
+        let result = client.compute(&input);
+        assert_eq!(result.premium, 22_749_999);
     }
 }

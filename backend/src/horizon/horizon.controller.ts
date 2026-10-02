@@ -14,39 +14,43 @@ import type { Response } from "express";
 import { HorizonService } from "./horizon.service";
 import { HorizonTransactionResponse } from "./dto/horizon-transaction.dto";
 
-@Controller("horizon")
+/**
+ * Horizon proxy controller.
+ *
+ * Routes (all under the global /api/v1 prefix via URI versioning):
+ *   GET /v1/accounts/:address/transactions   — paginated operation history
+ *   GET /v1/accounts/:address/balances       — account balances
+ */
+@Controller("accounts")
 export class HorizonController {
   private readonly logger = new Logger(HorizonController.name);
 
   constructor(private readonly horizonService: HorizonService) {}
 
   /**
-   * GET /api/horizon/transactions?account=<address>&cursor=<paging_token>&limit=<n>
+   * GET /v1/accounts/:address/transactions
    *
-   * Proxies operation history from Horizon filtered to payment-relevant types.
-   * Rate limited to 30 requests per 60 seconds per wallet address.
+   * Cursor-paginated operation history for a Stellar account.
+   * Filters to payment-relevant types and enriches with contract events.
+   *
+   * Query params:
+   *   cursor  — paging_token from a previous response (optional)
+   *   limit   — number of records to return, 1–200 (default 20)
    */
-  @Get("transactions")
+  @Get(":address/transactions")
   @HttpCode(HttpStatus.OK)
   async getTransactions(
-    @Query("account") account: string,
+    @Param("address") address: string,
     @Query("cursor") cursor?: string,
     @Query("limit") limitStr?: string,
     @Res({ passthrough: true }) res?: Response,
   ): Promise<HorizonTransactionResponse> {
-    if (!account) {
-      throw new HttpException(
-        "account query parameter is required",
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    const limit = limitStr ? parseInt(limitStr, 10) : 20;
-    if (isNaN(limit)) {
+    const limit = limitStr !== undefined ? parseInt(limitStr, 10) : 20;
+    if (limitStr !== undefined && isNaN(limit)) {
       throw new HttpException("limit must be a number", HttpStatus.BAD_REQUEST);
     }
 
-    const rl = await this.horizonService.checkRateLimit(account);
+    const rl = await this.horizonService.checkRateLimit(address);
     if (!rl.allowed) {
       res?.setHeader("Retry-After", String(rl.retryAfterSeconds));
       throw new HttpException(
@@ -61,7 +65,7 @@ export class HorizonController {
     }
 
     try {
-      return await this.horizonService.getTransactions(account, cursor, limit);
+      return await this.horizonService.getTransactions(address, cursor, limit);
     } catch (err) {
       if (err instanceof ServiceUnavailableException) {
         const retryAfter = (err as ServiceUnavailableException & { retryAfter?: number }).retryAfter;
@@ -73,19 +77,18 @@ export class HorizonController {
     }
   }
 
-  @Get("accounts/:account")
+  /**
+   * GET /v1/accounts/:address/balances
+   *
+   * Returns the balances array for a Stellar account, extracted from the
+   * Horizon account resource. Each element has:
+   *   balance, asset_type, asset_code (if not native), asset_issuer (if not native)
+   */
+  @Get(":address/balances")
   @HttpCode(HttpStatus.OK)
-  async getAccount(@Param("account") account: string): Promise<Record<string, unknown>> {
-    return await this.horizonService.getAccount(account);
-  }
-
-  @Get("ledgers/:sequence")
-  @HttpCode(HttpStatus.OK)
-  async getLedger(@Param("sequence") sequenceStr: string): Promise<Record<string, unknown>> {
-    const sequence = parseInt(sequenceStr, 10);
-    if (isNaN(sequence)) {
-      throw new HttpException("sequence must be a number", HttpStatus.BAD_REQUEST);
-    }
-    return await this.horizonService.getLedger(sequence);
+  async getBalances(
+    @Param("address") address: string,
+  ): Promise<{ balances: unknown[] }> {
+    return await this.horizonService.getBalances(address);
   }
 }
