@@ -2,25 +2,33 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtStrategy, JwtPayload } from './jwt.strategy';
 import { TokenBlacklistService } from '../token-blacklist.service';
+import { JwtKeyService } from '../jwt-key.service';
 
 describe('JwtStrategy', () => {
   let strategy: JwtStrategy;
   let mockConfigService: Partial<ConfigService>;
   let mockBlacklistService: Partial<TokenBlacklistService>;
+  let mockJwtKeyService: Partial<JwtKeyService>;
 
   beforeEach(() => {
     mockConfigService = {
       get: jest.fn((key: string) => {
         if (key === 'JWT_SECRET') return 'test-secret';
+        if (key === 'JWT_KEY_ID') return 'v1';
         return undefined;
       }),
     };
     mockBlacklistService = {
       isBlacklisted: jest.fn().mockResolvedValue(false),
     };
+    mockJwtKeyService = {
+      signingKey: { kid: 'v1', secret: 'test-secret' },
+      secretForKid: jest.fn((kid: string) => kid === 'v1' ? 'test-secret' : null),
+    };
     strategy = new JwtStrategy(
       mockConfigService as ConfigService,
       mockBlacklistService as TokenBlacklistService,
+      mockJwtKeyService as JwtKeyService,
     );
   });
 

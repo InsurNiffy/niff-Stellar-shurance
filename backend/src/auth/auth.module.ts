@@ -10,6 +10,7 @@ import { AuthController } from './auth.controller';
 import { AuthIdentityService } from './auth-identity.service';
 import { TokenBlacklistService } from './token-blacklist.service';
 import { WalletSignatureService } from './wallet-signature.service';
+import { JwtKeyService } from './jwt-key.service';
 import { CacheModule } from '../cache/cache.module';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';

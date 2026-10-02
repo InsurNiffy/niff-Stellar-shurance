@@ -28,6 +28,18 @@ fn perms(fraud: bool, asset: bool, reins: bool) -> DelegationPermissions {
         can_set_fraud_score: fraud,
         can_set_asset_config: asset,
         can_set_reinsurance: reins,
+        can_process_payout: false,
+        can_manage_voters: false,
+    }
+}
+
+fn perms_all() -> DelegationPermissions {
+    DelegationPermissions {
+        can_set_fraud_score: true,
+        can_set_asset_config: true,
+        can_set_reinsurance: true,
+        can_process_payout: true,
+        can_manage_voters: true,
     }
 }
 
@@ -75,6 +87,52 @@ fn list_scopes_multiple_delegations() {
 }
 
 #[test]
+fn list_scopes_process_payout_and_manage_voters() {
+    let (env, client, _) = setup();
+    let operator = Address::generate(&env);
+    client.grant_delegation(&operator, &5_000u32, &perms_all());
+
+    let scopes = client.list_active_delegated_scopes(&operator, &0u32, &20u32);
+    assert_eq!(scopes.len(), 5);
+    assert_eq!(scopes.get(3).unwrap().scope, DelegatedScopeKind::ProcessPayout);
+    assert_eq!(scopes.get(4).unwrap().scope, DelegatedScopeKind::ManageVoters);
+}
+
+#[test]
+fn list_scopes_payout_scope_only() {
+    let (env, client, _) = setup();
+    let operator = Address::generate(&env);
+    let p = DelegationPermissions {
+        can_set_fraud_score: false,
+        can_set_asset_config: false,
+        can_set_reinsurance: false,
+        can_process_payout: true,
+        can_manage_voters: false,
+    };
+    client.grant_delegation(&operator, &5_000u32, &p);
+    let scopes = client.list_active_delegated_scopes(&operator, &0u32, &20u32);
+    assert_eq!(scopes.len(), 1);
+    assert_eq!(scopes.get(0).unwrap().scope, DelegatedScopeKind::ProcessPayout);
+}
+
+#[test]
+fn list_scopes_manage_voters_scope_only() {
+    let (env, client, _) = setup();
+    let operator = Address::generate(&env);
+    let p = DelegationPermissions {
+        can_set_fraud_score: false,
+        can_set_asset_config: false,
+        can_set_reinsurance: false,
+        can_process_payout: false,
+        can_manage_voters: true,
+    };
+    client.grant_delegation(&operator, &5_000u32, &p);
+    let scopes = client.list_active_delegated_scopes(&operator, &0u32, &20u32);
+    assert_eq!(scopes.len(), 1);
+    assert_eq!(scopes.get(0).unwrap().scope, DelegatedScopeKind::ManageVoters);
+}
+
+#[test]
 fn list_scopes_excludes_expired() {
     let (env, client, _) = setup();
     let operator = Address::generate(&env);
@@ -106,10 +164,7 @@ fn list_scopes_is_paginated() {
     assert_eq!(page1.len(), 2);
     let page2 = client.list_active_delegated_scopes(&operator, &2u32, &2u32);
     assert_eq!(page2.len(), 1);
-    assert_eq!(
-        page2.get(0).unwrap().scope,
-        DelegatedScopeKind::SetReinsurance
-    );
+    assert_eq!(page2.get(0).unwrap().scope, DelegatedScopeKind::SetReinsurance);
 }
 
 #[test]
