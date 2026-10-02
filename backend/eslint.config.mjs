@@ -13,6 +13,22 @@ export default tseslint.config(
   // Using recommendedTypeChecked requires a tsconfig; skip for now to keep
   // CI fast. Switch to recommendedTypeChecked once tsconfig paths are stable.
   ...tseslint.configs.recommended,
+  // Enforce AppConfigService — no direct process.env access in src/
+  {
+    files: ["src/**/*.ts"],
+    ignores: ["src/config/**", "**/*.spec.ts", "**/*.test.ts"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message:
+            "Do not read process.env directly. Use AppConfigService instead (src/config/app-config.service.ts).",
+        },
+      ],
+    },
+  },
   // Override rules that are noisy during early development
   {
     rules: {
