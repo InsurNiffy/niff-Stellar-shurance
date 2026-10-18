@@ -78,3 +78,13 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 <!-- handsoff-issue-1446 -->
 - #1446: Contract — Claim withdrawal and supplementary evidence
+
+<!-- handsoff-issue-1706 -->
+- #1706: Tracking — Claim lifecycle: full end-to-end cross-stack issue group
+  - Label: `feature:claim-lifecycle` (apply to this umbrella and all linked issues)
+  - All linked issues must link back to this umbrella (#1706)
+  - Scope covers all layers: contract, backend, frontend
+  - Linked work:
+    - Contract: status history log, keeper entrypoints, withdraw claim
+    - Backend: policy expiry keeper, appeal finalize keeper, claim discussion threads
+    - Frontend: discussion thread UI, TxStatusDialog
