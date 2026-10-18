@@ -6,11 +6,21 @@ Distributed tracing is implemented via `@opentelemetry/sdk-node` with auto-instr
 
 | Variable | Default | Description |
 |---|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset — no-op)_ | OTLP HTTP endpoint, e.g. `http://localhost:4318` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset — no-op)_ | OTLP HTTP endpoint, e.g. `http://localhost:4318` (Jaeger exposes an OTLP receiver) |
 | `OTEL_SERVICE_NAME` | `niffyinsure-backend` | Service name in traces |
-| `OTEL_SAMPLING_RATIO` | `1.0` (dev) / `0.1` (prod) | Head-sampling ratio 0.0–1.0 |
+| `OTEL_SAMPLING_RATE` | `1.0` (dev) / `0.1` (prod) | Head-sampling rate 0.0–1.0 |
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, the SDK runs with a no-op exporter — no traces are exported and there is no performance overhead.
+
+## Auto-Instrumentation
+
+The SDK registers auto-instrumentation for the following layers:
+
+| Layer | Instrumentation |
+|---|---|
+| HTTP (inbound/outbound) | `@opentelemetry/instrumentation-http` |
+| PostgreSQL | `@opentelemetry/instrumentation-pg` (via Prisma) |
+| Redis | `@opentelemetry/instrumentation-ioredis` |
 
 ## Local Development with Jaeger
 
@@ -29,14 +39,14 @@ Then set in your `.env`:
 ```
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 OTEL_SERVICE_NAME=niffyinsure-backend
-OTEL_SAMPLING_RATIO=1.0
+OTEL_SAMPLING_RATE=1.0
 ```
 
 Open the Jaeger UI at http://localhost:16686 and select the `niffyinsure-backend` service.
 
 ## Trace Correlation with Logs
 
-Every incoming request attaches `x-request-id` as a span attribute (`request.id`). Structured log entries include the same `requestId` field, enabling correlation between traces and logs.
+Every incoming request attaches `x-request-id` as a span attribute (`request.id`). The `correlation_id` (from the `x-correlation-id` header, falling back to the request id) is propagated as a span attribute (`correlation_id`) on the active span, so traces can be joined with structured logs and frontend events. Structured log entries include the same `requestId` field, enabling correlation between traces and logs.
 
 For the full frontend → backend → contract-call correlation flow and how to use it when
 investigating a cross-layer issue, see [`docs/correlation-id-guide.md`](../../docs/correlation-id-guide.md).
@@ -62,4 +72,4 @@ const result = await withSorobanSpan(
 
 ## Production Sampling
 
-The default production sampling ratio is `0.1` (10%). Adjust via `OTEL_SAMPLING_RATIO` without redeployment.
+The default production sampling rate is `0.1` (10%). Adjust via `OTEL_SAMPLING_RATE` without redeployment.
