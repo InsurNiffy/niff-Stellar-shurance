@@ -32,6 +32,14 @@ Any release that carries one or more ABI-BREAKING tags requires:
 - UI improvements across four tracked issues (#1005).
 - Contract fuzz testing harness for `niffyinsure` and `premium_calculator` (#1003).
 
+### Tracking
+- Governance umbrella (#1707): DAO voting and delegation cross-stack group.
+  Child issues (contract: proposal expiry, rolling claim cap hardening, voter
+  snapshot TTL; backend: delegation endpoints, GraphQL escalation mutation;
+  frontend: delegation UI, admin voter registration) are tracked under this
+  umbrella and carry the `feature:governance` label.  No governance logic is
+  changed by the umbrella itself.
+
 ---
 
 ## [0.4.0] — 2026-06-01
