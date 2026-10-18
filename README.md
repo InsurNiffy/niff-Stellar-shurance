@@ -78,3 +78,6 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 <!-- handsoff-issue-1446 -->
 - #1446: Contract — Claim withdrawal and supplementary evidence
+
+<!-- handsoff-issue-1715 -->
+- #1715: Frontend: i18n — add missing translation keys for appeal and governance flows
