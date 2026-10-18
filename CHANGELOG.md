@@ -39,6 +39,12 @@ Any release that carries one or more ABI-BREAKING tags requires:
   frontend: delegation UI, admin voter registration) are tracked under this
   umbrella and carry the `feature:governance` label.  No governance logic is
   changed by the umbrella itself.
+- Oracle umbrella (#1708): oracle integration — price feed and fraud scoring
+  cross-stack group.  Child issues (contract: sign-then-verify oracle pipeline,
+  vet specialization validation; backend: Prometheus treasury gauge from oracle
+  data; frontend: network status indicator with oracle feed display) are tracked
+  under this umbrella and carry the `feature:oracle` label.  No oracle logic is
+  changed by the umbrella itself.
 
 ---
 
