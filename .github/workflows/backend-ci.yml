@@ -28,6 +28,19 @@ env:
   IMAGE_NAME: ${{ github.repository }}/backend
 
 jobs:
+  hooks:
+    name: Hooks presence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Verify pre-commit hook exists
+        run: |
+          if [ ! -f .githooks/pre-commit ]; then
+            echo "::error::Missing .githooks/pre-commit — run 'make install-hooks' and commit the hook."
+            exit 1
+          fi
+
   ci:
     name: Backend
     runs-on: ubuntu-latest
