@@ -34,3 +34,40 @@ against two `soroban-sdk` versions on every PR touching `contracts/**`:
    the upstream SDK (not a codebase issue), do **not** bump the pin;
    keep pinned on the last known-good version until a fix ships
    upstream.
+
+## stellar-cli toolchain policy
+
+The `soroban-sdk` pin above governs the contract crate dependencies.
+The `stellar-cli` binary used to build, deploy, and invoke those
+contracts is versioned separately and is pinned independently.
+
+### Current pin
+
+The pinned `stellar-cli` version is recorded in `CONTRIBUTING.md`
+(see the "Soroban toolchain" section) and is checked as a prerequisite
+by the `Makefile` (`make check-toolchain`). The current pin is
+`stellar-cli 22.0.1`.
+
+### Compatible version range
+
+- **Supported:** `>=22.0.0, <23.0.0` — the pinned minor line. Patch
+  releases within this range are safe to adopt without a policy
+  change.
+- **Unsupported:** any `stellar-cli` outside that range. A major bump
+  (e.g. `23.x`) may change CLI flags, output formats, or the embedded
+  Soroban environment and must go through the upgrade procedure below.
+
+### Upgrade procedure
+
+1. Read the `stellar-cli` release notes for the target version and
+   check for breaking changes to the commands this repo uses
+   (`contract build`, `contract deploy`, `contract invoke`).
+2. Bump the pinned version in `CONTRIBUTING.md` and in the `Makefile`
+   prerequisite check so both stay in sync.
+3. Run `make check-toolchain` locally to confirm the new binary is
+   detected, then run the contract test suite against it.
+4. Open a normal PR. The `pinned` leg of the CI matrix must stay green
+   with the new CLI before merging.
+5. If the new CLI breaks the build and the cause is an upstream bug,
+   do **not** bump the pin; keep the last known-good version until a
+   fix ships upstream.

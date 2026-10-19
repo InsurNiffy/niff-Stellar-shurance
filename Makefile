@@ -4,7 +4,11 @@ VERSION    := $(shell cargo metadata --no-deps --format-version 1 | python -c "i
 GIT_TAG    := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
 ARTIFACT   := artifacts/niffyinsure-$(VERSION)-$(GIT_TAG).wasm
 
-.PHONY: build test fmt lint sha clean wasm-release wasm-opt-check check-env audit install-hooks
+# Pinned Soroban toolchain (see docs/soroban-toolchain-policy.md).
+# Bump STELLAR_CLI_VERSION together with the policy doc and CONTRIBUTING.md.
+STELLAR_CLI_VERSION := 21.2.0
+
+.PHONY: build test fmt lint sha clean wasm-release wasm-opt-check check-env check-stellar-cli audit install-hooks
 
 build:
 	cargo build --target wasm32-unknown-unknown --release
@@ -27,11 +31,24 @@ audit:
 sha: build
 	sha256sum $(WASM_RAW)
 
+# ── Soroban toolchain prerequisite ───────────────────────────────────────────
+# Verifies the installed stellar-cli matches the pinned version.
+# Usage: make check-stellar-cli
+check-stellar-cli:
+	@command -v stellar >/dev/null 2>&1 || (echo "stellar-cli not found — install $(STELLAR_CLI_VERSION) (see docs/soroban-toolchain-policy.md)"; exit 1)
+	@installed=$$(stellar version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1); \
+	if [ "$$installed" != "$(STELLAR_CLI_VERSION)" ]; then \
+		echo "stellar-cli version mismatch: expected $(STELLAR_CLI_VERSION), found $${installed:-unknown}"; \
+		echo "See docs/soroban-toolchain-policy.md for the upgrade procedure."; \
+		exit 1; \
+	fi; \
+	echo "stellar-cli $(STELLAR_CLI_VERSION) OK"
+
 # ── Release pipeline ─────────────────────────────────────────────────────────
 # Produces a deployable wasm, prints its SHA-256, and copies it to artifacts/.
 # Usage: make wasm-release
 # Output: artifacts/niffyinsure-<version>-<git-tag>.wasm + .sha256 sidecar
-wasm-release: build
+wasm-release: check-stellar-cli build
 	@mkdir -p artifacts
 	@if command -v wasm-opt >/dev/null 2>&1; then \
 		echo "[wasm-opt] optimising with -Oz ..."; \
