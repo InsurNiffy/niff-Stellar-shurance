@@ -93,6 +93,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # Redis failover drill (issue #1683). Mirrors docs/ops/redis-failover-drill.md:
+  # start Redis -> trigger throttler -> stop Redis -> assert graceful degradation
+  # -> restart Redis -> confirm normal operation. Run with:
+  #   docker compose -f backend/docker-compose.yml --profile drill run --rm redis-failover-drill
+  redis-failover-drill:
+    <<: *app-base
+    container_name: niff_stellar_redis_failover_drill
+    profiles: ["drill"]
+    command: ["node", "dist/scripts/redis-failover-drill.js"]
+    environment:
+      <<: *app-env
+      PROCESS_ROLE: drill
+      REDIS_FAILOVER_DRILL: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:

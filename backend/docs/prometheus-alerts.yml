@@ -65,6 +65,23 @@ groups:
             The 99th-percentile request latency has exceeded 3 seconds
             for 10 consecutive minutes.
 
+      # ── API p95 latency vs budget alert ───────────────────────────────────
+      # api_p95_latency_ms is exported by the API and compared against the
+      # per-route budget (api_p95_latency_budget_ms) defined in
+      # docs/performance-budget.md.
+      - alert: ApiP95LatencyOverBudget
+        expr: |
+          api_p95_latency_ms{app="niffyinsure-api"} > api_p95_latency_budget_ms{app="niffyinsure-api"}
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API p95 latency above budget"
+          description: >
+            p95 latency for {{ $labels.route }} is {{ $value }} ms, above its
+            budget for 10 consecutive minutes. See docs/performance-budget.md.
+
       # ── RPC latency alert ─────────────────────────────────────────────────
       - alert: HighRpcP95Latency
         expr: |
@@ -96,6 +113,62 @@ groups:
             The indexer has fallen behind the network head by more than 30
             ledgers for at least 10 minutes. Check indexer health and queue
             processing.
+
+      # ── Indexer ledger lag alerts ─────────────────────────────────────────
+      - alert: IndexerLedgerLagWarning
+        expr: |
+          indexer_ledger_lag{app="niffyinsure-api"} > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Indexer ledger lag above 100"
+          description: >
+            The indexer is more than 100 ledgers behind the network head for
+            5 minutes. Check indexer health and queue processing.
+
+      - alert: IndexerLedgerLagCritical
+        expr: |
+          indexer_ledger_lag{app="niffyinsure-api"} > 300
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+          pagerduty: "true"
+        annotations:
+          summary: "Indexer ledger lag above 300 (critical)"
+          description: >
+            The indexer is more than 300 ledgers behind the network head.
+            Pages on-call via PagerDuty. Investigate indexer stalls immediately.
+
+      # ── TLS certificate expiry alert ──────────────────────────────────────
+      - alert: TlsCertExpirySoon
+        expr: |
+          tls_cert_expiry_days{app="niffyinsure-api"} < 30
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "TLS certificate expires within 30 days"
+          description: >
+            TLS certificate for {{ $labels.instance }} expires in
+            {{ $value }} day(s). Renew before expiry to avoid an outage.
+
+      # ── Claim queue depth alert ───────────────────────────────────────────
+      - alert: ClaimQueueDepthHigh
+        expr: |
+          claim_queue_depth{app="niffyinsure-api"} > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Claim queue depth above 100"
+          description: >
+            The claim processing queue has more than 100 pending items.
+            Check worker throughput and downstream dependencies.
 
       # ── Solvency buffer alert ─────────────────────────────────────────────
       - alert: SolvencyBufferLow

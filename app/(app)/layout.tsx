@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import Header from "@/components/nav/Header";
 import Footer from "@/components/nav/Footer";
+import NetworkStatusIndicator from "@/components/nav/NetworkStatusIndicator";
+import ClientObservability from "@/components/observability/ClientObservability";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
@@ -12,14 +14,17 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <Header />
+      <NetworkStatusIndicator />
       <main
         id="main-content"
         tabIndex={-1}
-        className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8"
+        aria-label="Main content"
+        className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8 focus:outline-none"
       >
         {children}
       </main>
       <Footer />
+      <ClientObservability />
     </div>
   );
 }

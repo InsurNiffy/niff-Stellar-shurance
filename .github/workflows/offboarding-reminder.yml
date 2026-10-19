@@ -1,0 +1,52 @@
+name: Offboarding Reminder
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: "GitHub username of the departing team member"
+        required: true
+        type: string
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  open-offboarding-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Open offboarding issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const username = '${{ inputs.username }}';
+            const today = new Date().toISOString().split('T')[0];
+
+            const templatePath = '.github/ISSUE_TEMPLATE/vendor-offboarding.md';
+            let body = '';
+            if (fs.existsSync(templatePath)) {
+              body = fs.readFileSync(templatePath, 'utf8');
+            } else {
+              body = '## Vendor Offboarding Checklist\n\nSee `docs/ops/vendor-offboarding-checklist.md` for the full checklist.\n';
+            }
+
+            body = body
+              .replace(/<username>/g, username)
+              .replace(/<date>/g, today);
+
+            body += `\n\n---\n\n**Departing team member:** @${username}\n**Offboarding date:** ${today}\n`;
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Vendor offboarding: ${username} (${today})`,
+              body,
+              labels: ['security'],
+            });
+
+            core.info(`Created offboarding issue #${issue.data.number}`);

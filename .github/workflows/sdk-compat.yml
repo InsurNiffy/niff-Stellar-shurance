@@ -1,0 +1,80 @@
+name: SDK Compatibility
+
+on:
+  schedule:
+    # Weekly on Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  test:
+    name: test (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [pinned, next-minor]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Resolve soroban-sdk version
+        id: sdk
+        run: |
+          if [ "${{ matrix.sdk }}" = "next-minor" ]; then
+            # Bump to the next minor release of soroban-sdk
+            current=$(grep -oP 'soroban-sdk\s*=\s*"\K[^"]+' Cargo.toml | head -n1)
+            major=$(echo "$current" | cut -d. -f1)
+            minor=$(echo "$current" | cut -d. -f2)
+            next_minor="${major}.$((minor + 1)).0"
+            echo "version=$next_minor" >> "$GITHUB_OUTPUT"
+          else
+            pinned=$(grep -oP 'soroban-sdk\s*=\s*"\K[^"]+' Cargo.toml | head -n1)
+            echo "version=$pinned" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pin soroban-sdk to ${{ steps.sdk.outputs.version }}
+        run: |
+          cargo update -p soroban-sdk --precise "${{ steps.sdk.outputs.version }}" || \
+            cargo update -p soroban-sdk --precise "${{ steps.sdk.outputs.version }}"
+
+      - name: Run contract tests
+        run: cargo test --workspace
+
+  report-failure:
+    name: report failure
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open issue on failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = 'contract-owner';
+            const title = `SDK compatibility failure: soroban-sdk next-minor (${new Date().toISOString().slice(0, 10)})`;
+            const body = [
+              'The weekly SDK compatibility job failed against `soroban-sdk` next-minor.',
+              '',
+              `- Workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `- Commit: ${context.sha}`,
+              '',
+              'See `docs/sdk-upgrade-checklist.md` for the upgrade procedure.',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              assignees: [owner],
+              labels: ['sdk-compat', 'ci'],
+            });

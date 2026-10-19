@@ -76,6 +76,23 @@ Complete every step in order before merging a version bump PR.
 
 ---
 
+## Dependabot patch bumps (issue #1716)
+
+For `soroban-sdk` **patch** bumps opened by Dependabot (e.g. `25.3.1` → `25.3.2`),
+follow the priority order from `docs/dependency-update-process.md`:
+
+1. **Security patches** (any severity) — merge first, regardless of crate.
+2. **`soroban-sdk` patch versions** — apply the full checklist above; a patch bump
+   must still pass steps 3–7 (compile, tests, storage/XDR, auth/error codes).
+3. **`next` / `nestjs/core` minor bumps** — merge after the SDK patch is green.
+
+A patch bump that only touches `Cargo.lock` still requires a green CI run on both
+`test (pinned)` and `test (next-minor)` before merge. If a patch bump changes any
+`contracttype` / `contracterror` layout, treat it as a minor and escalate to a
+dedicated upgrade ticket.
+
+---
+
 ## Rollback procedure
 
 If an upgrade causes a production regression:

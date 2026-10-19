@@ -41,3 +41,26 @@ Redis is a cache layer only — Postgres is authoritative for all financial data
 | BullMQ job queues | Fail closed — job not enqueued, caller receives error |
 
 The `/health` endpoint returns `503` with `redis: down` when Redis is unreachable.
+
+## Failover drill (automated)
+
+The Redis failover drill described in `docs/ops/redis-failover-drill.md` is
+exercised automatically by the `redis-failover-drill` job in
+`.github/workflows/backend-ci.yml`. The job runs against a Redis service
+container and asserts the degraded behaviour above:
+
+1. **Start Redis** — service container is healthy before the test runs.
+2. **Trigger throttler** — issue requests through the Redis-backed throttler
+   and confirm requests are rate limited (HTTP `429`) once the limit is hit.
+3. **Stop Redis** — the drill script stops the Redis container mid-run.
+4. **Assert graceful degradation** — throttler fails open (requests are
+   allowed through, no `5xx` from the throttler), `/health` reports
+   `redis: down` with `503`, and nonce auth fails closed with
+   `RedisUnavailableError`.
+5. **Restart Redis** — the container is started again and the health check
+   returns to `200` with `redis: up`.
+6. **Confirm normal operation** — throttling is enforced again (`429` after
+   the limit) and cache hit/miss counters resume incrementing.
+
+If any step fails, the CI job fails and the drill output is uploaded as an
+artifact for triage.

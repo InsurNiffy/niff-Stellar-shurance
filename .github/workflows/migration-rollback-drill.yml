@@ -1,0 +1,80 @@
+name: Migration Rollback Drill
+
+on:
+  schedule:
+    # Monthly on the 1st at 06:00 UTC
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migration-rollback-drill
+  cancel-in-progress: false
+
+jobs:
+  rollback-drill:
+    name: Migration rollback drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DRILL_DATABASE_URL }}
+      HEALTHCHECK_URL: ${{ secrets.DRILL_HEALTHCHECK_URL }}
+      SLACK_WEBHOOK_URL: ${{ secrets.OPS_ALERTS_SLACK_WEBHOOK }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Apply latest migration
+        working-directory: backend
+        run: npm run migrate:latest
+
+      - name: Health check after migration
+        id: health_after_migrate
+        run: |
+          set -euo pipefail
+          status=$(curl -s -o /dev/null -w '%{http_code}' "$HEALTHCHECK_URL")
+          echo "health status: $status"
+          if [ "$status" -ne 200 ]; then
+            echo "Health check failed after migration (status $status)"
+            exit 1
+          fi
+
+      - name: Roll back latest migration
+        working-directory: backend
+        run: npm run migrate:rollback
+
+      - name: Assert health check passes after rollback
+        id: health_after_rollback
+        run: |
+          set -euo pipefail
+          status=$(curl -s -o /dev/null -w '%{http_code}' "$HEALTHCHECK_URL")
+          echo "health status: $status"
+          if [ "$status" -ne 200 ]; then
+            echo "Health check failed after rollback (status $status)"
+            exit 1
+          fi
+
+      - name: Notify #ops-alerts on success
+        if: success()
+        run: |
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            --data "{\"text\":\":white_check_mark: Monthly migration rollback drill passed (${{ github.run_id }})\"}" \
+            "$SLACK_WEBHOOK_URL"
+
+      - name: Notify #ops-alerts on failure
+        if: failure()
+        run: |
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            --data "{\"text\":\":x: Monthly migration rollback drill FAILED (${{ github.run_id }}) — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$SLACK_WEBHOOK_URL"

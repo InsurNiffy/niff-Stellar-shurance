@@ -9,7 +9,7 @@
  *   OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP gRPC/HTTP endpoint (e.g. http://localhost:4318)
  *                                   Defaults to no-op (no export) when unset.
  *   OTEL_SERVICE_NAME             — Service name reported in traces (default: niffyinsure-backend)
- *   OTEL_SAMPLING_RATIO           — Head-sampling ratio 0.0–1.0 (default: 1.0 in dev, 0.1 in prod)
+ *   OTEL_SAMPLING_RATE            — Head-sampling ratio 0.0–1.0 (default: 1.0 in dev, 0.1 in prod)
  *
  * Sensitive data policy:
  *   - XDR payloads and private keys MUST NOT appear as span attributes.
@@ -22,6 +22,7 @@ import { resourceFromAttributes } from '@opentelemetry/resources'
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
 import { TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-base'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
+import { context, trace } from '@opentelemetry/api'
 
 const SERVICE_NAME = process.env.OTEL_SERVICE_NAME ?? 'niffyinsure-backend'
 const OTLP_ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT
@@ -29,7 +30,8 @@ const OTLP_ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT
 // Sampling: configurable without redeployment via env var.
 // Default: 1.0 (sample everything) unless NODE_ENV=production, then 0.1.
 const defaultRatio = process.env.NODE_ENV === 'production' ? 0.1 : 1.0
-const samplingRatio = parseFloat(process.env.OTEL_SAMPLING_RATIO ?? String(defaultRatio))
+const parsedRatio = parseFloat(process.env.OTEL_SAMPLING_RATE ?? String(defaultRatio))
+const samplingRatio = Number.isFinite(parsedRatio) ? Math.min(Math.max(parsedRatio, 0), 1) : defaultRatio
 
 // Only configure an exporter when an endpoint is explicitly set.
 // In development (no endpoint), the SDK runs with a no-op exporter.
@@ -65,6 +67,19 @@ const sdk = new NodeSDK({
 })
 
 sdk.start()
+
+/**
+ * Attach the current request's correlation_id to the active span as a trace
+ * attribute. Call this from request middleware once the correlation_id is
+ * resolved (e.g. from the X-Correlation-ID header or a generated UUID).
+ */
+export function setCorrelationId(correlationId: string | undefined): void {
+  if (!correlationId) return
+  const span = trace.getSpan(context.active())
+  if (span) {
+    span.setAttribute('correlation_id', correlationId)
+  }
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
