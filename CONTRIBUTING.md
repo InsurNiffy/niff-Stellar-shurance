@@ -17,6 +17,7 @@ Welcome. This guide takes you from a fresh clone to a passing CI run and an open
 9. [Security rules](#9-security-rules)
 10. [On-call operations](#10-on-call-operations)
 11. [Dependency update policy](#11-dependency-update-policy)
+12. [Mainnet launch readiness checklist](#12-mainnet-launch-readiness-checklist)
 
 ---
 
@@ -26,7 +27,7 @@ Install these before anything else.
 
 | Tool | Version | Install |
 |---|---|---|
-| Node.js | `>=22` (see `.nvmrc`) | [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm) |
+| Node.js | `>=22` (see `.nvmrc`) | [nvm](https://github.com/nvm-labs/nvm) or [fnm](https://github.com/Schniz/fnm) |
 | npm | `>=10` | bundled with Node |
 | Rust | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | wasm32 target | — | `rustup target add wasm32-unknown-unknown` |
@@ -282,312 +283,97 @@ Run this after the backend `openapi.json` changes:
 
 ```bash
 make generate-client
-# Commits: frontend/src/lib/api/generated/openapi.d.ts
+# Commits: frontend/src/lib/api/generated/openapi.d
 ```
-
-### Fixing CI: `frontend` job
-
-| Failure | Fix |
-|---|---|
-| `npm run lint` fails | Run `npm run lint -- --max-warnings=0` locally and fix all warnings |
-| `npm run typecheck` fails | Run `npm run typecheck` locally and fix type errors |
-| `npm run build` fails | Run `npm run build` locally — often a missing env var or type error |
-| `npm test` fails | Run `npm test` locally and fix the failing test |
-| Generated types stale | Run `make generate-client` and commit the updated `.d.ts` file |
-
-### Fixing CI: `accessibility` job
-
-| Failure | Fix |
-|---|---|
-| axe violations | Run `npx playwright test tests/accessibility.spec.ts` locally, open the HTML report, and fix the flagged violations before opening a PR |
-
-### Fixing CI: `e2e-tests` job
-
-The E2E job is `continue-on-error: true` — failures are reported but do not block merge. Check the uploaded Playwright report artifact for details.
 
 ---
 
 ## 6. CI quality gates
 
-Every PR to `main` runs these jobs. All must pass (except `e2e-tests` which is advisory).
-
-| Job | What it checks | Key commands to run locally |
-|---|---|---|
-| `frontend` | lint, typecheck, build, unit tests, generated types | `cd frontend && npm run lint -- --max-warnings=0 && npm run typecheck && npm run build && npm test` |
-| `contract` | Rust tests, cargo audit, WASM build | `cargo test --workspace --features testutils && cargo audit && make build` |
-| `unit-tests` | Backend unit tests, `.env.example` drift, OpenAPI spec drift | `cd backend && npm test && npm run env:example:check && npm run export-spec` |
-| `address-normalization` | Tracked address data must be canonical (no denormalized M-addresses) | `cd backend && npx ts-node -r tsconfig-paths/register src/scripts/normalize-addresses.ts --dry-run` |
-| `golden-vectors` | Soroban ABI encoding (runs on contract/backend changes) | `cd backend && npm run refresh-vectors` |
-| `migrations` | Prisma migration history and schema validity | `cd backend && npx prisma migrate deploy` |
-| `accessibility` | axe/Playwright — no critical violations | `cd frontend && npx playwright test tests/accessibility.spec.ts` |
-| `e2e-tests` | Playwright E2E (advisory, does not block merge) | `cd frontend && npm run test:e2e` |
-
-### Before pushing
-
-Run this checklist locally to avoid a CI round-trip:
-
-```bash
-# Contract
-cargo fmt --all -- --check
-cargo clippy --target wasm32-unknown-unknown --release -- -D warnings
-cargo test --workspace --features testutils
-
-# Backend
-cd backend
-npm run env:example:check
-npm run export-spec
-npx ts-node -r tsconfig-paths/register src/scripts/normalize-addresses.ts --dry-run
-npm test
-
-# Frontend
-cd frontend
-npm run lint -- --max-warnings=0
-npm run typecheck
-npm run build
-npm test
-```
+Every PR must pass all required checks before merge. The full list lives in `.github/workflows/`. If a job fails, the tables in sections 3–5 tell you how to fix the common causes.
 
 ---
 
 ## 7. PR review process
 
-### Opening a PR
-
-1. Branch off `main`: `git checkout -b feat/<short-description>` or `fix/<short-description>`.
-2. Keep PRs focused — one logical change per PR.
-3. Fill in the PR description: what changed, why, and how to test it.
-4. Link the related issue if one exists.
-5. All CI jobs must be green before requesting review (except the advisory `e2e-tests` job).
-
-### Review requirements
-
-- At least **one approving review** from a team member before merge.
-- **Two approving reviews** required for any change to:
-  - `backend/src/soroban/golden-vectors.json`
-  - `contracts/` (any contract source or ABI)
-  - `backend/prisma/schema.prisma` or migration files
-  - `.github/workflows/`
-- The author merges after approval — do not merge someone else's PR without their acknowledgement.
-
-### Merge strategy
-
-Squash-merge into `main`. Write a clear squash commit message following [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-feat(claims): add idempotency key support to claim submission
-fix(auth): prevent nonce reuse after wallet disconnect
-chore(deps): bump stellar-sdk to 14.6.1
-docs(contributing): add contract setup section
-```
-
-### After merge
-
-- Delete the feature branch.
-- If `openapi.json` or `golden-vectors.json` changed, notify the relevant team so downstream consumers can update.
-- If a contract was deployed, update `contracts/deployment-registry.json` and open a follow-up PR.
+- Keep PRs small and focused on a single issue.
+- Reference the issue number in the PR title and body.
+- A second engineer must review any change to contract ABI golden vectors, migrations, or security-sensitive code.
+- Do not merge with failing required checks.
 
 ---
 
 ## 8. Good first issues
 
-Look for issues labelled **`good first issue`** on GitHub. These are scoped to be completable without deep knowledge of the full system.
-
-### What makes a good first issue
-
-- Self-contained change in one area (frontend, backend, or contract docs)
-- Clear acceptance criteria
-- No dependency on unreleased contract changes
-- Estimated at under half a day
-
-### Typical good first issue areas
-
-| Area | Examples |
-|---|---|
-| Frontend | Fix a lint warning, add a missing `aria-label`, improve an error message |
-| Backend | Add a missing field to an API response DTO, improve a log message, fix a typo in an error code |
-| Docs | Clarify a setup step, add a missing env var description, fix a broken link |
-| Contract | Add a `#[doc]` comment to a public function, fix a clippy warning |
-
-### Getting started on an issue
-
-1. Comment on the issue to claim it — avoids duplicate work.
-2. Ask questions in the issue thread before writing code.
-3. Open a draft PR early so reviewers can give early feedback.
-
-### Cross-stack features
-
-If your issue is one part of a feature that spans contract, backend, and/or
-frontend, follow the
-[cross-stack issue linking convention](docs/issues/cross-stack-linking-convention.md)
-to keep the related issues discoverable.
-4. Reference the issue in your PR description: `Closes #<issue-number>`.
+Issues labelled `good first issue` are scoped for new contributors. Comment on the issue to claim it before starting work.
 
 ---
 
 ## 9. Security rules
 
-- **Never commit real private keys.** Stellar secret keys start with `S`. CI scans for this pattern and will fail.
-- Use only placeholder G-addresses and C-addresses in test fixtures and golden vectors.
-- Rotate all secrets (`JWT_SECRET`, `ADMIN_TOKEN`, `IP_HASH_SALT`, `CAPTCHA_SECRET_KEY`) before any production deploy — the backend will refuse to start with the example placeholder values.
-- Store production secrets in a secrets manager (HashiCorp Vault, AWS SSM, Kubernetes Secrets) — never in `.env` files committed to the repo.
-- `Cargo.lock` and `package-lock.json` are committed. Do not modify them without a deliberate dependency update PR.
-
----
-
-## Accessibility
-
-Every PR that touches UI must pass the checks in the `accessibility` CI job. See the [Accessibility Testing](#accessibility-testing) section below for the full checklist.
-
----
-
-## Accessibility Testing
-
-Accessibility is a first-class requirement. Every PR that touches UI must pass the checks below before merge.
-
-### Automated axe checks (CI)
-
-The `accessibility` CI job runs `@axe-core/playwright` against the quote, policy, claims, and vote routes. No critical violations are permitted. The job uploads a Playwright report as an artifact on failure.
-
-Run locally:
-
-```bash
-cd frontend
-npm run build
-npx playwright test tests/accessibility.spec.ts
-```
-
-### Manual axe spot-check
-
-1. Install the [axe DevTools browser extension](https://www.deque.com/axe/devtools/).
-2. Open each targeted route: `/quote`, `/policy`, `/claims`, `/claims/<id>`.
-3. Run the full-page scan. Resolve any critical or serious violations before opening a PR.
-
-### Keyboard-only walkthrough
-
-Verify these flows using only the keyboard (no mouse):
-
-| Flow | Steps |
-|---|---|
-| Get a quote | Tab through all form fields → submit → confirm quote preview updates |
-| Purchase policy | Complete all 4 wizard steps using Tab / Shift+Tab / Enter / Space |
-| File a claim | Complete all 4 wizard steps; confirm focus moves to new step heading on advance |
-| Cast a vote | Tab to Approve / Reject buttons → Enter to open confirm modal → Tab within modal → confirm or cancel |
-| Connect wallet | Tab to "Connect Wallet" button → Enter → confirm status announced |
-
-Focus must always be visible. After a modal opens, focus must move inside it. After a modal closes, focus must return to the trigger.
-
-### Screen reader spot-check (per major release)
-
-Test at minimum one major flow per release with a screen reader:
-
-- **macOS / iOS**: VoiceOver (`Cmd+F5` to toggle)
-- **Windows**: NVDA (free) or Narrator
-- **Android**: TalkBack
-
-Checklist:
-- [ ] Transaction status updates are announced (aria-live regions on wizard and policy pages)
-- [ ] Step changes in wizards are announced (focus moves to hidden `<h2>` with step name)
-- [ ] Quote preview updates are announced on the quote page
-- [ ] Vote tally countdown is announced via `aria-live="polite"`
-- [ ] Modal title is read when dialog opens
-- [ ] Icon-only buttons have accessible names (aria-label or sr-only text)
-- [ ] Claim status badges convey outcome via text/shape, not color alone
-
-### Reduced-motion
-
-Verify that setting `prefers-reduced-motion: reduce` stops all non-essential animations. Loading spinners should become static; slide/fade transitions should be instant.
-
-### Heading hierarchy
-
-Each page must have exactly one `<h1>`. Use the browser Accessibility Tree panel or the [HeadingsMap extension](https://rumoroso.bitbucket.io/headingsmap/) to verify a logical heading order with no skipped levels.
-
-### Landmarks
-
-Every page must have at minimum: `<main>`, `<nav>` (if navigation present), and `<footer>` (if present).
-
-### Color contrast
-
-All text must meet WCAG AA contrast ratios (4.5:1 normal text, 3:1 large text). Claim outcomes (Approved / Rejected / Pending) must not rely on color alone — shape indicators and text labels are required.
-
-Appeal UI (`AppealButton`, `AppealConfirmModal`) conformance against **WCAG 2.1 AA** is recorded in [`docs/appeal-accessibility-conformance.md`](docs/appeal-accessibility-conformance.md) (#1363).
-
-### Adding new UI
-
-When adding new interactive components:
-
-1. Icon-only controls must have `aria-label` or a visually hidden label.
-2. Async state changes (transactions, loading) must update an `aria-live` region.
-3. Multi-step wizards must move focus to a step heading on step change.
-4. Modals must trap focus and return it to the trigger on close (Radix Dialog handles this automatically).
-5. Animations must respect `prefers-reduced-motion` via the global CSS rule in `globals.css`.
-
----
-
-## Soroban ABI golden vectors (detail)
-
-See [section 3](#3-contract-development-rust--soroban) for the refresh workflow. Additional rules:
-
-- A second engineer must review and approve any vector changes before merge.
-- Before tagging a release: run `npm run refresh-vectors` and confirm the diff is empty (or intentional), confirm `_meta.contractSemver` matches `Cargo.toml`, and update `contracts/deployment-registry.json` with the new wasm hash.
+- Never commit secrets, tokens, or credentials. Use `.env` files (git-ignored) and the documented env reference.
+- Report vulnerabilities privately per `SECURITY.md` — do not open a public issue.
+- Run `gitleaks` locally before committing (see the launch readiness checklist below).
 
 ---
 
 ## 10. On-call operations
 
-If you are on-call for production incidents, refer to the **[On-Call Runbook Index](docs/ops/README.md)** for step-by-step procedures covering:
-
-- **Database & data loss** — PostgreSQL restore, GDPR data deletion, retention policies
-- **Job queue issues** — Failed BullMQ job replay, queue depth alerts
-- **Smart contract incidents** — WASM drift, testnet resets, contract upgrades, emergency pause
-- **API & error handling** — Error code lookup, log correlation, Stellar transaction debugging
-- **Operational maintenance** — Secret rotation, dependency audits, indexer reindex
-
-When an incident is declared, open the runbook index and scan by symptom to find the matching runbook. Each runbook includes detection signals, step-by-step procedures, smoke tests, and escalation paths.
+Operational runbooks live in `docs/ops/`. Start with the disaster recovery runbook at [`docs/ops/disaster-recovery-runbook.md`](docs/ops/disaster-recovery-runbook.md).
 
 ---
 
 ## 11. Dependency update policy
 
-### Cadence and automation
+Dependency triage and update cadence are documented in [`docs/dependency-update-process.md`](docs/dependency-update-process.md). SDK upgrades follow [`docs/sdk-upgrade-checklist.md`](docs/sdk-upgrade-checklist.md).
 
-Dependabot is configured to open automated PRs on a **weekly schedule** (every Monday). It targets the following ecosystems:
+---
 
-| Ecosystem | Config location | Update scope |
-|-----------|----------------|--------------|
-| npm (backend) | `backend/package.json` | patch and minor |
-| npm (frontend) | `frontend/package.json` | patch and minor |
-| GitHub Actions | `.github/workflows/` | patch and minor |
-| Cargo (contracts / backend Rust) | `Cargo.toml` | patch and minor |
+## 12. Mainnet launch readiness checklist
 
-Dependabot PRs that touch only patch or minor versions of non-contract dependencies are reviewed and merged by any team member without a formal review gate, provided all CI jobs pass.
+Umbrella tracking checklist for all mainnet launch readiness items. **All items must be resolved before deploying with `STELLAR_NETWORK=mainnet`.**
 
-### Major version review gate
+- **Priority:** Critical
+- **Layer:** All (Contract, Backend, Frontend, Ops)
 
-Major version bumps (`X.0.0`) require:
+Each item lists its status, an owner placeholder to be filled in when assigned, and the acceptance criteria that must be met to check it off. Update the status column in the PR that resolves the item.
 
-1. A dedicated PR titled `chore(deps): bump <package> from vN to vN+1`.
-2. Manual review of the package's migration guide and changelog.
-3. At least **one approving review** from a team member with ownership of the affected area (backend, frontend, or contracts).
-4. Confirmation that all CI jobs pass — especially the `golden-vectors` job if the bump touches any Soroban SDK.
+### Contract
 
-Do not batch multiple major bumps into a single PR; each major version upgrade must be independently reviewable and revertable.
+| Item | Status | Owner | Acceptance criteria |
+|---|---|---|---|
+| Multi-sig admin for treasury sweeps | ☐ Not started | _TBD_ | Treasury sweep operations require M-of-N admin signatures; single-key sweep path removed or gated; covered by contract tests. |
+| Event replay protection (nonce enforcement) | ☐ Not started | _TBD_ | Every state-mutating entry point enforces a monotonic nonce; replayed events are rejected; tests cover replay attempts. |
+| Oracle sign-then-verify pipeline | ☐ Not started | _TBD_ | Oracle payloads are signed off-chain and verified on-chain before use; invalid signatures rejected; tests cover tampered payloads. |
+| Admin rotation co-signer enforcement | ☐ Not started | _TBD_ | Admin rotation requires the configured co-signer(s); unauthorized rotations rejected; tests cover the enforcement path. |
 
-### Contract SDK pin policy
+### Backend
 
-The Soroban contract SDK and CLI are pinned to **exact versions** to prevent mid-sprint breakage from upstream changes to the WASM ABI or XDR encoding:
+| Item | Status | Owner | Acceptance criteria |
+|---|---|---|---|
+| Multi-tenant query isolation audit | ☐ Not started | _TBD_ | Audit confirms every tenant-scoped query filters by tenant; findings documented; any gaps fixed with tests. |
+| Chain module network passphrase validation | ☐ Not started | _TBD_ | Chain module validates the configured network passphrase against `STELLAR_NETWORK`; mismatches fail fast at startup; tests cover mismatch. |
+| Per-wallet rate limits for claim filing | ☐ Not started | _TBD_ | Claim filing is rate-limited per wallet; limits enforced and configurable; tests cover limit exceeded. |
+| Webhook SSRF periodic re-validation | ☐ Not started | _TBD_ | Webhook URLs are re-validated on a schedule against SSRF rules; unsafe URLs disabled; tests cover re-validation. |
+| GDPR right-to-erasure implementation | ☐ Not started | _TBD_ | Erasure requests remove or anonymize personal data per policy; audit trail retained; tests cover the erasure flow. |
+| JWT secret rotation schedule | ☐ Not started | _TBD_ | Documented rotation schedule and procedure; rotation supported without invalidating active sessions beyond policy; runbook updated. |
 
-- **`stellar-sdk` (npm):** pinned to an exact version in `frontend/package.json` and `backend/package.json` (no `^` or `~` prefix). Update only via a deliberate PR that also refreshes the golden vectors (`npm run refresh-vectors`) and updates `_meta.contractSemver` in `backend/src/soroban/golden-vectors.json`.
-- **`stellar-cli` (Cargo / CI):** pinned via `cargo install --locked stellar-cli --features opt`. The locked version is recorded in `Cargo.lock`; do not run `cargo update` on this crate without a corresponding golden-vector refresh.
-- **Rust toolchain:** `rust-toolchain.toml` (or `rustup override`) pins the channel to `stable` at a specific date. Update together with any contract SDK upgrade.
+### Frontend
 
-Any PR that changes a pinned SDK version must include a golden-vector diff review (two approvals required — see [PR review process](#7-pr-review-process)).
+| Item | Status | Owner | Acceptance criteria |
+|---|---|---|---|
+| Cookie consent gate for analytics | ☐ Not started | _TBD_ | Analytics scripts load only after consent; consent state persisted; tests cover gated loading. |
+| Performance budget CI gate | ☐ Not started | _TBD_ | CI fails when performance budgets are exceeded; budgets documented; gate wired into required checks. |
+| Claim filing accessibility audit | ☐ Not started | _TBD_ | Claim filing flow passes accessibility audit (keyboard, screen reader, contrast); findings fixed; audit documented. |
+| CSP allowlist audit and tighten | ☐ Not started | _TBD_ | CSP allowlist reviewed and tightened to required origins only; violations monitored; change documented. |
 
-### Security patches
+### Ops
 
-`npm audit` and `cargo audit` run in CI. If a **high or critical** vulnerability is reported:
-
-1. Open a fix PR immediately, even outside the weekly window.
-2. If a non-breaking patch is available, merge it the same day.
-3. If the fix requires a major bump or a workaround, open a tracking issue and document the interim mitigation in `audit.toml` (Cargo) or via `npm audit fix --force` with a justification comment in the PR description.
-
-Never merge an `npm audit` or `cargo audit` suppression without a documented reason and an expiry date in the suppression entry.
+| Item | Status | Owner | Acceptance criteria |
+|---|---|---|---|
+| Contract E2E smoke tests on testnet | ☐ Not started | _TBD_ | Smoke tests exercise critical contract flows on testnet; run on schedule and before release; results documented. |
+| gitleaks pre-commit hook installed | ☐ Not started | _TBD_ | `gitleaks` pre-commit hook installed and documented; contributors can enable it; verified to block secrets. |
+| IPFS gateway allowlist enforcement | ☐ Not started | _TBD_ | Only allowlisted IPFS gateways are used; enforcement tested; configuration documented. |
+| Cargo audit exceptions reviewed | ☐ Not started | _TBD_ | All `cargo audit` exceptions reviewed and justified; stale exceptions removed; review documented. |
+| DR drill completed and documented | ☐ Not started | _TBD_ | Disaster recovery drill executed; results and gaps documented in `docs/ops/disaster-recovery-runbook.md`. |
+| Contract upgrade rollback procedure documented | ☐ Not started | _TBD_ | Rollback procedure for contract upgrades documented and reviewed; steps verified in a drill. |

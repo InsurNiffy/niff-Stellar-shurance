@@ -25,10 +25,21 @@ export interface EnvConfig {
     rpcUrl: string;
     networkPassphrase: string;
     contractId: string;
+    simulationTimeoutMs: number;
   };
 }
 
 const env = getRuntimeEnv();
+
+const DEFAULT_SOROBAN_SIMULATION_TIMEOUT_MS = 5000;
+
+function resolveSimulationTimeoutMs(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_SOROBAN_SIMULATION_TIMEOUT_MS;
+  }
+  return parsed;
+}
 
 export const config: EnvConfig = {
   auth: {
@@ -55,6 +66,9 @@ export const config: EnvConfig = {
     rpcUrl: env.SOROBAN_RPC_URL,
     networkPassphrase: env.STELLAR_NETWORK_PASSPHRASE,
     contractId: env.CONTRACT_ID,
+    simulationTimeoutMs: resolveSimulationTimeoutMs(
+      (env as Record<string, unknown>).SOROBAN_SIMULATION_TIMEOUT_MS,
+    ),
   },
 };
 

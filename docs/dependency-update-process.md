@@ -13,6 +13,19 @@ This document defines how those PRs are reviewed and merged.
 | Moderate CVE | 7 calendar days |
 | Routine version bump | 14 calendar days |
 
+## Triage Priority Order
+
+When multiple Dependabot PRs are open, review and merge them in this order:
+
+1. **Security patches** — any severity. Address these first regardless of the
+   package or ecosystem involved.
+2. **`soroban-sdk` patch versions** — follow `docs/sdk-upgrade-checklist.md`
+   before merging.
+3. **`next` and `@nestjs/core` minor bumps** — verify the changelog for
+   breaking changes, then merge.
+
+All non-breaking updates should be merged within 2 weeks of the PR being opened.
+
 ## Review Checklist
 
 Before merging any Dependabot PR:

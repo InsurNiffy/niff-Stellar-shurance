@@ -1,0 +1,115 @@
+name: Contract E2E (Testnet)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: contract-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Soroban testnet smoke tests
+    runs-on: ubuntu-latest
+    env:
+      STELLAR_NETWORK: testnet
+      STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+      STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+      STELLAR_ACCOUNT: e2e-deployer
+      DEPLOYER_SECRET_KEY: ${{ secrets.STELLAR_TESTNET_DEPLOYER_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked stellar-cli --version 21.5.0
+
+      - name: Build contract WASM
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          WASM_PATH=$(find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' ! -name '*_test*' | head -n 1)
+          if [ -z "$WASM_PATH" ]; then
+            echo "No contract WASM artifact found" >&2
+            exit 1
+          fi
+          echo "WASM_PATH=$WASM_PATH" >> "$GITHUB_ENV"
+
+      - name: Configure deployer identity
+        run: |
+          if [ -z "$DEPLOYER_SECRET_KEY" ]; then
+            echo "Missing STELLAR_TESTNET_DEPLOYER_SECRET secret" >&2
+            exit 1
+          fi
+          stellar keys add "$STELLAR_ACCOUNT" --secret-key "$DEPLOYER_SECRET_KEY"
+
+      - name: Deploy WASM to testnet
+        run: |
+          CONTRACT_ID=$(stellar contract deploy \
+            --wasm "$WASM_PATH" \
+            --source "$STELLAR_ACCOUNT" \
+            --network "$STELLAR_NETWORK")
+          echo "Deployed contract: $CONTRACT_ID"
+          echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
+
+      - name: Smoke test initialize
+        run: |
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source "$STELLAR_ACCOUNT" \
+            --network "$STELLAR_NETWORK" \
+            -- initialize \
+            --admin "$(stellar keys address "$STELLAR_ACCOUNT")"
+
+      - name: Smoke test initiate_policy
+        run: |
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source "$STELLAR_ACCOUNT" \
+            --network "$STELLAR_NETWORK" \
+            -- initiate_policy \
+            --holder "$(stellar keys address "$STELLAR_ACCOUNT")"
+
+      - name: Smoke test file_claim
+        run: |
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source "$STELLAR_ACCOUNT" \
+            --network "$STELLAR_NETWORK" \
+            -- file_claim \
+            --claimant "$(stellar keys address "$STELLAR_ACCOUNT")"
+
+      - name: Smoke test vote_on_claim
+        run: |
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source "$STELLAR_ACCOUNT" \
+            --network "$STELLAR_NETWORK" \
+            -- vote_on_claim \
+            --voter "$(stellar keys address "$STELLAR_ACCOUNT")" \
+            --approve true
+
+      - name: Smoke test finalize_claim
+        run: |
+          stellar contract invoke \
+            --id "$CONTRACT_ID" \
+            --source "$STELLAR_ACCOUNT" \
+            --network "$STELLAR_NETWORK" \
+            -- finalize_claim

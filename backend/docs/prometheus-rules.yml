@@ -6,6 +6,8 @@
 #
 # All alerts use the `niffyinsure-api` app label set by MetricsService
 # (collectDefaultMetrics default labels).
+#
+# Alert inventory & routing: see docs/ops/alert-inventory.md
 
 groups:
   - name: niffyinsure_http_sla
@@ -80,6 +82,24 @@ groups:
             are completing within 1 s (SLA target: 99%).
           runbook_url: "https://docs.niffyinsure.com/runbooks/sla-breach"
 
+      # Alert when p95 latency exceeds the per-route performance budget for 10 min.
+      # budget_ms is the per-route budget from docs/performance-budget.md, exposed
+      # as a gauge by the API (api_p95_latency_budget_ms).
+      - alert: ApiP95LatencyOverBudget
+        expr: |
+          api_p95_latency > api_p95_latency_budget_ms
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "p95 latency over budget on route {{ $labels.route }}"
+          description: >
+            Route {{ $labels.route }} p95 latency is {{ $value | humanizeDuration }},
+            exceeding its performance budget of
+            {{ $labels.budget_ms }} ms for 10 minutes.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/high-latency"
+
   - name: niffyinsure_rpc_cost
     interval: 60s
     rules:
@@ -128,3 +148,77 @@ groups:
             Route {{ $labels.route }} has a 5xx error rate of
             {{ $value | humanizePercentage }} over the past 5 minutes.
           runbook_url: "https://docs.niffyinsure.com/runbooks/5xx-errors"
+
+  - name: niffyinsure_indexer
+    interval: 60s
+    rules:
+      # ── Indexer ledger lag ─────────────────────────────────────────────────
+      # indexer_ledger_lag is the number of ledgers the indexer is behind the
+      # chain head. Warning at 100 ledgers for 5 min; critical (PagerDuty) at
+      # 300 ledgers for 1 min.
+
+      - alert: IndexerLedgerLagWarning
+        expr: indexer_ledger_lag > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Indexer ledger lag > 100 ledgers"
+          description: >
+            The indexer is {{ $value }} ledgers behind the chain head
+            (warning threshold: 100). Check indexer health and RPC throughput.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/indexer-lag"
+
+      - alert: IndexerLedgerLagCritical
+        expr: indexer_ledger_lag > 300
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+          pagerduty: "true"
+        annotations:
+          summary: "CRITICAL: Indexer ledger lag > 300 ledgers"
+          description: >
+            The indexer is {{ $value }} ledgers behind the chain head
+            (critical threshold: 300). Pages on-call via PagerDuty.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/indexer-lag"
+
+  - name: niffyinsure_claims
+    interval: 60s
+    rules:
+      # ── Claim queue depth ──────────────────────────────────────────────────
+      # claim_queue_depth is the number of pending claims awaiting processing.
+
+      - alert: ClaimQueueDepthHigh
+        expr: claim_queue_depth > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Claim queue depth > 100"
+          description: >
+            The claim processing queue has {{ $value }} pending items
+            (threshold: 100). Check worker throughput and backpressure.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/claim-queue"
+
+  - name: niffyinsure_tls
+    interval: 60s
+    rules:
+      # ── TLS certificate expiry ─────────────────────────────────────────────
+      # tls_cert_expiry_days is the number of days until the served TLS
+      # certificate expires (exported by the blackbox/ssl exporter).
+
+      - alert: TLSCertExpiringSoon
+        expr: tls_cert_expiry_days < 30
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "TLS certificate expires in {{ $value }} days"
+          description: >
+            The TLS certificate for {{ $labels.instance }} expires in
+            {{ $value }} days (threshold: 30). Renew before expiry.
+          runbook_url: "https://docs.niffyinsure.com/runbooks/tls-expiry"
