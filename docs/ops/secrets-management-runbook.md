@@ -61,6 +61,10 @@ The `.github/workflows/secrets-rotation-reminders.yml` workflow runs every Monda
 
 The API supports a dual-key overlap period via `JWT_SECRET_NEXT`. During the overlap, tokens signed by either key are accepted, so active user sessions are not invalidated.
 
+### Rotation schedule
+
+JWT signing keys are tracked in `docs/ops/.secret-rotation-dates.json` with a **90-day rotation interval**. The `secrets-rotation-reminders` workflow opens a `secrets-rotation` issue when `JWT_SECRET` is within 14 days of its deadline or overdue. Treat an overdue JWT rotation as a High-priority security item.
+
 ### Generate a new key
 
 ```bash
@@ -88,6 +92,10 @@ Wait at least as long as `JWT_EXPIRES_IN` (default 7 days) so all tokens signed 
 6. Unset / clear `JWT_SECRET_NEXT`.
 7. Redeploy all API instances.
 8. Verify: obtain a fresh token and confirm it is accepted. Confirm an old token (signed with the previous key) is now rejected with 401.
+
+### Dual-secret validation window
+
+During Phase 1 the deployment runs with **both** `JWT_SECRET` (old) and `JWT_SECRET_NEXT` (new) configured. Verification accepts tokens signed by either key, so no active session is invalidated mid-rotation. The window must last at least `JWT_EXPIRES_IN`; do not clear `JWT_SECRET_NEXT` until every token signed with the old key has expired. If a rotation is aborted, unset `JWT_SECRET_NEXT` and redeploy — the old key remains authoritative.
 
 ### Smoke tests
 
@@ -187,133 +195,4 @@ curl -sf "https://gateway.pinata.cloud/ipfs/$CID" -o /dev/null -w '%{http_code}\
 1. Create a replacement key in the managed RPC/Horizon vendor console with the narrowest allowed origin/project scope.
 2. Update `HORIZON_API_KEY` (or the vendor-specific RPC token) in the secret backend.
 3. Redeploy and run smoke tests.
-4. Revoke the old key and confirm traffic continues without rate-limit/auth errors.
-
-### Smoke tests
-
-```bash
-# Health check confirms Horizon connectivity
-curl -sf http://localhost:3000/health | jq '.horizon'
-
-# A live contract read succeeds
-curl -sf http://localhost:3000/api/chain/latest-ledger | jq .sequence
-```
-
----
-
-## Admin token
-
-### Rotation procedure
-
-1. Generate a new token (minimum 32 bytes of entropy):
-
-```bash
-openssl rand -base64 48
-```
-
-2. Update `ADMIN_TOKEN` in the target environment secret backend.
-3. Redeploy the API.
-4. Verify admin-only endpoints reject the old token and accept the new one.
-
-### Smoke tests
-
-```bash
-# Old token is rejected
-curl -sf http://localhost:3000/admin/health \
-  -H "Authorization: Bearer <old-token>" -w '\nHTTP %{http_code}\n' | grep 'HTTP 401'
-
-# New token is accepted
-curl -sf http://localhost:3000/admin/health \
-  -H "Authorization: Bearer <new-token>" | jq .
-```
-
----
-
-## Webhook secrets
-
-### Rotation procedure
-
-1. Generate a new secret per webhook provider:
-
-```bash
-openssl rand -hex 32
-```
-
-2. Update the new value in the upstream provider's webhook configuration (GitHub, Stripe, etc.).
-3. Update the corresponding `WEBHOOK_SECRET_*` variable in the target environment.
-4. Redeploy the API.
-5. Send a test webhook from the provider console and confirm it is accepted (HTTP 200).
-6. Revoke the old secret from the provider console.
-
-### Smoke tests
-
-```bash
-# GitHub: use the "Redeliver" button in the webhook settings to send a recent event.
-# Stripe: use the Stripe CLI: stripe trigger payment_intent.created
-# Confirm the API logs show "webhook verified" and returns 200.
-```
-
----
-
-## Captcha secret key
-
-### Rotation procedure
-
-1. Generate a new secret key in the Cloudflare Turnstile / hCaptcha dashboard.
-2. Update `CAPTCHA_SECRET_KEY` in the target environment.
-3. Redeploy the API.
-4. Submit a support form and confirm the CAPTCHA verification succeeds.
-
----
-
-## IP hash salt
-
-### Rotation procedure
-
-> **Note:** Rotating `IP_HASH_SALT` invalidates all existing pseudonymized IP records. Coordinate with the data team before rotating in production.
-
-1. Generate a new salt:
-
-```bash
-openssl rand -hex 32
-```
-
-2. Update `IP_HASH_SALT` in the target environment.
-3. Redeploy the API.
-4. Confirm rate-limiting and deduplication features continue to function.
-
----
-
-## Suspected leak response
-
-1. Rotate the affected secret immediately in the impacted environment following the procedure above.
-2. Search local history for the leaked identifier/value shape:
-
-```bash
-git log --all --oneline -- backend/.env.example
-git log --all -S 'JWT_SECRET' -- backend docs .github
-rg -n 'JWT_SECRET|PINATA_API_SECRET|DATABASE_URL|ADMIN_TOKEN' .
-```
-
-3. If available, run your standard secret scanner over the full history (`gitleaks`, GitHub secret scanning, or equivalent).
-4. Invalidate the exposed credential at the provider.
-5. Document impact, timeline, and follow-up actions in the incident ticket.
-
----
-
-## CI checks
-
-| Check | Workflow | Trigger |
-|---|---|---|
-| `.env.example` in sync with `env.definitions.ts` | `env-example-drift.yml` | PR / push touching `backend/` |
-| Rotation reminders | `secrets-rotation-reminders.yml` | Every Monday 09:00 UTC + manual |
-
----
-
-## Drill log
-
-| Date | Environment | Scope | Verified by | Notes |
-|---|---|---|---|---|
-| 2026-03-29 | local dev | JWT key generation script dry run | Codex | `npm run secrets:generate:jwt -- --output /tmp/niffy-jwt-secret.env` produced a mode `600` file and confirmed the generation workflow |
-| 2026-04-25 | — | Dual-key JWT rotation implemented | Platform Engineering | `JWT_SECRET_NEXT` added to `env.definitions.ts` and `JwtStrategy`; zero-downtime procedure documented and tested |
-| _Pending first staged drill_ | staging | Full rotation runbook end-to-end | _TBD_ | Record the first end-to-end rehearsal here |
+4. Revok
