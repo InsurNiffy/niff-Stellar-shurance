@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Header from "@/components/nav/Header";
 import Footer from "@/components/nav/Footer";
+import ClientObservability from "@/components/observability/ClientObservability";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
@@ -20,6 +21,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         {children}
       </main>
       <Footer />
+      <ClientObservability />
     </div>
   );
 }
