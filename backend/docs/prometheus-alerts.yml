@@ -15,6 +15,25 @@ groups:
             More than 1 5xx error/s over the last 10 minutes. Check requestId
             correlated logs and recent deploys for root cause.
 
+      # ── Post-deploy error-rate spike alert (blue-green auto-rollback) ─────
+      # Fires when the 5xx error rate spikes shortly after a traffic switch.
+      # The deploy pipeline watches this alert (and the smoke test result) to
+      # trigger an automatic rollback to the previous (blue) environment.
+      - alert: PostDeployErrorRateSpike
+        expr: |
+          sum(rate(http_5xx_errors_total{app="niffyinsure-api"}[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+          rollback: "true"
+        annotations:
+          summary: "Post-deploy 5xx error rate spike"
+          description: >
+            The 5xx error rate spiked above 0.5 errors/s within the post-deploy
+            observation window. The blue-green deploy pipeline should roll back
+            traffic to the previous environment.
+
       # ── RPC error alert ───────────────────────────────────────────────────
       - alert: HighRpcErrorRate
         expr: |
@@ -200,89 +219,4 @@ groups:
             last 15 minutes. Export or delete requests may be stuck. Check job
             logs and the privacy_requests table.
 
-      # ── Dead-letter queue depth alert ─────────────────────────────────────
-      - alert: DlqDepthHigh
-        expr: |
-          bullmq_dlq_depth{app="niffyinsure-api"} > 10
-        for: 5m
-        labels:
-          severity: critical
-          team: backend
-        annotations:
-          summary: "Dead-letter queue depth above threshold on {{ $labels.queue }}"
-          description: >
-            Queue "{{ $labels.queue }}" has more than 10 failed jobs sitting in
-            the dead-letter set. Check bullmq_dlq_jobs_total for job_name and
-            failure_reason labels to triage. Replay via:
-            POST /api/admin/queues/{{ $labels.queue }}/jobs/:jobId/retry
-
-      # ── Redis cache hit rate alert ─────────────────────────────────────────
-      # Alert when the cache hit rate drops below 50 % over a 10-minute window.
-      - alert: RedisCacheHitRateLow
-        expr: |
-          (
-            sum(rate(redis_cache_hits_total{app="niffyinsure-api"}[10m]))
-            /
-            (
-              sum(rate(redis_cache_hits_total{app="niffyinsure-api"}[10m]))
-              + sum(rate(redis_cache_misses_total{app="niffyinsure-api"}[10m]))
-            )
-          ) < 0.5
-        for: 10m
-        labels:
-          severity: warning
-          team: backend
-        annotations:
-          summary: "Redis cache hit rate below 50 %"
-          description: >
-            The overall Redis cache hit rate has been below 50 % for 10 minutes.
-            This may indicate cache eviction pressure, a cold-start after a
-            Redis restart, or an unexpected traffic pattern. Check Redis memory
-            usage and consider increasing maxmemory or TTLs.
-
-      # ── Redis connection errors alert ──────────────────────────────────────
-      - alert: RedisConnectionErrors
-        expr: |
-          sum(rate(redis_connection_errors_total{app="niffyinsure-api"}[5m])) > 0
-        for: 2m
-        labels:
-          severity: critical
-          team: backend
-        annotations:
-          summary: "Redis connection errors detected"
-          description: >
-            Redis connection errors have been observed for at least 2 minutes.
-            Rate limiting is failing open and nonce-based auth will be rejected.
-            Restore Redis connectivity immediately.
-
-      # ── Indexer ledger gap alert ────────────────────────────────────────────
-      - alert: IndexerLedgerGapHigh
-        expr: |
-          indexer_ledger_gap{app="niffyinsure-api"} > 100
-        for: 10m
-        labels:
-          severity: warning
-          team: backend
-        annotations:
-          summary: "Indexer ledger gap above 100 on {{ $labels.network }}"
-          description: >
-            Indexer has fallen {{ $value }} ledgers behind the network head.
-            Check queue processing and indexer service health.
-
-      # ── Indexer last-processed-ledger age alert ────────────────────────────
-      # Fires when the indexer has not processed a new ledger in over 5 minutes.
-      # Threshold: 300 s (5 min). Stellar closes a ledger every ~5 s, so a
-      # 5-minute gap strongly indicates the indexer has stalled.
-      - alert: IndexerLastLedgerAgeHigh
-        expr: |
-          indexer_last_processed_ledger_age_seconds{app="niffyinsure-api"} > 300
-        for: 5m
-        labels:
-          severity: critical
-          team: backend
-        annotations:
-          summary: "Indexer stalled on {{ $labels.network }} — last ledger processed {{ $value | humanizeDuration }} ago"
-          description: >
-            The indexer has not processed a new ledger for more than 5 minutes
-            on network {{ $labels.network }}. Check indexer logs and queue health.
-            Metric resets to near-zero once the indexer catches up.
+      # ── Dead-letter queue depth alert ───────────

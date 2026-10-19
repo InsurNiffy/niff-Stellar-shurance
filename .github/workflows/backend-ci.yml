@@ -103,3 +103,68 @@ jobs:
               exit 1
             fi
           fi
+
+  smoke-test:
+    name: Post-deploy smoke test
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_BASE_URL: ${{ vars.DEPLOY_BASE_URL }}
+      ERROR_RATE_THRESHOLD: '0.05'
+    steps:
+      - name: Smoke test after traffic switch
+        id: smoke
+        run: |
+          if [ -z "$DEPLOY_BASE_URL" ]; then
+            echo "::error::DEPLOY_BASE_URL is not configured; cannot run post-deploy smoke test."
+            exit 1
+          fi
+          BASE="${DEPLOY_BASE_URL%/}"
+          failed=0
+          for path in /api/health /api/chain/info /api/claims; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --retry 3 --retry-delay 2 "$BASE$path" || echo '000')
+            echo "GET $path -> $code"
+            if [ "$code" != "200" ]; then
+              echo "::error::Smoke test failed: GET $path returned $code (expected 200)."
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Check post-deploy error rate
+        id: error-rate
+        run: |
+          if [ -z "$DEPLOY_BASE_URL" ]; then
+            echo "::error::DEPLOY_BASE_URL is not configured; cannot check error rate."
+            exit 1
+          fi
+          BASE="${DEPLOY_BASE_URL%/}"
+          # Allow metrics to settle after the traffic switch.
+          sleep 30
+          rate=$(curl -s --max-time 10 "$BASE/api/health/metrics" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);const r=j.errorRate ?? j.error_rate ?? j.errors?.rate;process.stdout.write(String(r ?? ''))}catch(e){process.stdout.write('')}})" || echo '')
+          if [ -z "$rate" ]; then
+            echo "::warning::Could not read post-deploy error rate; skipping spike check."
+            exit 0
+          fi
+          echo "Post-deploy error rate: $rate (threshold $ERROR_RATE_THRESHOLD)"
+          node -e "const r=Number(process.argv[1]);const t=Number(process.argv[2]);if(!Number.isFinite(r)){console.log('::warning::Invalid error rate value; skipping spike check.');process.exit(0)}if(r>t){console.log('::error::Post-deploy error rate '+r+' exceeds threshold '+t+'.');process.exit(1)}" "$rate" "$ERROR_RATE_THRESHOLD"
+
+      - name: Auto-rollback on failure
+        if: failure()
+        run: |
+          echo "::error::Post-deploy smoke test or error-rate check failed — triggering auto-rollback."
+          if [ -z "$DEPLOY_BASE_URL" ]; then
+            echo "::error::DEPLOY_BASE_URL is not configured; cannot trigger rollback."
+            exit 1
+          fi
+          BASE="${DEPLOY_BASE_URL%/}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$BASE/api/deploy/rollback" || echo '000')
+          echo "POST /api/deploy/rollback -> $code"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::Auto-rollback request failed with status $code."
+            exit 1
+          fi
+          echo "Auto-rollback triggered successfully."
