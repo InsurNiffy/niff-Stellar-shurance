@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Pre-commit hook: scan staged files for secrets using gitleaks.
-# Install once with: git config core.hooksPath .githooks
+# Install once with: make install-hooks
+# (equivalent to: git config core.hooksPath .githooks)
 set -euo pipefail
 
 if ! command -v gitleaks &>/dev/null; then
   echo "[gitleaks] not installed — skipping secret scan."
   echo "[gitleaks] Install: https://github.com/gitleaks/gitleaks#installing"
+  echo "[gitleaks] Then run: make install-hooks"
   exit 0
 fi
 
