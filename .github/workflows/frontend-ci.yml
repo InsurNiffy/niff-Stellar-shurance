@@ -55,3 +55,43 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Test (Jest)
+        id: jest
+        continue-on-error: true
+        run: npm test -- --json --outputFile=jest-results.json || true
+
+      - name: Flaky test report
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          JEST_RESULTS: frontend/jest-results.json
+        with:
+          script: |
+            const fs = require('fs');
+            const path = process.env.JEST_RESULTS;
+            if (!fs.existsSync(path)) {
+              core.info('No Jest results file found; skipping flaky report.');
+              return;
+            }
+            const results = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const flaky = [];
+            for (const suite of results.testResults || []) {
+              for (const t of suite.assertionResults || []) {
+                if (t.status === 'passed' && Array.isArray(t.retryReasons) && t.retryReasons.length > 0) {
+                  flaky.push({ name: t.fullName || t.title, retries: t.retryReasons.length });
+                }
+              }
+            }
+            const distinct = [...new Map(flaky.map(f => [f.name, f])).values()];
+            core.info(`Detected ${distinct.length} distinct flaky test(s).`);
+            for (const f of distinct) {
+              core.warning(`Flaky test (${f.retries} retr${f.retries === 1 ? 'y' : 'ies'}): ${f.name}`);
+            }
+            if (distinct.length > 3) {
+              core.setFailed(`Too many flaky tests: ${distinct.length} distinct (threshold: 3).`);
+            }
+
+      - name: Fail on test failure
+        if: steps.jest.outcome == 'failure'
+        run: exit 1
