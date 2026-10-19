@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   detect-flaky:
@@ -75,3 +76,75 @@ jobs:
           name: flaky-tests-report-${{ matrix.workspace }}
           path: ${{ matrix.workspace }}/jest-results.json
           retention-days: 14
+
+  annotate-flaky:
+    name: Annotate flaky tests on PR
+    needs: detect-flaky
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download flaky test reports
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e880d8f7c1dd2226f88 # v4.1.8
+        with:
+          pattern: flaky-tests-report-*
+          path: flaky-reports
+
+      - name: Post flaky test annotations
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const root = 'flaky-reports';
+            const flaky = [];
+
+            if (fs.existsSync(root)) {
+              for (const workspace of fs.readdirSync(root)) {
+                const resultsPath = path.join(root, workspace, 'jest-results.json');
+                if (!fs.existsSync(resultsPath)) continue;
+                let results;
+                try {
+                  results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+                } catch (err) {
+                  core.warning(`Could not parse ${resultsPath}: ${err.message}`);
+                  continue;
+                }
+                for (const suite of results.testResults || []) {
+                  for (const test of suite.testResults || []) {
+                    if ((test.invocations || 1) > 1 && test.status === 'passed') {
+                      flaky.push({
+                        workspace,
+                        file: suite.testFilePath,
+                        name: test.fullName,
+                        invocations: test.invocations,
+                      });
+                    }
+                  }
+                }
+              }
+            }
+
+            if (flaky.length === 0) {
+              core.info('No flaky (retry-then-pass) tests detected across workspaces.');
+              return;
+            }
+
+            for (const test of flaky) {
+              core.warning(
+                `Flaky test (${test.workspace}, ${test.invocations} invocations): ${test.name}`,
+                { title: 'Flaky test detected', file: test.file }
+              );
+            }
+
+            const distinct = new Set(flaky.map((t) => `${t.workspace}:${t.file}:${t.name}`));
+            const summary = `Detected ${distinct.size} distinct flaky test(s) across frontend and backend. See docs/flaky-test-quarantine.md for quarantine guidance.`;
+            core.notice(summary, { title: 'Flaky test report' });
+
+            if (distinct.size > 3) {
+              core.setFailed(
+                `${distinct.size} distinct flaky tests detected in this PR (threshold: 3). Quarantine or fix them per docs/flaky-test-quarantine.md.`
+              );
+            }

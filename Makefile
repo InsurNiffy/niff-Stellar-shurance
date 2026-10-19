@@ -70,7 +70,11 @@ wasm-opt-check: build
 	@echo "raw:  $$(wc -c < $(WASM_RAW)) bytes"
 	@echo "opt:  $$(wc -c < /tmp/niffyinsure_check.wasm) bytes"
 
+# Installs the repo git hooks (gitleaks pre-commit secret scan).
+# Run once after cloning: make install-hooks
 install-hooks:
+	@command -v gitleaks >/dev/null 2>&1 || \
+		echo "[install-hooks] warning: gitleaks not found on PATH — install it (see CONTRIBUTING.md Prerequisites) or the pre-commit hook will fail"
 	git config core.hooksPath .githooks
 	@echo "Git hooks installed from .githooks/"
 
@@ -88,7 +92,7 @@ generate-client:
 
 # ── Local dev env check ───────────────────────────────────────────────────────
 # Validates backend/.env and frontend/.env.local contain all required vars.
-# Usage: make check-env
+# Run this before starting any service. Usage: make check-env
 check-env:
 	npx ts-node scripts/check-env-local.ts
 
