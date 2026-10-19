@@ -2,6 +2,11 @@
 members = ["contracts/niffyinsure", "contracts/premium_calculator"]
 resolver = "2"
 
+# Security: cargo audit exceptions (issue #1698).
+# Open exceptions are tracked in docs/ops/audit-exceptions.md and annotated in CI
+# on every PR touching Cargo.toml. Prefer upgrading to a fixed release; only
+# unresolvable advisories may remain, each with a documented mitigating control.
+
 [profile.release]
 opt-level = "z"
 overflow-checks = true
