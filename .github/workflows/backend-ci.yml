@@ -90,3 +90,91 @@ jobs:
               exit 1
             fi
           fi
+
+  redis-failover-drill:
+    name: Redis failover drill
+    runs-on: ubuntu-latest
+    needs: ci
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Start Redis
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y redis-server
+          sudo systemctl start redis-server
+          redis-cli ping
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Cache node_modules
+        id: node-modules-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: backend/node_modules
+          key: ${{ runner.os }}-backend-node_modules-${{ hashFiles('backend/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-backend-node_modules-
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Build
+        run: npm run build
+
+      # Drill per docs/ops/redis-failover-drill.md:
+      # start Redis -> trigger throttler -> stop Redis -> assert graceful
+      # degradation -> restart Redis -> confirm normal operation.
+      - name: Redis failover drill
+        run: |
+          set -euo pipefail
+
+          echo "::group::1. Confirm Redis is up"
+          redis-cli ping
+          echo "::endgroup::"
+
+          echo "::group::2. Trigger throttler while Redis is healthy"
+          npm run test:e2e -- --runInBand --testPathPattern 'redis-failover-drill' --testNamePattern 'healthy'
+          echo "::endgroup::"
+
+          echo "::group::3. Stop Redis"
+          sudo systemctl stop redis-server
+          if redis-cli ping >/dev/null 2>&1; then
+            echo "::error::Redis still responding after stop"
+            exit 1
+          fi
+          echo "Redis stopped"
+          echo "::endgroup::"
+
+          echo "::group::4. Assert graceful degradation during outage"
+          npm run test:e2e -- --runInBand --testPathPattern 'redis-failover-drill' --testNamePattern 'degraded'
+          echo "::endgroup::"
+
+          echo "::group::5. Restart Redis"
+          sudo systemctl start redis-server
+          for i in $(seq 1 30); do
+            if redis-cli ping >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          redis-cli ping
+          echo "::endgroup::"
+
+          echo "::group::6. Confirm normal throttling after restart"
+          npm run test:e2e -- --runInBand --testPathPattern 'redis-failover-drill' --testNamePattern 'recovered'
+          echo "::endgroup::"
