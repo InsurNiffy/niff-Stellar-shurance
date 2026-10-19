@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Header from "@/components/nav/Header";
 import Footer from "@/components/nav/Footer";
+import NetworkStatusIndicator from "@/components/nav/NetworkStatusIndicator";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
@@ -12,6 +13,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <Header />
+      <NetworkStatusIndicator />
       <main
         id="main-content"
         tabIndex={-1}
