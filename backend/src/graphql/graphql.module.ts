@@ -6,6 +6,7 @@ import { GraphQLModule } from '@nestjs/graphql';
 import type { Response } from 'express';
 import jwt from 'jsonwebtoken';
 import depthLimit from 'graphql-depth-limit';
+import { GraphQLError, type ValidationContext } from 'graphql';
 import { join } from 'path';
 import { AuthModule } from '../auth/auth.module';
 import { CacheModule } from '../cache/cache.module';
@@ -56,6 +57,41 @@ export function assertWalletJwt(config: ConfigService, authorization?: string): 
   throw new Error('Wallet authentication is required');
 }
 
+/**
+ * Builds a validation rule that rejects operations whose estimated complexity
+ * exceeds `maxComplexity`. Complexity is approximated by counting field
+ * selections across the operation, which is sufficient to bound query cost.
+ */
+export function complexityLimit(
+  maxComplexity: number,
+  onReject?: () => void,
+): (context: ValidationContext) => (node: unknown) => void {
+  return (context: ValidationContext) => (node: unknown) => {
+    const operation = node as {
+      selectionSet?: { selections?: unknown[] };
+    };
+    const countSelections = (selectionSet?: { selections?: unknown[] }): number => {
+      if (!selectionSet?.selections) {
+        return 0;
+      }
+      return selectionSet.selections.reduce((total, selection) => {
+        const sel = selection as { selectionSet?: { selections?: unknown[] } };
+        return total + 1 + countSelections(sel.selectionSet);
+      }, 0);
+    };
+
+    const complexity = countSelections(operation.selectionSet);
+    if (complexity > maxComplexity) {
+      onReject?.();
+      context.reportError(
+        new GraphQLError(
+          `Query is too complex: ${complexity}. Maximum allowed complexity: ${maxComplexity}`,
+        ),
+      );
+    }
+  };
+}
+
 @Module({
   imports: [
     AuthModule,
@@ -81,7 +117,7 @@ export function assertWalletJwt(config: ConfigService, authorization?: string): 
         // enable introspection for developer experience (schema exploration, testing).
         const allowIntrospection = !isProduction;
         const slowOperationMs = config.get<number>('GRAPHQL_SLOW_OPERATION_MS', 750);
-        const { maxDepth } = resolveGraphqlLimits(config);
+        const { maxDepth, maxComplexity } = resolveGraphqlLimits(config);
         const logger = new AppLoggerService(config);
         const operationGuard = new GraphqlOperationGuardService(config);
         const plugins = [
@@ -92,6 +128,10 @@ export function assertWalletJwt(config: ConfigService, authorization?: string): 
         if (!isProduction) {
           plugins.push(ApolloServerPluginLandingPageLocalDefault());
         }
+
+        const recordRejection = () => {
+          metrics.increment('graphql_complexity_rejected_total');
+        };
 
         return {
           autoSchemaFile: join(process.cwd(), 'src/graphql/schema.gql'),
@@ -132,7 +172,15 @@ export function assertWalletJwt(config: ConfigService, authorization?: string): 
             return { req, res: undefined as unknown as Response };
           },
           plugins,
-          validationRules: [depthLimit(maxDepth)],
+          validationRules: [
+            depthLimit(maxDepth, {}, (depths) => {
+              recordRejection();
+              return new GraphQLError(
+                `Query is too deep: ${Math.max(...Object.values(depths))}. Maximum allowed depth: ${maxDepth}`,
+              );
+            }),
+            complexityLimit(maxComplexity, recordRejection),
+          ],
           formatError: formatGraphqlError,
         };
       },
