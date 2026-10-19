@@ -8,6 +8,7 @@ on:
       - 'contracts/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'EVENT_DICTIONARY.md'
       - '.github/workflows/contracts-ci.yml'
   pull_request:
     branches:
@@ -16,6 +17,7 @@ on:
       - 'contracts/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'EVENT_DICTIONARY.md'
       - '.github/workflows/contracts-ci.yml'
 
 permissions:
@@ -46,6 +48,54 @@ jobs:
             --ignore RUSTSEC-2024-0388 \
             --ignore RUSTSEC-2024-0436 \
             --ignore RUSTSEC-2026-0097
+
+  event-dictionary:
+    name: Event Dictionary Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cross-reference EVENT_DICTIONARY.md against events.rs
+        run: |
+          set -euo pipefail
+          DICT="EVENT_DICTIONARY.md"
+          EVENTS="contracts/niffyinsure/src/events.rs"
+
+          if [ ! -f "${DICT}" ]; then
+            echo "::error::${DICT} not found" >&2
+            exit 1
+          fi
+          if [ ! -f "${EVENTS}" ]; then
+            echo "::error::${EVENTS} not found" >&2
+            exit 1
+          fi
+
+          # Every `#[contractevent]` struct in events.rs is a documented event.
+          # Extract the struct name that follows each attribute.
+          grep -A1 '#\[contractevent\]' "${EVENTS}" \
+            | grep -oE 'struct[[:space:]]+[A-Za-z0-9_]+' \
+            | awk '{print $2}' \
+            | sort -u > /tmp/contract_events.txt
+
+          # Every event documented in the dictionary. Entries are expected to
+          # reference the event struct name (e.g. `PolicyCreated`).
+          grep -oE '\b[A-Z][A-Za-z0-9_]*\b' "${DICT}" \
+            | sort -u > /tmp/dict_events.txt
+
+          MISSING=$(comm -23 /tmp/contract_events.txt /tmp/dict_events.txt || true)
+
+          if [ -n "${MISSING}" ]; then
+            echo "::error::Undocumented contract events found in ${EVENTS}. Add them to ${DICT}." >&2
+            echo "" >&2
+            echo "Undocumented events:" >&2
+            echo "${MISSING}" | sed 's/^/  - /' >&2
+            echo "" >&2
+            echo "Diff (contract events vs dictionary):" >&2
+            diff -u /tmp/dict_events.txt /tmp/contract_events.txt >&2 || true
+            exit 1
+          fi
+
+          echo "All $(wc -l < /tmp/contract_events.txt) contract events are documented in ${DICT}."
 
   ci:
     name: Contracts
@@ -149,7 +199,8 @@ jobs:
             ~/.cargo/git
             target/
           key: ${{ runner.os }}-cargo-${{ matrix.soroban_sdk }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-${{ matrix.soroban_sdk }}-
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.soroban_sdk }}-
 
       - name: Bump soroban-sdk to latest stable
         if: matrix.soroban_sdk == 'latest'

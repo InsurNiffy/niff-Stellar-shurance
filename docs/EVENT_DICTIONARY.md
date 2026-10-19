@@ -62,6 +62,58 @@ Stable `action_type` values:
 
 ---
 
+## Governance parameter events  (`namespace = "niffyins"`)
+
+### `vote_dur_updated` — vote duration changed
+
+Emitted when the admin updates the voting window length for claims.
+
+**Topics:** `("niffyins", "vote_dur_updated")`
+
+```json
+{
+  "version": 1,
+  "old_vote_duration_ledgers": 17280,
+  "new_vote_duration_ledgers": 34560,
+  "at_ledger": 1234567
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_vote_duration_ledgers` | u32 (ledger) | Previous vote window length |
+| `new_vote_duration_ledgers` | u32 (ledger) | New vote window length |
+| `at_ledger` | u32 (ledger) | Ledger of the update |
+
+**Emitting entrypoint:** `admin_set_vote_duration_ledgers`
+
+---
+
+### `grace_period_updated` — grace period changed
+
+Emitted when the admin updates the post-expiry grace period for policies.
+
+**Topics:** `("niffyins", "grace_period_updated")`
+
+```json
+{
+  "version": 1,
+  "old_grace_period_ledgers": 17280,
+  "new_grace_period_ledgers": 8640,
+  "at_ledger": 1234567
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_grace_period_ledgers` | u32 (ledger) | Previous grace period length |
+| `new_grace_period_ledgers` | u32 (ledger) | New grace period length |
+| `at_ledger` | u32 (ledger) | Ledger of the update |
+
+**Emitting entrypoint:** `set_grace_period_ledgers`
+
+---
+
 ## Claim events  (`namespace = "niffyins"`)
 
 ### `clm_filed` — claim filed
@@ -85,6 +137,8 @@ Stable `action_type` values:
 | `evidence_hashes` | string[] | SHA-256 digests (32 bytes each); on-chain commitment only |
 | `filed_at` | u32 (ledger) | Ledger when claim was filed |
 
+**Emitting entrypoint:** `file_claim`
+
 ---
 
 ### `vote_cast` — ballot cast
@@ -106,6 +160,8 @@ Stable `action_type` values:
 | `vote` | `"Approve"` \| `"Reject"` | This voter's choice |
 | `approve_votes` | u32 | Running approve tally after this vote |
 | `reject_votes` | u32 | Running reject tally after this vote |
+
+**Emitting entrypoint:** `vote_on_claim`
 
 ---
 
@@ -129,6 +185,8 @@ Emitted when voting reaches majority **or** the vote window expires.
 |-------|------|-------------|
 | `status` | `"Approved"` \| `"Rejected"` | Final outcome |
 
+**Emitting entrypoint:** `finalize_claim`
+
 **Tie-breaking rule:** when `approve_votes == reject_votes` exactly (quorum
 met but no majority either way), the claim resolves to **`Rejected`**, not
 `Approved`. This is a strict `>` comparison on `approve_votes`, applied
@@ -138,6 +196,30 @@ outcome for a tie is deterministic regardless of vote submission order. See
 `contracts/niffyinsure/docs/GOVERNANCE.md` and the tie-break comment in
 `finalize_claim_inner` (`contracts/niffyinsure/src/claim.rs`), and the
 regression test `contracts/niffyinsure/tests/finalize_tie_vote.rs`.
+
+---
+
+### `proposal_expired` — governance proposal expired
+
+Emitted when a governance proposal passes its deadline without reaching quorum
+or confirmation.
+
+**Topics:** `("niffyins", "proposal_expired", proposal_id: u64)`
+
+```json
+{
+  "version": 1,
+  "proposal_id": 7,
+  "expired_at": 1355527
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `proposal_id` | u64 | Governance proposal identifier |
+| `expired_at` | u32 (ledger) | Ledger at which the proposal expired |
+
+**Emitting entrypoint:** `expire_proposal`
 
 ---
 
@@ -159,6 +241,8 @@ regression test `contracts/niffyinsure/tests/finalize_tie_vote.rs`.
 |-------|------|-------------|
 | `amount` | string (stroops) | Actual payout transferred |
 | `asset` | string (C…) | Asset contract used for payout |
+
+**Emitting entrypoint:** `process_claim`
 
 ---
 
@@ -184,6 +268,8 @@ Indexers must surface `Withdrawn` status distinctly on the claims board.
 | `claimant` | string (G…) | Address of the withdrawing claimant |
 | `at_ledger` | u32 (ledger) | Ledger of withdrawal |
 
+**Emitting entrypoint:** `withdraw_claim`
+
 ---
 
 ### `claim_status_changed` — claim status transition
@@ -207,6 +293,88 @@ deadline finalization, payout, and withdrawal.
 | `old_status` | ClaimStatus | Status before the transition (`Pending` is used for initial filing) |
 | `new_status` | ClaimStatus | Status after the transition |
 | `at_ledger` | u32 (ledger) | Ledger of the transition |
+
+**Emitting entrypoint:** `file_claim`, `vote_on_claim`, `finalize_claim`, `process_claim`, `withdraw_claim`
+
+---
+
+## Region events  (`namespace = "niffyinsure"`)
+
+### `region_upserted` — region risk tier created or updated
+
+Emitted when an admin creates or updates a region risk configuration.
+
+**Topics:** `("niffyinsure", "region_upserted", region: String)`
+
+```json
+{
+  "version": 1,
+  "region": "Medium",
+  "risk_tier": 2,
+  "premium_multiplier_bps": 12000,
+  "at_ledger": 1234567
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `region` | string | Region identifier (`"Low"` \| `"Medium"` \| `"High"`) |
+| `risk_tier` | u32 | Numeric risk tier assigned to the region |
+| `premium_multiplier_bps` | u32 (bps) | Premium multiplier applied to the region |
+| `at_ledger` | u32 (ledger) | Ledger of the upsert |
+
+**Emitting entrypoint:** `admin_upsert_region`
+
+---
+
+### `region_removed` — region risk tier removed
+
+Emitted when an admin removes a region risk configuration.
+
+**Topics:** `("niffyinsure", "region_removed", region: String)`
+
+```json
+{
+  "version": 1,
+  "region": "High",
+  "at_ledger": 1234567
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `region` | string | Region identifier that was removed |
+| `at_ledger` | u32 (ledger) | Ledger of the removal |
+
+**Emitting entrypoint:** `admin_remove_region`
+
+---
+
+## Reinsurance events  (`namespace = "niffyinsure"`)
+
+### `reinsurance_triggered` — reinsurance layer activated
+
+Emitted when aggregate claim exposure crosses the reinsurance threshold and the
+reinsurance layer is engaged.
+
+**Topics:** `("niffyinsure", "reinsurance_triggered")`
+
+```json
+{
+  "version": 1,
+  "threshold": "100000000000",
+  "exposure": "120000000000",
+  "at_ledger": 1234567
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `threshold` | string (stroops) | Reinsurance trigger threshold |
+| `exposure` | string (stroops) | Aggregate exposure at trigger time |
+| `at_ledger` | u32 (ledger) | Ledger of the trigger |
+
+**Emitting entrypoint:** `process_claim`
 
 ---
 
@@ -239,6 +407,8 @@ deadline finalization, payout, and withdrawal.
 | `coverage` | string (stroops) | Maximum payout |
 | `end_ledger` | u32 (ledger) | Expiry ledger |
 
+**Emitting entrypoint:** `initiate_policy`
+
 ---
 
 ### `PolicyRenewed` — policy renewed
@@ -260,283 +430,12 @@ deadline finalization, payout, and withdrawal.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `old_coverage_type` | CoverageTier | Coverage tier before renewal |
-| `new_coverage_type` | CoverageTier | Coverage tier applied for the renewed term |
-| `old_coverage` | string (stroops) | Coverage amount before renewal |
-| `new_coverage` | string (stroops) | Coverage amount applied for the renewed term |
-
----
-
-### `policy_terminated` — policy terminated
-
-**Topics:** `("niffyinsure", "policy_terminated", holder: Address, policy_id: u32)`
-
-```json
-{
-  "reason_code": 1,
-  "terminated_by_admin": 0,
-  "open_claim_bypass": 0,
-  "open_claims": 0,
-  "at_ledger": 1234600
-}
-```
-
-| `reason_code` | Meaning |
-|---------------|---------|
-| 1 | VoluntaryCancellation |
-| 2 | LapsedNonPayment |
-| 3 | UnderwritingVoid |
-| 4 | FraudOrMisrepresentation |
-| 5 | RegulatoryAction |
-| 6 | AdminOverride |
-
----
-
-### `policy_expired` — policy expiry detected
-
-Emitted at most once per `(holder, policy_id, expiry_ledger)` term, either by the
-`process_expired` keeper entrypoint or by `renew_policy` when called on an already-expired policy.
-May be emitted with a delay relative to the actual expiry ledger if no keeper call occurred at that ledger.
-
-**Topics:** `("niffyinsure", "policy_expired", holder: Address, policy_id: u32)`
-
-```json
-{
-  "expiry_ledger": 2285767,
-  "reported_at_ledger": 2285800
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `expiry_ledger` | u32 (ledger) | Ledger at which the policy actually expired |
-| `reported_at_ledger` | u32 (ledger) | Ledger when the event was emitted (may differ from expiry_ledger) |
-
-> **Deduplication:** the backend notification service must deduplicate on `policy_id` to handle delayed keeper calls.
-
----
-
-### `BeneficiaryUpdated` — payout beneficiary changed
-
-Emitted when a holder sets or changes their designated payout beneficiary.
-
-**Topics:** `("niffyinsure", "BeneficiaryUpdated", holder: Address, policy_id: u32)`
-
-```json
-{
-  "version": 1,
-  "old_beneficiary": "G...",
-  "new_beneficiary": "G...",
-  "at_ledger": 1234700
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `old_beneficiary` | string (G…) \| null | Previous beneficiary; null if unset |
-| `new_beneficiary` | string (G…) | New beneficiary address |
-
----
-
-## Admin / config events  (`namespace = "niffyins"`)
-
-| Event | Topics | Key payload fields |
-|-------|--------|--------------------|
-| `tbl_upd` | `(NS, "tbl_upd")` | `table_version: u32` |
-| `asset_set` | `(NS, "asset_set", asset)` | `allowed: 0\|1`, `symbol_hint: string`, `decimals: u32` |
-| `adm_prop` | `(NS, "adm_prop", old_admin, new_admin)` | `version` only |
-| `adm_acc` | `(NS, "adm_acc", old_admin, new_admin)` | `version` only |
-| `adm_can` | `(NS, "adm_can", admin, cancelled_pending)` | `version` only |
-| `admin_rotated` | `("niffyinsure", "admin_rotated", old_admin, new_admin)` | `ledger: u32` |
-| `adm_tok` | `(NS, "adm_tok")` | `old_token`, `new_token` |
-| `adm_paus` | `(NS, "adm_paus", admin)` | `paused: 0\|1` |
-| `adm_drn` | `(NS, "adm_drn", admin)` | `recipient`, `amount` (stroops) |
-| `quorum_updated` | `("niffyinsure", "quorum_updated")` | `old_bps: u32`, `new_bps: u32` |
-| `GracePeriodUpdated` | `("niffyinsure", "GracePeriodUpdated", admin)` | `old_ledgers: u32`, `new_ledgers: u32` |
-| `min_coverage_updated` | `("niffyinsure", "min_coverage_updated", admin)` | `old_amount: i128`, `new_amount: i128`, `at_ledger: u32` |
-| `voter_added` | `("niffyinsure", "voter_added", voter)` | `added_by: Address`, `at_ledger: u32` |
-
-### `quorum_updated` — DAO quorum threshold changed
-
-**Topics:** `("niffyinsure", "quorum_updated")`
-
-```json
-{
-  "version": 1,
-  "old_bps": 5000,
-  "new_bps": 6000
-}
-```
-
-Does not retroactively affect claims already in `Processing`.
-
----
-
-### `admin_rotated` — admin address changed (chain-of-custody record)
-
-Emitted from `accept_admin`, the point where `storage::set_admin` actually
-changes the stored admin post-initialization. This contract only exposes
-admin rotation via the two-step propose/accept flow today; any future
-single-step rotation entrypoint must also emit this event so it stays a
-complete audit trail regardless of rotation path.
-
-**Topics:** `("niffyinsure", "admin_rotated", old_admin: Address, new_admin: Address)`
-
-```json
-{
-  "old_admin": "G...",
-  "new_admin": "G...",
-  "ledger": 123456
-}
-```
-
-| Field | Type | Description |
-|-------|------|--------------|
-| `old_admin` | string (G...) | Admin address before rotation |
-| `new_admin` | string (G...) | Admin address after rotation |
-| `ledger` | u32 | Ledger sequence at rotation time |
-
----
-
-### `GracePeriodUpdated` — renewal grace period changed
-
-**Topics:** `("niffyinsure", "GracePeriodUpdated", admin: Address)`
-
-```json
-{
-  "version": 1,
-  "old_ledgers": 720,
-  "new_ledgers": 1440
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `old_ledgers` | u32 | Previous grace period in ledgers |
-| `new_ledgers` | u32 | New grace period in ledgers |
-
----
-
-### `min_coverage_updated` — coverage amount floor changed
-
-Emitted by `admin_set_min_coverage_amount` on **every** call, including
-no-op updates. Enforced at `initiate_policy`: `coverage_amount < min_coverage_amount`
-reverts with `InvalidCoverage`. The floor only applies to policies bound
-*after* the change — already-bound policies are never retroactively affected.
-
-**Topics:** `("niffyinsure", "min_coverage_updated", admin: Address)`
-
-```json
-{
-  "version": 1,
-  "old_amount": "1000000",
-  "new_amount": "5000000",
-  "at_ledger": 1234700
-}
-```
-
-| Field | Type | Description |
-|-------|------|--------------|
-| `old_amount` | string (stroops) | Floor value before this change |
-| `new_amount` | string (stroops) | Floor value after this change |
-
----
-
-### `voter_added` — voter registered via batch admin call
-
-Emitted once per address by `add_voters_batch`. Addresses already present in
-the registry, or repeated within the same batch, are skipped and do **not**
-emit a duplicate event.
-
-**Topics:** `("niffyinsure", "voter_added", voter: Address)`
-
-```json
-{
-  "version": 1,
-  "added_by": "G...",
-  "at_ledger": 1234700
-}
-```
-
-| Field | Type | Description |
-|-------|------|--------------|
-| `added_by` | string (G…) | Admin account that authorized the batch |
-
----
-
-## Claim / policy events audited but previously undocumented
-
-The following events existed in `events.rs` prior to this audit but had no
-entry here. Topic layout is unchanged; this section only fills the
-documentation gap (issue: stable topic layout audit).
-
-| Event | Topics | Key payload fields |
-|-------|--------|--------------------|
-| `payout_asset_override_applied` | `("niffyinsure", "payout_asset_override_applied", claim_id: u64)` | `policy_type`, `premium_asset`, `payout_asset` |
-| `asset_premium_table_set` | `("niffyinsure", "asset_premium_table_set", asset: Address)` | `table_version: u32`, `cleared: 0\|1` |
-| `installment_disbursed` | `("niffyinsure", "installment_disbursed", claim_id: u64)` | `recipient`, `amount`, `paid_amount`, `total_amount`, `installment_count`, `asset`, `at_ledger` |
-| `claim_fully_paid` | `("niffyinsure", "claim_fully_paid", claim_id: u64)` | `recipient`, `total_paid`, `installment_count`, `at_ledger` |
-| `policy_transferred` | `("niffyinsure", "policy_transferred", policy_id: u32, old_holder: Address, new_holder: Address)` | `at_ledger: u32` |
-| `claim_evidence_updated` | `("niffyinsure", "claim_evidence_updated", claim_id: u64)` | `policy_id`, `evidence_hashes`, `at_ledger` |
-| `payout_recipient_warning` | `("niffyinsure", "payout_recipient_warning", claim_id: u64)` | `recipient`, `asset`, `at_ledger` |
-
-**Normalization applied:** `claim_evidence_updated` and `payout_recipient_warning`
-did not carry a `version` field, unlike every other catalog event. Both now
-include `version: u32` (currently `1`) so indexers can apply the same
-schema-version dispatch logic uniformly across all events. This is an
-additive field — existing parsers keyed on `(topic[0], topic[1])` are
-unaffected.
-
-**Topic ordering rule confirmed by this audit:** every event's topics follow
-`[namespace, event_name, entity_id(s)..., actor(s)...]` — i.e. the thing the
-event is *about* (claim_id, policy_id, asset) comes before *who acted*
-(admin, voter, holder), when both are present. No event deviated from this
-ordering; the only deviation found was the missing `version` field noted
-above, now fixed.
-
----
-
-## Versioning & migration
-
-1. `SCHEMA_VERSION` in `events.rs` and `events.schema.ts` must stay in sync.
-2. A version bump is **required** when any field is removed or its type changes.
-3. The `EVENT_PARSERS` table in `events.schema.ts` maps `version → parser`; add a new entry for each bump and keep old entries for historical replay.
-4. CI regression tests in `events.test.ts` will fail on shape changes — this is intentional.
-
----
-
-## What is NOT in events
-
-- Raw IPFS URLs (use `image_hash` to look up off-chain).
-- Claim description text.
-- Voter lists (derive from `vote_cast` stream).
-- PII of any kind.
-
----
-
-## Read-only entrypoints
-
-These entrypoints are callable via Soroban simulation without authentication.
-They perform **no storage reads or writes** and are safe to call repeatedly.
-
-### `version` — deployed contract semver
-
-Returns the semver string stamped at build time from `Cargo.toml` (e.g. `"0.1.0"`).
-No events emitted; no state mutation; no auth required.
-
-| Property | Value |
-|----------|-------|
-| Auth required | None |
-| State mutation | None |
-| Return type | `String` — pure semver (`MAJOR.MINOR.PATCH`), no network or environment prefix |
-| Callable via simulation | Yes |
-
-**Backend usage:** the deployment registry calls `version()` via simulation immediately
-after each deploy and records the result. If the returned value does not match the
-expected `CARGO_PKG_VERSION` baked into the release artifact, the registry logs an error
-and the deploy pipeline should halt and alert.
-
-```
-GET /chain/contract-version?source_account=G…
-→ { "version": "0.1.0", "minResourceFee": "…" }
-```
+| `policy_id` | u32 | Per-holder policy identifier |
+| `premium` | string (stroops) | Premium paid at renewal |
+| `new_end_ledger` | u32 (ledger) | New expiry ledger |
+| `old_coverage_type` | string | Coverage tier before renewal |
+| `new_coverage_type` | string | Coverage tier after renewal |
+| `old_coverage` | string (stroops) | Coverage limit before renewal |
+| `new_coverage` | string (stroops) | Coverage limit after renewal |
+
+**Emitting entrypoint:** `renew_policy`

@@ -55,3 +55,23 @@ appeal/dispute pair.
 - `contracts/niffyinsure/src/lib.rs` — the corresponding contract entrypoints
   and their auth checks
 - `contracts/niffyinsure/src/types.rs` — `ClaimStatus` discriminants
+
+## Payout and voting terms
+
+- **Deductible** — a per-policy amount deducted from an approved payout before
+  the claimant is paid. The deductible is fixed when the policy is issued and
+  reduces the disbursed amount rather than the approved claim amount.
+- **Keeper** — a permissionless caller that triggers time-based contract
+  transitions (for example, finalizing a round once its deadline has passed).
+  Any account may act as a keeper; the contract only checks that the relevant
+  time condition holds, not who the caller is.
+- **Reinsurance** — a fallback payout mechanism backed by the
+  `ReinsuranceContract`. When the primary pool cannot cover an approved payout,
+  the shortfall is drawn from reinsurance instead.
+- **Rolling Claim Cap** — a cumulative payout limit per policy over a rolling
+  window. Once the cap is reached within the window, further claims against
+  that policy are rejected until the window rolls forward.
+- **Voter Snapshot** — the frozen voter registry used for a specific claim
+  round. It is captured when the round opens (including a fresh snapshot on
+  appeal) so later registry changes cannot alter who is eligible to vote in
+  that round.
