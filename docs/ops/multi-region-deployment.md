@@ -53,6 +53,59 @@ STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 
 ---
 
+## Stellar RPC Outage Failover
+
+When the primary Soroban RPC endpoint degrades or becomes unavailable, follow this procedure to fail over to a backup RPC provider. The goal is to restore contract reads/writes with minimal downtime while keeping the incident channel informed.
+
+### Canonical Backup RPC URLs
+
+| Network | Primary | Backup |
+|---|---|---|
+| Mainnet | `https://rpc.stellar.org` (SDF) | `https://mainnet.stellar.validationcloud.io/v1/<KEY>` (Validation Cloud) |
+| Testnet | `https://soroban-testnet.stellar.org` (SDF) | `https://rpc.ankr.com/stellar_testnet` (Ankr) |
+
+> Use the backup that is **not** the current primary for the affected region. Keep the `STELLAR_NETWORK_PASSPHRASE` unchanged — it is network-specific, not provider-specific.
+
+### 1. Detect
+
+The Prometheus alert fires when the RPC error rate stays elevated:
+
+```
+soroban_rpc_error_rate > 0.1 for 5m
+```
+
+Confirm the alert in Alertmanager and check the RPC dashboard for sustained errors (not a single transient spike) before proceeding.
+
+### 2. Switch
+
+Update `SOROBAN_RPC_URL` to the backup RPC provider for the affected environment and redeploy/restart the backend so the new value is picked up:
+
+```
+# Mainnet failover example
+SOROBAN_RPC_URL=https://mainnet.stellar.validationcloud.io/v1/<KEY>
+
+# Testnet failover example
+SOROBAN_RPC_URL=https://rpc.ankr.com/stellar_testnet
+```
+
+Update the value in the region's secret manager (AWS Secrets Manager / GCP Secret Manager / Doppler) — never commit it to the repository — then roll the backend deployment.
+
+### 3. Validate
+
+Run the chain info smoke test against the backend to confirm it can reach the new RPC endpoint:
+
+```
+GET /api/chain/info
+```
+
+A `200` response with the expected network/ledger data confirms the failover succeeded. If it fails, revert `SOROBAN_RPC_URL` to the previous value and escalate.
+
+### 4. Notify
+
+Post a summary to the `#incidents` Slack channel covering: the alert that fired, the region/environment affected, the backup RPC provider switched to, and the smoke-test result.
+
+---
+
 ## Expected Latency for Soroban Calls
 
 Measured from backend to RPC endpoint (p50 / p99):
