@@ -1,0 +1,100 @@
+name: Alert Review Reminder
+
+on:
+  schedule:
+    # Quarterly: first day of Jan, Apr, Jul, Oct at 09:00 UTC
+    - cron: '0 9 1 1,4,7,10 *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/ops/alert-review-log.md'
+  pull_request:
+    paths:
+      - 'docs/ops/alert-review-log.md'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  open-reminder:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build reminder issue
+        id: build
+        run: |
+          set -euo pipefail
+          PROCESS_DOC="docs/ops/alert-fatigue-review-process.md"
+          if [ -f "$PROCESS_DOC" ]; then
+            CHECKLIST=$(cat "$PROCESS_DOC")
+          else
+            CHECKLIST="- [ ] Review alert fatigue process (doc not found: $PROCESS_DOC)"
+          fi
+          {
+            echo "## Quarterly Alert Review"
+            echo ""
+            echo "This is the automated quarterly alert review reminder."
+            echo ""
+            echo "### Checklist"
+            echo ""
+            echo "$CHECKLIST"
+            echo ""
+            echo "### Completion"
+            echo ""
+            echo "Update \`docs/ops/alert-review-log.md\` with the review outcome. This issue will be closed automatically when that file is updated."
+          } > issue_body.md
+          echo "body_path=issue_body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve on-call rotation lead
+        id: lead
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LEAD=""
+          if [ -f ".github/oncall-rotation.txt" ]; then
+            LEAD=$(head -n 1 .github/oncall-rotation.txt | tr -d '[:space:]')
+          fi
+          if [ -z "$LEAD" ]; then
+            LEAD=$(gh api "repos/${{ github.repository}}" --jq '.owner.login')
+          fi
+          echo "lead=$LEAD" >> "$GITHUB_OUTPUT"
+
+      - name: Open reminder issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "Quarterly alert review reminder" \
+            --body-file "${{ steps.build.outputs.body_path }}" \
+            --assignee "${{ steps.lead.outputs.lead }}" \
+            --label "ops" || true
+
+  close-reminder:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close open reminder issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ISSUES=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --search "Quarterly alert review reminder in:title" \
+            --json number \
+            --jq '.[].number')
+          for num in $ISSUES; do
+            gh issue close "$num" \
+              --repo "${{ github.repository }}" \
+              --comment "Closing: alert-review-log.md was updated."
+          done
