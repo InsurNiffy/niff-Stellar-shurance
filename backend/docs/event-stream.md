@@ -68,6 +68,32 @@ id: 1712345678901-0
 data: {"v":1,"id":"1712345678901-0","type":"claim.vote","ts":"2024-04-05T18:14:38.901Z","claimId":"42","address":"0xabc...","data":{"vote":"approve","weight":"1"}}
 ```
 
+## Event field dictionary
+
+Per `docs/NAMING_CONVENTIONS.md`, API responses and contract events use
+`camelCase` while DB columns use `snake_case`. The table below is the canonical
+mapping for every field carried in the event envelope and its `data` payloads,
+so consumers can translate between the wire format and storage without guessing.
+
+| Wire field (camelCase) | DB column (snake_case) | Notes                                   |
+| ---------------------- | ---------------------- | --------------------------------------- |
+| `v`                    | —                      | Envelope schema version, not persisted. |
+| `id`                   | `event_id`             | Also the SSE `id` for resume.           |
+| `type`                 | `event_type`           | Mirrored in the SSE `event:` field.     |
+| `ts`                   | `created_at`           | ISO-8601 on the wire.                   |
+| `claimId`              | `claim_id`             |                                         |
+| `address`              | `address`              | Already single-word; unchanged.         |
+| `data`                 | `payload`              | Type-specific body.                     |
+| `data.vote`            | `vote`                 | `claim.vote` payload.                   |
+| `data.weight`          | `weight`               | `claim.vote` payload.                   |
+| `data.status`          | `status`               | `claim.status` payload.                 |
+| `data.txHash`          | `tx_hash`              | `transaction.*` payload.                |
+| `data.blockNumber`     | `block_number`         | `transaction.*` payload.                |
+
+Contract event field names follow the same `camelCase` convention as the wire
+format (e.g. `claimId`, `txHash`), so no translation is needed between contract
+events and API responses — only between the wire format and DB columns.
+
 ## Delivery guarantees
 
 - **Fan-out across instances.** Events are published to a Redis pub/sub channel

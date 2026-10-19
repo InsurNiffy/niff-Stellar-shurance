@@ -88,6 +88,51 @@ Use separate OIDC-assumable IAM roles for backup and restore drill workflows.
 | PostgreSQL + Redis lost | Restore Postgres first, rebuild Redis by traffic and workers | Full maintenance mode during restore | Restore DB, bring up Redis, run indexer replay, then reopen traffic |
 | Partial table corruption in Postgres | Fresh restore to alternate instance, compare counts, promote after validation | Prefer alternate instance over in-place surgery | Use latest backup, sanity-check `raw_events` and `ledger_cursors`, then cut over |
 
+## Contract upgrade rollback (blue-green)
+
+Contract upgrades are irreversible once applied on-chain. Treat every upgrade as a blue-green deployment: stage the new WASM on testnet, verify it, then apply to mainnet with a documented rollback path. The rollback path is always a hotfix WASM re-deploy of the last known-good version — there is no in-place revert.
+
+### 1. Pre-upgrade snapshot
+
+Owner: Backend on-call + DBA/Ops
+
+1. Record the current on-chain contract version by calling `get_contract_version()` on the live `CONTRACT_ID` and paste the result into the upgrade ticket.
+2. Snapshot the treasury balance (token contract `balance(treasury)` and native XLM balance) and attach the values to the ticket.
+3. Export all open claim IDs (`SELECT id FROM claims WHERE status = 'open' ORDER BY id`) and attach the CSV to the ticket. This is the baseline used to verify no claims are lost or double-settled after the upgrade.
+4. Archive the currently deployed WASM hash (`stellar contract info --id $CONTRACT_ID`) so the last known-good artifact can be re-deployed during rollback.
+5. Freeze non-essential deploys and pause the indexer until the upgrade window closes.
+
+### 2. During upgrade (testnet first, then mainnet)
+
+Owner: Backend on-call
+
+1. Deploy the candidate WASM to testnet: `stellar contract install --wasm <candidate.wasm> --network testnet`, then `stellar contract deploy`/`upgrade` against the testnet `CONTRACT_ID`.
+2. Run the smoke tests against testnet: create a claim, vote, settle, and confirm `get_contract_version()` returns the expected new version.
+3. Only after testnet smoke tests pass, apply the same WASM to mainnet via `stellar contract upgrade --id $CONTRACT_ID --wasm <candidate.wasm> --network mainnet`.
+4. Record the mainnet transaction hash and the new WASM hash in the upgrade ticket.
+
+### 3. Post-upgrade verification
+
+Owner: Backend on-call
+
+1. Call `get_contract_version()` on mainnet and confirm it returns the expected version string from the upgrade ticket.
+2. Re-query the treasury balance and compare against the pre-upgrade snapshot; investigate any unexpected delta.
+3. Re-query open claim IDs and diff against the pre-upgrade CSV; every previously open claim must still be present and settleable.
+4. Run the mainnet smoke tests (create, vote, settle) and confirm the indexer resumes from the correct ledger cursor.
+5. If any check fails, stop and execute the rollback procedure below.
+
+### 4. Rollback: hotfix WASM re-deploy
+
+Owner: Backend on-call + Incident Commander
+
+1. Declare the incident and freeze further upgrades.
+2. Re-install the last known-good WASM archived during the pre-upgrade snapshot: `stellar contract install --wasm <last-good.wasm> --network mainnet`.
+3. Re-deploy the last known-good WASM to `CONTRACT_ID` via `stellar contract upgrade --id $CONTRACT_ID --wasm <last-good.wasm> --network mainnet`.
+4. Verify `get_contract_version()` returns the previous (known-good) version.
+5. Re-run the treasury balance and open claim ID checks against the pre-upgrade snapshot to confirm state integrity.
+6. Resume the indexer from the pre-upgrade ledger cursor and reopen traffic.
+7. File a post-incident review documenting the failed upgrade, the rollback transaction hash, and any state reconciliation performed.
+
 ## Step-by-step restore procedure
 
 ### 1. Declare the incident
@@ -127,91 +172,4 @@ gh workflow run recovery-drill.yml
 Manual path:
 
 ```bash
-aws s3 cp s3://$BACKUP_BUCKET/$BACKUP_OBJECT_KEY /tmp/recovery.dump
-psql "$RESTORE_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;'
-pg_restore --dbname="$RESTORE_DATABASE_URL" --no-owner --no-privileges /tmp/recovery.dump
-```
-
-### 5. Validate the restore
-
-Owner: Backend on-call
-
-Run at minimum:
-
-```bash
-psql "$RESTORE_DATABASE_URL" -Atqc "SELECT COUNT(*) FROM policies;"
-psql "$RESTORE_DATABASE_URL" -Atqc "SELECT COUNT(*) FROM claims;"
-psql "$RESTORE_DATABASE_URL" -Atqc "SELECT COUNT(*) FROM raw_events;"
-psql "$RESTORE_DATABASE_URL" -Atqc "SELECT network, last_processed_ledger FROM ledger_cursors ORDER BY network;"
-```
-
-Expected outcome:
-
-- `policies`, `claims`, `votes`, `raw_events`, `ledger_cursors`, and `admin_audit_logs` all exist
-- counts are plausible for the chosen backup point
-- the restored `ledger_cursors` row gives you the last durable processed ledger
-
-### 6. Rebuild indexer state from chain
-
-Owner: Backend on-call
-
-Choose replay anchor ledger `N` like this:
-
-1. Read the restored `ledger_cursors.last_processed_ledger`
-2. Subtract a 500-ledger overlap buffer to recover any queue work that may have been in Redis but not fully materialized
-3. Clamp to the deployment start ledger for the active contract version
-
-Example:
-
-```bash
-export N=123456
-cd backend
-npm run ops:replay-indexer -- --from-ledger "$N" --network "$STELLAR_NETWORK" --output ../drill-evidence/indexer-replay.json
-```
-
-If you are replaying inside a deployed environment instead of locally, you may use the admin queue surface:
-
-```bash
-curl -X POST https://api.example.com/admin/reindex \
-  -H "Authorization: Bearer $ADMIN_JWT" \
-  -H "Content-Type: application/json" \
-  -d "{\"fromLedger\": $N, \"network\": \"$STELLAR_NETWORK\"}"
-```
-
-Success criteria:
-
-- replay reaches chain head without fatal errors
-- `ledger_cursors.last_processed_ledger` advances to the current ledger window
-- claim/policy materialized counts remain internally consistent after replay
-
-### 7. Redis decision after restore
-
-Owner: Backend on-call
-
-| Redis data class | Backup required? | Accepted loss window | Recovery action |
-|---|---|---|---|
-| Response caches | No | Full loss accepted | Warm naturally from traffic |
-| Wallet-auth nonces | No | Full loss accepted | Users request a fresh challenge |
-| Rate-limit counters | No | Full loss accepted | Counters rebuild automatically |
-| BullMQ `claim-events` | No separate Redis backup today | Up to time since last successful replay anchor | Rebuild from chain using step 6 |
-| BullMQ `reindex` | No separate Redis backup today | Full loss accepted | Re-submit job manually |
-| Notifications / webhook queue | Not durable today | Since last process restart | Manual resend from restored DB/audit state |
-
-### 8. Cut over and close
-
-Owner: Incident Commander
-
-1. Repoint the application to the restored database.
-2. Unpause workers after replay completes.
-3. Remove maintenance mode and run a smoke test on claims, policy read paths, and `/health`.
-4. Attach restore evidence, replay evidence, and timestamps to the incident ticket.
-5. Record gaps and follow-up actions in [`recovery-drill-log.md`](./recovery-drill-log.md).
-
-## Drill checklist
-
-- [ ] Latest backup restored to a fresh Postgres instance
-- [ ] Required tables verified
-- [ ] Replay executed from ledger `N`
-- [ ] Start/end timestamps captured
-- [ ] Observed RPO and RTO recorded
-- [ ] Gaps and mitigations recorded in ticket and drill log
+aws s3 cp s3://$BACKUP_BUCKET/$BACK

@@ -32,6 +32,14 @@ export class MetricsService implements OnModuleInit {
   readonly graphqlOperationDuration: client.Histogram<string>;
   readonly graphqlOperationTotal: client.Counter<string>;
 
+  // ── GraphQL complexity metrics ────────────────────────────────────────────
+  /**
+   * Total GraphQL queries rejected for exceeding depth/complexity limits.
+   * Labels:
+   *  - `reason`: depth | complexity
+   */
+  readonly graphqlComplexityRejectedTotal: client.Counter<string>;
+
   // ── Queue / DLQ metrics ───────────────────────────────────────────────────
   readonly dlqDepth: client.Gauge<string>;
   readonly dlqJobFailed: client.Counter<string>;
@@ -182,75 +190,82 @@ export class MetricsService implements OnModuleInit {
       registers: [this.registry],
     });
 
+    this.graphqlComplexityRejectedTotal = new client.Counter({
+      name: 'graphql_complexity_rejected_total',
+      help: 'Total GraphQL queries rejected for exceeding depth/complexity limits',
+      labelNames: ['reason'],
+      registers: [this.registry],
+    });
+
     this.dlqDepth = new client.Gauge({
-      name: 'bullmq_dlq_depth',
-      help: 'Number of jobs currently in the dead-letter (failed) queue',
-      labelNames: ['queue'],
+      name: 'dlq_depth',
+      help: 'Number of jobs currently in the dead-letter queue',
       registers: [this.registry],
     });
 
     this.dlqJobFailed = new client.Counter({
-      name: 'bullmq_dlq_jobs_total',
-      help: 'Total jobs moved to dead-letter queue after max retries',
-      labelNames: ['queue', 'job_name', 'failure_reason'],
+      name: 'dlq_jobs_failed_total',
+      help: 'Total jobs moved to the dead-letter queue',
+      labelNames: ['queue'],
       registers: [this.registry],
     });
 
     this.queueActiveWorkers = new client.Gauge({
-      name: 'bullmq_queue_active_workers',
-      help: 'Number of active workers for a queue (jobs being processed)',
+      name: 'queue_active_workers',
+      help: 'Number of active workers per queue',
       labelNames: ['queue'],
       registers: [this.registry],
     });
 
     this.queueDepth = new client.Gauge({
-      name: 'bullmq_queue_depth',
-      help: 'Number of jobs currently pending in a queue',
+      name: 'queue_depth',
+      help: 'Number of waiting jobs per queue',
       labelNames: ['queue'],
       registers: [this.registry],
     });
 
     this.bullmqJobRetriesTotal = new client.Counter({
       name: 'bullmq_job_retries_total',
-      help: 'Total job retry attempts per queue (excludes first attempt and final exhaustion)',
-      labelNames: ['queue', 'job_name'],
+      help: 'Total BullMQ job retries',
+      labelNames: ['queue'],
       registers: [this.registry],
     });
 
     this.jobProcessingDuration = new client.Histogram({
-      name: 'bullmq_job_processing_duration_seconds',
-      help: 'Job processing duration in seconds per queue',
-      labelNames: ['queue', 'job_name', 'status'],
-      buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 300],
+      name: 'job_processing_duration_seconds',
+      help: 'BullMQ job processing latency in seconds',
+      labelNames: ['queue'],
+      buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
       registers: [this.registry],
     });
 
     this.indexerLag = new client.Gauge({
       name: 'indexer_lag_ledgers',
-      help: 'Current indexer lag in ledger count behind the network head',
-      labelNames: ['network'],
+      help: 'Indexer lag in ledgers behind chain tip',
       registers: [this.registry],
     });
-    this.indexerLedgerGap = new client.Gauge({      name: 'indexer_ledger_gap',      help: 'Gap between latest chain ledger and last processed ledger',      labelNames: ['network'],      registers: [this.registry],    });
+
+    this.indexerLedgerGap = new client.Gauge({
+      name: 'indexer_ledger_gap',
+      help: 'Gap between last indexed ledger and chain tip',
+      registers: [this.registry],
+    });
 
     this.indexerLastLedgerAge = new client.Gauge({
-      name: 'indexer_last_processed_ledger_age_seconds',
-      help: 'Seconds since the close time of the last ledger processed by the indexer',
-      labelNames: ['network'],
+      name: 'indexer_last_ledger_age_seconds',
+      help: 'Age of the last indexed ledger in seconds',
       registers: [this.registry],
     });
 
     this.solvencyBufferStroops = new client.Gauge({
       name: 'solvency_buffer_stroops',
-      help: 'Contract solvency buffer in stroops (balance minus approved obligations)',
-      labelNames: ['tenant'],
+      help: 'Current solvency buffer in stroops',
       registers: [this.registry],
     });
 
     this.solvencyBufferThresholdStroops = new client.Gauge({
       name: 'solvency_buffer_threshold_stroops',
       help: 'Configured solvency buffer threshold in stroops',
-      labelNames: ['tenant'],
       registers: [this.registry],
     });
 
@@ -258,7 +273,7 @@ export class MetricsService implements OnModuleInit {
       name: 'rpc_call_duration_seconds',
       help: 'Soroban RPC call latency in seconds',
       labelNames: ['rpc_method', 'status'],
-      buckets: [0.05, 0.1, 0.5, 1, 2, 5, 10, 30],
+      buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
       registers: [this.registry],
     });
 
@@ -272,51 +287,52 @@ export class MetricsService implements OnModuleInit {
     this.rpcErrorTotal = new client.Counter({
       name: 'rpc_errors_total',
       help: 'Total Soroban RPC errors',
-      labelNames: ['rpc_method', 'error_type'],
+      labelNames: ['rpc_method'],
       registers: [this.registry],
     });
 
     this.quoteSimulationCacheTotal = new client.Counter({
-      name: 'quote_simulation_cache_requests_total',
-      help: 'Quote simulation cache lookups (hit/miss/bypass)',
+      name: 'quote_simulation_cache_total',
+      help: 'Quote simulation Redis cache results',
       labelNames: ['result'],
       registers: [this.registry],
     });
 
     this.claimSummaryCacheTotal = new client.Counter({
-      name: 'claim_summary_cache_requests_total',
-      help: 'Claims board summary cache lookups',
+      name: 'claim_summary_cache_total',
+      help: 'Claims board summary Redis cache results',
       labelNames: ['result'],
       registers: [this.registry],
     });
 
     this.slowQueriesTotal = new client.Counter({
-      name: 'db_slow_queries_total',
-      help: 'Total DB queries exceeding the slow query threshold',
+      name: 'slow_queries_total',
+      help: 'Total queries exceeding the slow query threshold',
+      labelNames: ['operation'],
       registers: [this.registry],
     });
 
     this.dbPoolActive = new client.Gauge({
-      name: 'db_pool_active',
-      help: 'Number of DB connections currently executing a query',
+      name: 'db_pool_active_connections',
+      help: 'Number of connections currently executing a query',
       registers: [this.registry],
     });
 
     this.dbPoolIdle = new client.Gauge({
-      name: 'db_pool_idle',
-      help: 'Number of idle DB connections in the pool',
+      name: 'db_pool_idle_connections',
+      help: 'Number of idle connections in the pool',
       registers: [this.registry],
     });
 
     this.dbPoolWaiting = new client.Gauge({
-      name: 'db_pool_waiting',
-      help: 'Number of requests waiting for a free DB connection',
+      name: 'db_pool_waiting_requests',
+      help: 'Number of requests waiting for a free connection',
       registers: [this.registry],
     });
 
     this.indexerDuplicateEvents = new client.Counter({
       name: 'indexer_duplicate_events_total',
-      help: 'Total duplicate events detected during indexing (upsert conflict)',
+      help: 'Total duplicate events detected during indexing',
       labelNames: ['event_type', 'network'],
       registers: [this.registry],
     });
@@ -343,41 +359,40 @@ export class MetricsService implements OnModuleInit {
 
     this.voteTallyMismatches = new client.Counter({
       name: 'vote_tally_mismatches_total',
-      help: 'Total vote tally mismatches detected between indexed DB and on-chain state',
-      labelNames: ['claim_id'],
+      help: 'Total vote tally mismatches detected between indexed and on-chain state',
       registers: [this.registry],
     });
 
     this.voteReconciliationErrors = new client.Counter({
       name: 'vote_reconciliation_errors_total',
-      help: 'Total errors during vote reconciliation checks',
+      help: 'Total vote reconciliation errors during checking',
       registers: [this.registry],
     });
 
     this.voteReconciliationMismatchCount = new client.Counter({
-      name: 'vote_reconciliation_mismatches_total',
-      help: 'Total mismatches detected in a reconciliation run',
+      name: 'vote_reconciliation_mismatch_count_total',
+      help: 'Total mismatches found in a single reconciliation run',
       registers: [this.registry],
     });
 
     this.vacuumOperationsTotal = new client.Counter({
-      name: 'db_vacuum_operations_total',
+      name: 'vacuum_operations_total',
       help: 'Total VACUUM operations run against high-churn tables',
-      labelNames: ['table', 'result'],
+      labelNames: ['table'],
       registers: [this.registry],
     });
 
     this.tableBloatRatio = new client.Gauge({
-      name: 'db_table_bloat_ratio',
+      name: 'table_bloat_ratio',
       help: 'Table bloat ratio (percentage of dead tuples) per high-churn table',
       labelNames: ['table'],
       registers: [this.registry],
     });
 
     this.claimNotificationBatchTotal = new client.Counter({
-      name: 'claim_notification_batch_operations_total',
+      name: 'claim_notification_batch_total',
       help: 'Total claim notification batch accumulate/flush operations',
-      labelNames: ['action'],
+      labelNames: ['operation'],
       registers: [this.registry],
     });
 
@@ -389,25 +404,25 @@ export class MetricsService implements OnModuleInit {
 
     this.appealsApprovedTotal = new client.Counter({
       name: 'appeals_approved_total',
-      help: 'Total appeals resolved as approved (indexed from on-chain events)',
+      help: 'Total appeals resolved as approved',
       registers: [this.registry],
     });
 
     this.appealsRejectedTotal = new client.Counter({
       name: 'appeals_rejected_total',
-      help: 'Total appeals resolved as rejected (indexed from on-chain events)',
+      help: 'Total appeals resolved as rejected',
       registers: [this.registry],
     });
 
     this.appealsInFlightGauge = new client.Gauge({
       name: 'appeals_in_flight',
-      help: 'Number of appeals currently open (not yet resolved)',
+      help: 'Current number of in-flight (open) appeals',
       registers: [this.registry],
     });
 
     this.appealsSlaStuckGauge = new client.Gauge({
       name: 'appeals_sla_stuck',
-      help: 'UNDER_APPEAL claims past on-chain appeal deadline + grace (stuck finalize_appeal)',
+      help: 'Number of UNDER_APPEAL claims past appeal deadline + grace',
       registers: [this.registry],
     });
 
@@ -418,220 +433,22 @@ export class MetricsService implements OnModuleInit {
     });
   }
 
-  onModuleInit() {
-    // Nothing extra needed — metrics are registered in the constructor.
-  }
-
-  /** Normalise a raw Express path to a low-cardinality route label. */
-  normaliseRoute(path: string): string {
-    if (!path) return 'unknown';
-    // Strip query string
-    const clean = path.split('?')[0];
-    // Replace numeric segments and UUIDs with placeholders
-    return clean
-      .replace(/\/\d+/g, '/:id')
-      .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:uuid')
-      .replace(/\/G[A-Z2-7]{55}/g, '/:address') // Stellar public keys
-      .toLowerCase();
-  }
-
-  recordHttpRequest(opts: {
-    method: string;
-    route: string;
-    statusCode: number;
-    durationMs: number;
-  }) {
-    const { method, route, statusCode, durationMs } = opts;
-    const labels = { method, route, status_code: String(statusCode) };
-    const durationSec = durationMs / 1000;
-
-    this.httpRequestDuration.observe(labels, durationSec);
-    this.httpRequestTotal.inc(labels);
-
-    if (statusCode >= 500) {
-      this.http5xxTotal.inc({ method, route });
-    }
-  }
-
-  recordGraphqlOperation(opts: {
-    operationType: string;
-    status: 'success' | 'error' | 'rejected';
-    durationMs: number;
-  }) {
-    const durationSec = opts.durationMs / 1000;
-    this.graphqlOperationDuration.observe(
-      { operation_type: opts.operationType, status: opts.status },
-      durationSec,
-    );
-    this.graphqlOperationTotal.inc({
-      operation_type: opts.operationType,
-      status: opts.status,
-    });
-  }
-
-  recordRpcCall(opts: {
-    rpcMethod: string;
-    status: 'success' | 'error';
-    durationMs: number;
-    errorType?: string;
-  }) {
-    const { rpcMethod, status, durationMs, errorType } = opts;
-    const durationSec = durationMs / 1000;
-
-    this.rpcCallDuration.observe({ rpc_method: rpcMethod, status }, durationSec);
-    this.rpcCallTotal.inc({ rpc_method: rpcMethod, status });
-
-    if (status === 'error' && errorType) {
-      this.rpcErrorTotal.inc({ rpc_method: rpcMethod, error_type: errorType });
-    }
-  }
-
-  recordQuoteSimulationCache(result: 'hit' | 'miss' | 'bypass') {
-    this.quoteSimulationCacheTotal.inc({ result });
-  }
-
-  recordClaimSummaryCache(result: 'hit' | 'miss') {
-    this.claimSummaryCacheTotal.inc({ result });
-  }
-
-  recordIndexerLag(opts: { network: string; lag: number }) {
-    this.indexerLag.set({ network: opts.network }, opts.lag);
-  }
-  recordIndexerLedgerGap(opts: { network: string; gap: number }) {    this.indexerLedgerGap.set({ network: opts.network }, opts.gap);  }
-
-  recordLastProcessedLedgerAge(opts: { network: string; ledgerClosedAt: Date }) {
-    const ageSeconds = (Date.now() - opts.ledgerClosedAt.getTime()) / 1000;
-    this.indexerLastLedgerAge.set({ network: opts.network }, Math.max(0, ageSeconds));
-  }
-
-  recordSolvencyBuffer(opts: { tenant: string; bufferStroops: bigint }) {
-    const normalizedTenant = this.cardinalityGuard.normalizeTenantId(opts.tenant);
-    this.solvencyBufferStroops.set({ tenant: normalizedTenant }, Number(opts.bufferStroops));
-  }
-
-  recordSolvencyThreshold(opts: { tenant: string; thresholdStroops: bigint }) {
-    const normalizedTenant = this.cardinalityGuard.normalizeTenantId(opts.tenant);
-    this.solvencyBufferThresholdStroops.set(
-      { tenant: normalizedTenant },
-      Number(opts.thresholdStroops),
-    );
-  }
-
-  recordDbPool(opts: { active: number; idle: number; waiting: number }) {
-    this.dbPoolActive.set(opts.active);
-    this.dbPoolIdle.set(opts.idle);
-    this.dbPoolWaiting.set(opts.waiting);
-  }
-
-  recordRedisCache(result: 'hit' | 'miss', namespace: string) {
-    if (result === 'hit') {
-      this.redisCacheHits.inc({ namespace });
-    } else {
-      this.redisCacheMisses.inc({ namespace });
-    }
-  }
-
-  recordRedisConnectionError() {
-    this.redisConnectionErrors.inc();
-  }
-
-  recordDuplicateEvent(opts: { eventType: 'raw_event' | 'vote'; network: string }) {
-    this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
-  }
-
-  recordVoteTallyMismatch(claimId: number) {
-    const normalizedClaimId = this.cardinalityGuard.normalizeClaimId(claimId);
-    this.voteTallyMismatches.inc({ claim_id: normalizedClaimId });
-  }
-
-  recordVoteReconciliationError() {
-    this.voteReconciliationErrors.inc();
-  }
-
-  recordVoteReconciliationMismatchCount(count: number) {
-    this.voteReconciliationMismatchCount.inc({}, count);
-  }
-
-  recordJobRetry(opts: { queue: string; jobName: string }) {
-    this.bullmqJobRetriesTotal.inc({ queue: opts.queue, job_name: opts.jobName });
-  }
-
-  recordQueueActiveWorkers(opts: { queue: string; count: number }) {
-    this.queueActiveWorkers.set({ queue: opts.queue }, opts.count);
-  }
-
-  recordQueueDepth(opts: { queue: string; depth: number }) {
-    this.queueDepth.set({ queue: opts.queue }, opts.depth);
-  }
-
-  recordJobProcessingDuration(opts: {
-    queue: string;
-    jobName: string;
-    status: string;
-    durationMs: number;
-  }) {
-    const { queue, jobName, status, durationMs } = opts;
-    this.jobProcessingDuration.observe(
-      { queue, job_name: jobName, status },
-      durationMs / 1000,
-    );
-  }
-
-  recordVacuumOperation(table: string, result: 'success' | 'failure') {
-    this.vacuumOperationsTotal.inc({ table, result });
-  }
-
-  recordTableBloat(table: string, bloatRatioPercent: number) {
-    this.tableBloatRatio.set({ table }, bloatRatioPercent);
-  }
-
-  recordClaimNotificationBatch(
-    action: 'accumulated' | 'flushed',
-    _opts: { walletAddress: string; eventCount: number },
-  ) {
-    this.claimNotificationBatchTotal.inc({ action });
-  }
-
-  // ── Appeal metric helpers ────────────────────────────────────────────────
-
-  /** Call after a successful appeal transaction submission. */
-  recordAppealOpened() {
-    this.appealsOpenedTotal.inc();
-    this.appealsInFlightGauge.inc();
+  onModuleInit(): void {
+    // Reserved for future OTel bridge wiring.
   }
 
   /**
-   * Call when the indexer decodes an appeal-approved on-chain event.
-   * Decrements in-flight gauge because the appeal is now resolved.
+   * Record a GraphQL query rejected for exceeding depth/complexity limits.
+   * reason: 'depth' | 'complexity'
    */
-  recordAppealApproved() {
-    this.appealsApprovedTotal.inc();
-    this.appealsInFlightGauge.dec();
+  recordGraphqlComplexityRejected(reason: 'depth' | 'complexity'): void {
+    this.graphqlComplexityRejectedTotal.inc({ reason });
   }
 
   /**
-   * Call when the indexer decodes an appeal-rejected on-chain event.
-   * Decrements in-flight gauge because the appeal is now resolved.
+   * Expose the Prometheus registry for the /metrics endpoint.
    */
-  recordAppealRejected() {
-    this.appealsRejectedTotal.inc();
-    this.appealsInFlightGauge.dec();
-  }
-
-  /** Set after each Appeal SLA monitor pass (#1348). */
-  recordAppealSlaStuckCount(count: number) {
-    this.appealsSlaStuckGauge.set(count);
-  }
-
-  recordAppealSlaCheckError() {
-    this.appealsSlaCheckErrorsTotal.inc();
-  }
-
-  async getMetrics(): Promise<string> {
-    return this.registry.metrics();
-  }
-
-  getContentType(): string {
-    return this.registry.contentType;
+  getRegistry(): client.Registry {
+    return this.registry;
   }
 }

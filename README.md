@@ -53,6 +53,12 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 - All other variables are **server-only** — never import them in Client Components.
   Use `import '@/lib/server-guard'` at the top of server-only modules to enforce this at build time.
 
+## Mainnet Launch Readiness
+
+Tracking checklist for all items that must be resolved before deploying with
+`STELLAR_NETWORK=mainnet`. See [docs/launch-readiness-checklist.md](docs/launch-readiness-checklist.md)
+for status, owners, and acceptance criteria. **Priority: Critical — Layer: All.**
+
 ## Handsoff notes
 
 <!-- handsoff-issue-1489 -->
@@ -81,3 +87,28 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 <!-- handsoff-issue-1678 -->
 - #1678: Frontend: Dashboard card order — implement drag-to-reorder dashboard cards
+
+<!-- handsoff-issue-1672 -->
+- #1672: Frontend: Draft persistence — persist claim filing form across page refreshes
+
+<!-- handsoff-issue-1715 -->
+- #1715: Frontend: i18n — add missing translation keys for appeal and governance flows
+
+<!-- handsoff-issue-1718 -->
+- #1718: Tracking — Full platform launch readiness checklist (see `docs/launch-readiness-checklist.md`)
+
+<!-- handsoff-issue-1708 -->
+- #1708: Tracking — Oracle integration: price feed and fraud scoring cross-stack group (umbrella; `feature:oracle`)
+  - Contract: sign-then-verify oracle pipeline, vet specialization validation
+  - Backend: Prometheus treasury gauge from oracle data
+  - Frontend: network status indicator with oracle feed display
+
+<!-- handsoff-issue-1706 -->
+- #1706: Tracking — Claim lifecycle: full end-to-end cross-stack issue group
+  - Label: `feature:claim-lifecycle` (apply to this umbrella and all linked issues)
+  - All linked issues must link back to this umbrella (#1706)
+  - Scope covers all layers: contract, backend, frontend
+  - Linked work:
+    - Contract: status history log, keeper entrypoints, withdraw claim
+    - Backend: policy expiry keeper, appeal finalize keeper, claim discussion threads
+    - Frontend: discussion thread UI, TxStatusDialog

@@ -34,6 +34,13 @@ updates:
       tanstack:
         patterns:
           - "@tanstack/*"
+      next:
+        patterns:
+          - "next"
+          - "eslint-config-next"
+        update-types:
+          - "minor"
+          - "patch"
 
   # Backend npm
   - package-ecosystem: "npm"
@@ -50,6 +57,9 @@ updates:
       nestjs:
         patterns:
           - "@nestjs/*"
+        update-types:
+          - "minor"
+          - "patch"
       opentelemetry:
         patterns:
           - "@opentelemetry/*"
@@ -65,3 +75,11 @@ updates:
       - "contracts"
     commit-message:
       prefix: "chore(deps/cargo)"
+    groups:
+      soroban-sdk:
+        patterns:
+          - "soroban-sdk"
+          - "soroban-env-*"
+          - "soroban-spec*"
+        update-types:
+          - "patch"

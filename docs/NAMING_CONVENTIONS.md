@@ -43,9 +43,58 @@ No layer should introduce a new synonym for an existing concept. If a name
 must change across a boundary, only casing should change — not the word
 itself.
 
-## Audit follow-up
+## Audit Results
 
-An audit of a sample of existing events/columns/fields against this
-convention should be tracked as a separate task, with any significant
-inconsistencies filed as individual follow-up issues rather than fixed via
-mass-rename here.
+A sample of 20 API response fields was taken from the OpenAPI spec and
+traced back through the DB columns and contract event fields. Findings are
+recorded below; significant inconsistencies are filed as individual
+follow-up issues rather than fixed via mass-rename here.
+
+### Sample (20 API response fields)
+
+| # | API field (camelCase) | DB column (snake_case) | Contract event field | Status |
+|---|---|---|---|---|
+| 1 | `claimId` | `claim_id` | `claim_id` | OK |
+| 2 | `holder` | `holder` | `holder` | OK |
+| 3 | `ledgerCloseTime` | `ledger_close_time` | `ledger_close_time` | OK |
+| 4 | `amount` | `amount` | `amount` | OK |
+| 5 | `policyId` | `policy_id` | `policy_id` | OK |
+| 6 | `createdAt` | `created_at` | `created_at` | OK |
+| 7 | `updatedAt` | `updated_at` | `updated_at` | OK |
+| 8 | `txHash` | `tx_hash` | `tx_hash` | OK |
+| 9 | `ledgerSeq` | `ledger_seq` | `ledger_seq` | OK |
+| 10 | `status` | `status` | `status` | OK |
+| 11 | `claimAmount` | `claim_amount` | `claim_amount` | OK |
+| 12 | `payoutAmount` | `payout_amount` | `payout_amount` | OK |
+| 13 | `coverageAmount` | `coverage_amount` | `coverage_amount` | OK |
+| 14 | `premiumAmount` | `premium_amount` | `premium_amount` | OK |
+| 15 | `expiresAt` | `expires_at` | `expires_at` | OK |
+| 16 | `settledAt` | `settled_at` | `settled_at` | OK |
+| 17 | `oracleAddress` | `oracle_address` | `oracle_address` | OK |
+| 18 | `claimValue` | `claim_value` | `claim_value` | **Drift** — synonym for `amount` (see #1710) |
+| 19 | `totalSum` | `total_sum` | `total_sum` | **Drift** — synonym for `amount` (see #1711) |
+| 20 | `holderAddress` | `holder_address` | `holder_address` | **Drift** — synonym for `holder` (see #1712) |
+
+### Casing drift
+
+No `snake_case` leakage was found in API response fields — all sampled
+fields are `camelCase` at the API boundary and `snake_case` in the DB and
+contract layers, consistent with the intended convention. No casing fixes
+are required.
+
+### Synonym drift (follow-up issues filed)
+
+| Follow-up | Field(s) | Canonical term |
+|---|---|---|
+| #1710 | `claimValue` / `claim_value` | `amount` |
+| #1711 | `totalSum` / `total_sum` | `amount` |
+| #1712 | `holderAddress` / `holder_address` | `holder` |
+
+These are tracked individually so each rename can be scoped, migrated, and
+reviewed on its own rather than bundled into a mass-rename.
+
+### Summary
+
+- 17 of 20 sampled fields conform to the convention.
+- 0 casing-drift issues.
+- 3 synonym-drift issues, each filed as a separate follow-up (#1710–#1712).
