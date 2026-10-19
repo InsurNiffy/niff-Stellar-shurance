@@ -78,3 +78,6 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 <!-- handsoff-issue-1446 -->
 - #1446: Contract — Claim withdrawal and supplementary evidence
+
+<!-- handsoff-issue-1678 -->
+- #1678: Frontend: Dashboard card order — implement drag-to-reorder dashboard cards
