@@ -1,0 +1,12 @@
+{
+  "status": "up",
+  "statusCode": 200,
+  "checkedAt": "2026-10-21T14:39:12Z",
+  "components": {
+    "db": { "status": "up", "responseTimeMs": 12 },
+    "redis": { "status": "up", "responseTimeMs": 4 },
+    "rpc": { "status": "up", "responseTimeMs": 45 },
+    "horizon": { "status": "up", "responseTimeMs": 28 },
+    "indexer": { "status": "up", "responseTimeMs": 15, "lagLedgers": 0 }
+  }
+}

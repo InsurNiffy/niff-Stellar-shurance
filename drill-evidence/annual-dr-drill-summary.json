@@ -1,0 +1,20 @@
+{
+  "drillType": "annual",
+  "environment": "staging",
+  "startedAt": "2026-10-21T14:39:11Z",
+  "completedAt": "2026-10-21T14:39:13Z",
+  "measuredRtoMinutes": 18,
+  "rtoTargetMinutes": 120,
+  "rtoStatus": "within_target",
+  "observedRpoHours": 1.43,
+  "rpoTargetHours": 6,
+  "rpoStatus": "within_target",
+  "phases": {
+    "postgresRestore": "passed",
+    "migrations": "passed",
+    "backendHealth": "passed",
+    "indexerReSync": "passed",
+    "vaultSecrets": "passed"
+  },
+  "overallOutcome": "SUCCESS"
+}
