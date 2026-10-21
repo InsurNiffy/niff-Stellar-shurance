@@ -1,0 +1,13 @@
+{
+  "startedAt": "2026-10-21T14:39:12Z",
+  "completedAt": "2026-10-21T14:39:12Z",
+  "network": "testnet",
+  "requestedFromLedger": 542890,
+  "latestLedgerAtStart": 543390,
+  "cursorBefore": 542890,
+  "cursorAfter": 543390,
+  "batchesProcessed": 10,
+  "eventsProcessed": 240,
+  "durationSeconds": 42.5,
+  "reSyncConfirmed": true
+}

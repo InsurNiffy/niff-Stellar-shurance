@@ -1,0 +1,24 @@
+{
+  "startedAt": "2026-10-21T14:39:11Z",
+  "completedAt": "2026-10-21T14:39:11Z",
+  "measuredRtoSeconds": 1080,
+  "measuredRtoMinutes": 18,
+  "rtoTargetMinutes": 120,
+  "rtoStatus": "within_target",
+  "backupBucket": "niffyinsure-backups",
+  "backupObjectKey": "postgres-backups/staging/postgres-20261021T060000Z.dump",
+  "metadataObjectKey": "postgres-backups/staging/postgres-20261021T060000Z.metadata.json",
+  "publicTableCount": 19,
+  "policyCount": 1248,
+  "claimCount": 342,
+  "rawEventCount": 18420,
+  "latestRawEventLedger": 542890,
+  "ledgerCursors": [
+    {
+      "network": "testnet",
+      "last_processed_ledger": 542890
+    }
+  ],
+  "rowCountStatus": "matched",
+  "maxRowCountDelta": 0
+}
