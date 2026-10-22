@@ -54,6 +54,24 @@ pub enum VetError {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[soroban_sdk::contracterror]
 #[repr(u32)]
+pub enum RegionError {
+    /// Region code is empty.
+    EmptyRegionCode = 400,
+    /// Region code exceeds [`types::REGION_CODE_MAX_LEN`] bytes.
+    RegionCodeTooLong = 401,
+    /// `RegionConfig::parent` exceeds [`types::REGION_CODE_MAX_LEN`] bytes.
+    ParentCodeTooLong = 402,
+    /// `RegionConfig::parent` references the region itself.
+    SelfParent = 403,
+    /// `RegionConfig::risk_multiplier` outside `MIN_MULTIPLIER..=MAX_MULTIPLIER`.
+    RiskMultiplierOutOfBounds = 404,
+    /// Region code is not present in the registry.
+    RegionNotFound = 405,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[soroban_sdk::contracterror]
+#[repr(u32)]
 pub enum SubscriptionError {
     /// Address has reached the maximum of 10 active subscriptions.
     TooManySubscriptions = 1,
@@ -219,6 +237,17 @@ struct ConfigUpdated {
     pub key: String,
     pub old: String,
     pub new: String,
+}
+
+/// Region registry key validation: non-empty and at most `REGION_CODE_MAX_LEN` bytes.
+fn validate_region_code(region: &String) -> Result<(), RegionError> {
+    if region.is_empty() {
+        return Err(RegionError::EmptyRegionCode);
+    }
+    if region.len() > types::REGION_CODE_MAX_LEN {
+        return Err(RegionError::RegionCodeTooLong);
+    }
+    Ok(())
 }
 
 fn encode_u32(env: &Env, value: u32) -> String {
@@ -1152,24 +1181,73 @@ impl NiffyInsure {
 
     // ── Region registry ───────────────────────────────────────────────────────
 
-    /// Admin-only: upsert a region code in the registry.
-    pub fn admin_set_region(env: Env, code: String, config: types::RegionConfig) {
+    /// Admin-only: create or update a region config in the registry.
+    ///
+    /// Validation (all before any state change):
+    /// - `region` must be non-empty and at most [`types::REGION_CODE_MAX_LEN`] bytes.
+    /// - `config.parent` (empty = no parent) must be at most
+    ///   [`types::REGION_CODE_MAX_LEN`] bytes and must not equal `region`.
+    /// - `config.risk_multiplier` must be within
+    ///   `premium::MIN_MULTIPLIER..=premium::MAX_MULTIPLIER` (basis points).
+    ///
+    /// Emits `region_upserted` with `created = 1` for a new entry, `0` for an update.
+    pub fn upsert_region(
+        env: Env,
+        region: String,
+        config: types::RegionConfig,
+    ) -> Result<(), RegionError> {
         let _admin = admin::require_admin(&env);
+        validate_region_code(&region)?;
+        if config.parent.len() > types::REGION_CODE_MAX_LEN {
+            return Err(RegionError::ParentCodeTooLong);
+        }
+        if config.parent == region {
+            return Err(RegionError::SelfParent);
+        }
+        if !(premium::MIN_MULTIPLIER..=premium::MAX_MULTIPLIER).contains(&config.risk_multiplier) {
+            return Err(RegionError::RiskMultiplierOutOfBounds);
+        }
         admin::check_and_update_gov_cooldown(&env);
         storage::bump_instance(&env);
         let mut registry = storage::get_region_registry(&env);
-        registry.set(code, config);
+        let created = !registry.contains_key(region.clone());
+        registry.set(region.clone(), config.clone());
         storage::set_region_registry(&env, &registry);
+        events::emit_region_upserted(&env, &region, &config, created);
+        Ok(())
     }
 
-    /// Admin-only: remove a region code from the registry.
-    pub fn admin_remove_region(env: Env, code: String) {
+    /// Admin-only: remove a region config from the registry.
+    ///
+    /// Returns [`RegionError::RegionNotFound`] (no state change, no event) when
+    /// `region` is not registered. Emits `region_removed` on success.
+    pub fn remove_region(env: Env, region: String) -> Result<(), RegionError> {
         let _admin = admin::require_admin(&env);
+        validate_region_code(&region)?;
+        let mut registry = storage::get_region_registry(&env);
+        if !registry.contains_key(region.clone()) {
+            return Err(RegionError::RegionNotFound);
+        }
         admin::check_and_update_gov_cooldown(&env);
         storage::bump_instance(&env);
-        let mut registry = storage::get_region_registry(&env);
-        registry.remove(code);
+        registry.remove(region.clone());
         storage::set_region_registry(&env, &registry);
+        events::emit_region_removed(&env, &region);
+        Ok(())
+    }
+
+    /// Deprecated alias of [`Self::upsert_region`]; kept for existing callers.
+    pub fn admin_set_region(
+        env: Env,
+        code: String,
+        config: types::RegionConfig,
+    ) -> Result<(), RegionError> {
+        Self::upsert_region(env, code, config)
+    }
+
+    /// Deprecated alias of [`Self::remove_region`]; kept for existing callers.
+    pub fn admin_remove_region(env: Env, code: String) -> Result<(), RegionError> {
+        Self::remove_region(env, code)
     }
 
     /// Read-only: get a region config by code.
