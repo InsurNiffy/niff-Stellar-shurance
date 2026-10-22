@@ -795,6 +795,50 @@ export class AdminController {
     return { policyId, overrideActive: false };
   }
 
+  /** GET /admin/queues/:queueName/failed — inspect failed (DLQ) jobs */
+  @Get('queues/:queueName/failed')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'List failed (DLQ) jobs for a queue' })
+  async listFailedJobs(
+    @Param('queueName') queueName: string,
+    @Query('start') start?: string,
+    @Query('end') end?: string,
+  ) {
+    try {
+      return await this.queueMonitor.getFailedJobs(
+        queueName,
+        start ? Number(start) : 0,
+        end ? Number(end) : 49,
+      );
+    } catch (err) {
+      throw new NotFoundException((err as Error).message);
+    }
+  }
+
+  /** POST /admin/queues/:queueName/failed/:jobId/retry — retry a failed (DLQ) job */
+  @Post('queues/:queueName/failed/:jobId/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Retry a failed (DLQ) job by id' })
+  async retryFailedJob(
+    @Param('queueName') queueName: string,
+    @Param('jobId') jobId: string,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    try {
+      await this.queueMonitor.replayJob(queueName, jobId);
+    } catch (err) {
+      throw new NotFoundException((err as Error).message);
+    }
+    await this.auditService.write({
+      actor,
+      action: 'dlq_job_replayed',
+      payload: { queue: queueName, jobId },
+      ipAddress: req.ip,
+    });
+    return { queue: queueName, jobId, status: 'retried' };
+  }
+
   /** POST /admin/queues/:queue/jobs/:jobId/retry — replay a DLQ job */
   @Post('queues/:queue/jobs/:jobId/retry')
   @HttpCode(HttpStatus.ACCEPTED)

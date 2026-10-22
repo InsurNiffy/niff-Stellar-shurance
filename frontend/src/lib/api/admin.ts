@@ -310,6 +310,19 @@ export const adminApi = {
       body: JSON.stringify({ addresses }),
     }),
 
+  registerVoter: (jwt: string, walletAddress: string) =>
+    apiFetch<RegisteredVoter>(`${base()}/voters/register`, {
+      method: 'POST',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ walletAddress }),
+    }),
+
+  deleteVoter: (jwt: string, walletAddress: string) =>
+    apiFetch<void>(`${base()}/voters/${encodeURIComponent(walletAddress)}`, {
+      method: 'DELETE',
+      headers: authHeaders(jwt),
+    }),
+
   listDelegations: (jwt: string) =>
     apiFetch<OperatorDelegation[]>(`${base()}/delegations`, {
       headers: authHeaders(jwt),
