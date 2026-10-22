@@ -1959,6 +1959,21 @@ impl NiffyInsure {
         storage::get_cooldown_ledgers(&env)
     }
 
+    /// Admin-only: set the maximum number of appeals allowed per claim.
+    /// Must be in `[1, 3]`. Was previously hardcoded to 1.
+    pub fn admin_set_max_appeals_per_claim(
+        env: Env,
+        new_cap: u32,
+    ) -> Result<(), AdminError> {
+        admin::set_max_appeals_per_claim(&env, new_cap)
+    }
+
+    /// Read the current max-appeals-per-claim cap (falls back to
+    /// `ledger::MAX_APPEALS_PER_CLAIM` when unset).
+    pub fn get_max_appeals_per_claim(env: Env) -> u32 {
+        storage::get_max_appeals_per_claim(&env)
+    }
+
     /// Admin-only: update the allowlisted IPFS gateway URL prefixes for evidence validation.
     /// Evidence URLs must start with `ipfs://` or one of the allowlisted gateway prefixes.
     pub fn admin_set_gateway_allowlist(env: Env, gateways: Vec<String>) -> Result<(), AdminError> {

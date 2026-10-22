@@ -1777,8 +1777,10 @@ pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), E
         return Err(Error::AppealWindowClosed);
     }
 
-    // Cap: only one appeal allowed per claim.
-    if claim.appeals_count >= ledger::MAX_APPEALS_PER_CLAIM {
+    // Cap: admin-configurable number of appeals per claim (default
+    // ledger::MAX_APPEALS_PER_CLAIM, overridable via
+    // admin::set_max_appeals_per_claim, Issue #1605).
+    if claim.appeals_count >= storage::get_max_appeals_per_claim(env) {
         return Err(Error::AppealAlreadyUsed);
     }
 

@@ -226,6 +226,9 @@ pub enum DataKey {
     QuorumBps,
     /// Configurable grace period in ledgers after nominal expiry for late renewals.
     GracePeriodLedgers,
+    /// Admin-configurable cap on appeals per claim (1–3). Defaults to
+    /// `ledger::MAX_APPEALS_PER_CLAIM` when unset.
+    MaxAppealsPerClaim,
     /// Per-claim snapshot of `QuorumBps` at `file_claim` time (immutable for that claim).
     ClaimQuorumBps(u64),
     /// Value of `LastClaimLedger(claimant)` **before** this claim's filing updated it.
@@ -593,6 +596,23 @@ pub fn get_quorum_bps(env: &Env) -> u32 {
         .instance()
         .get(&DataKey::QuorumBps)
         .unwrap_or(crate::types::DEFAULT_QUORUM_BPS)
+}
+
+// ── Configurable max appeals per claim (instance) ─────────────────────────────
+
+pub fn set_max_appeals_per_claim(env: &Env, max: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxAppealsPerClaim, &max);
+}
+
+/// Current cap on appeals per claim. Defaults to
+/// [`crate::ledger::MAX_APPEALS_PER_CLAIM`] when the admin has never changed it.
+pub fn get_max_appeals_per_claim(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MaxAppealsPerClaim)
+        .unwrap_or(crate::ledger::MAX_APPEALS_PER_CLAIM)
 }
 
 pub fn set_claim_quorum_bps(env: &Env, claim_id: u64, bps: u32) {
