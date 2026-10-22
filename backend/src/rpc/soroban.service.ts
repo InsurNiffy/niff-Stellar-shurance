@@ -1568,6 +1568,83 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Invoke on-chain `process_expired_policies(limit)` using the keeper account.
+   * Permissionless; processes up to `limit` expired policies.
+   */
+  async processExpiredPolicies(limit: number): Promise<FinalizeClaimResult> {
+    return this.trackRpc('process_expired_policies', () =>
+      this._processExpiredPolicies(limit),
+    );
+  }
+
+  private async _processExpiredPolicies(limit: number): Promise<FinalizeClaimResult> {
+    const source =
+      this.configService.get<string>('CLAIM_KEEPER_SOURCE_ACCOUNT') ||
+      this.configService.get<string>('SOLVENCY_SIMULATION_SOURCE_ACCOUNT');
+    const secret = this.configService.get<string>('CLAIM_KEEPER_SECRET_KEY');
+    if (!this.contractId || !source || !secret) {
+      throw new ServiceUnavailableException({
+        code: 'KEEPER_NOT_CONFIGURED',
+        message: 'Keeper is not configured (CONTRACT_ID / CLAIM_KEEPER_SOURCE_ACCOUNT / CLAIM_KEEPER_SECRET_KEY).',
+      });
+    }
+
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, source);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        new Contract(this.contractId).call(
+          'process_expired_policies',
+          nativeToScVal(limit, { type: 'u32' }),
+        ),
+      )
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+    if (Api.isSimulationError(simulation)) {
+      const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+      this.mapSimulationError(err.error);
+    }
+
+    const assembled = assembleTransaction(
+      tx,
+      simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse,
+    ).build();
+    assembled.sign(Keypair.fromSecret(secret));
+
+    const sendResponse = await server.sendTransaction(assembled);
+    if (sendResponse.status === 'ERROR') {
+      throw new BadRequestException({
+        code: 'PROCESS_EXPIRED_POLICIES_REJECTED',
+        message: 'process_expired_policies transaction was rejected by the network.',
+      });
+    }
+
+    const txHash = sendResponse.hash;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const txResponse = await server.getTransaction(txHash);
+      if (txResponse.status === 'SUCCESS') {
+        return { txHash, ledger: txResponse.ledger, onChainStatus: 'Processed' };
+      }
+      if (txResponse.status === 'FAILED') {
+        throw new BadRequestException({
+          code: 'PROCESS_EXPIRED_POLICIES_FAILED',
+          message: 'process_expired_policies transaction failed on-chain.',
+        });
+      }
+    }
+    throw new ServiceUnavailableException({
+      code: 'PROCESS_EXPIRED_POLICIES_TIMEOUT',
+      message: `Timed out waiting for process_expired_policies confirmation (hash=${txHash}).`,
+    });
+  }
+
+  /**
    * Build unsigned batch_register_voter transaction.
    * Signature: batch_register_voter(admin, voters: Vec<Address>)
    */
