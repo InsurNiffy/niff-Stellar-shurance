@@ -29,6 +29,21 @@ use soroban_sdk::{
     contract, contractevent, contractimpl, panic_with_error, Address, Env, String, Vec,
 };
 
+/// Parses a decimal ASCII digit string (as produced by Cargo's
+/// `CARGO_PKG_VERSION_{MAJOR,MINOR,PATCH}` env vars) into a `u32` at compile time.
+/// Used by `NiffyInsure::get_contract_version` — see `docs/api-versioning-policy.md`.
+const fn parse_u32(s: &str) -> u32 {
+    let bytes = s.as_bytes();
+    let mut value: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i] - b'0';
+        value = value * 10 + digit as u32;
+        i += 1;
+    }
+    value
+}
+
 #[contract]
 pub struct NiffyInsure;
 pub use admin::{AdminAction, AdminError, PendingAdminAction, RoleError};
@@ -335,6 +350,19 @@ impl NiffyInsure {
     /// Read-only: no storage access, no auth required. Safe to call via simulation.
     pub fn version(env: Env) -> soroban_sdk::String {
         soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Returns the contract's semantic version as `(major, minor, patch)` compile-time
+    /// constants parsed from this crate's `Cargo.toml`. Read-only: no storage access,
+    /// no auth required. Lets backend/frontend verify the connected contract's version
+    /// without parsing the `version()` string. See `docs/api-versioning-policy.md`.
+    pub fn get_contract_version(_env: Env) -> (u32, u32, u32) {
+        // `CARGO_PKG_VERSION_MAJOR/MINOR/PATCH` are provided by Cargo as compile-time
+        // env vars derived straight from this crate's `Cargo.toml` `[package].version`.
+        const MAJOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MAJOR"));
+        const MINOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MINOR"));
+        const PATCH: u32 = parse_u32(env!("CARGO_PKG_VERSION_PATCH"));
+        (MAJOR, MINOR, PATCH)
     }
 
     /// Returns contract identity used by backend and deploy tooling:
