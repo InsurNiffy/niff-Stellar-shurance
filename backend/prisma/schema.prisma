@@ -267,8 +267,26 @@ model FeatureFlag {
   description String?
   updatedBy   String
   updatedAt   DateTime @updatedAt
+  /// When set, the flag is purged by the weekly maintenance cleanup after this time.
+  expiresAt   DateTime? @map("expires_at")
 
+  @@index([expiresAt])
   @@map("feature_flags")
+}
+
+/// Snapshot of resolved claims older than the archive window, removed from `claims`.
+model ClaimArchive {
+  id          Int      @id /// original claimId
+  policyId    String   @map("policy_id")
+  status      ClaimStatus
+  amount      String
+  snapshot    Json
+  resolvedAt  DateTime @map("resolved_at")
+  archivedAt  DateTime @default(now()) @map("archived_at")
+
+  @@index([policyId])
+  @@index([archivedAt])
+  @@map("claim_archive")
 }
 
 /// Deduplication table for wasm drift alerts — one row per (contract, actual-hash) pair.

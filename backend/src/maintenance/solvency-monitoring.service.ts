@@ -134,6 +134,7 @@ export class SolvencyMonitoringService {
         sourceAccount: source,
       });
       balance = BigInt(sim.balanceStroops);
+      this.metrics?.treasuryBalanceGauge.set(Number(balance));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const snap: SolvencySnapshot = {

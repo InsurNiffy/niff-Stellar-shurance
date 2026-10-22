@@ -21,6 +21,7 @@ import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsArray, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, ArrayNotEmpty, Matches, IsIn } from 'class-validator';
 import { ClaimSeverity } from '@prisma/client';
+import { Address, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -69,6 +70,25 @@ class SetQuorumBpsDto {
   @Min(1)
   @Max(10000)
   bps!: number;
+}
+
+class RegisterVoterDto {
+  @IsString()
+  @Matches(/^G[A-Z2-7]{55}$/, { message: 'address must be a valid Stellar public key (G...)' })
+  address!: string;
+}
+
+const PAUSE_REASONS = ['SecurityIncident', 'UpgradePending', 'SolvencyRisk', 'Regulatory'] as const;
+
+class PauseDto {
+  @IsIn(PAUSE_REASONS)
+  reason!: (typeof PAUSE_REASONS)[number];
+}
+
+class ProtocolParamsDto {
+  @IsOptional() @IsInt() @Min(1) @Max(10000) quorumBps?: number;
+  @IsOptional() @IsInt() @Min(1) votingDurationLedgers?: number;
+  @IsOptional() @IsInt() @Min(0) gracePeriodLedgers?: number;
 }
 
 class PrivacyRequestDto {
@@ -204,6 +224,160 @@ export class AdminController {
     });
 
     return result;
+  }
+
+  /**
+   * POST /admin/voters/register
+   *
+   * Build an unsigned voter registration transaction for admin signing.
+   */
+  @Post('voters/register')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Build register voter transaction' })
+  async registerVoter(@Body() dto: RegisterVoterDto, @Req() req: AdminRequest) {
+    const admin = req.user?.walletAddress ?? '';
+    const result = await this.sorobanService.buildBatchRegisterVotersTransaction({
+      admin,
+      voters: [dto.address],
+    });
+    await this.auditService.write({
+      actor: admin,
+      action: 'governance_voter_register',
+      payload: { voter: dto.address },
+      ipAddress: req.ip,
+    });
+    return { status: 'pending_signature', ...result };
+  }
+
+  /**
+   * DELETE /admin/voters/:address
+   *
+   * Build an unsigned remove voter transaction for admin signing.
+   */
+  @Delete('voters/:address')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Build remove voter transaction' })
+  async deregisterVoter(@Param() params: RegisterVoterDto, @Req() req: AdminRequest) {
+    const admin = req.user?.walletAddress ?? '';
+    const result = await this.sorobanService.buildRemoveVoterTransaction({
+      admin,
+      voter: params.address,
+    });
+    await this.auditService.write({
+      actor: admin,
+      action: 'governance_voters_remove',
+      payload: { voter: params.address },
+      ipAddress: req.ip,
+    });
+    return { status: 'pending_signature', ...result };
+  }
+
+  // ── Protocol: Pause ───────────────────────────────────────────────
+
+  /**
+   * POST /admin/pause
+   *
+   * Build an unsigned `pause(admin, reason)` transaction for admin signing.
+   */
+  @Post('pause')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Build pause transaction' })
+  async pauseProtocol(@Body() dto: PauseDto, @Req() req: AdminRequest) {
+    const admin = req.user?.walletAddress ?? '';
+    const result = await this.sorobanService.buildAdminCallTransaction({
+      admin,
+      method: 'pause',
+      scArgs: [new Address(admin).toScVal(), xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(dto.reason)])],
+    });
+    await this.auditService.write({
+      actor: admin,
+      action: 'protocol_pause',
+      payload: { reason: dto.reason },
+      ipAddress: req.ip,
+    });
+    return { status: 'pending_signature', ...result };
+  }
+
+  /**
+   * POST /admin/unpause
+   *
+   * Build an unsigned `unpause(admin)` transaction for admin signing.
+   */
+  @Post('unpause')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Build unpause transaction' })
+  async unpauseProtocol(@Req() req: AdminRequest) {
+    const admin = req.user?.walletAddress ?? '';
+    const result = await this.sorobanService.buildAdminCallTransaction({
+      admin,
+      method: 'unpause',
+      scArgs: [new Address(admin).toScVal()],
+    });
+    await this.auditService.write({
+      actor: admin,
+      action: 'protocol_unpause',
+      payload: {},
+      ipAddress: req.ip,
+    });
+    return { status: 'pending_signature', ...result };
+  }
+
+  // ── Protocol: Parameters ──────────────────────────────────────────
+
+  /**
+   * PATCH /admin/protocol-params
+   *
+   * Build one unsigned transaction per supplied parameter (quorum, voting
+   * duration, grace period). Each must be signed and submitted by the admin.
+   */
+  @Patch('protocol-params')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Build protocol parameter update transactions' })
+  async updateProtocolParams(@Body() dto: ProtocolParamsDto, @Req() req: AdminRequest) {
+    const admin = req.user?.walletAddress ?? '';
+    const calls: Array<{ param: string; method: string; scArgs: xdr.ScVal[] }> = [];
+    if (dto.quorumBps !== undefined) {
+      calls.push({
+        param: 'quorumBps',
+        method: 'admin_set_quorum_bps',
+        scArgs: [nativeToScVal(dto.quorumBps, { type: 'u32' })],
+      });
+    }
+    if (dto.votingDurationLedgers !== undefined) {
+      calls.push({
+        param: 'votingDurationLedgers',
+        method: 'admin_set_vote_duration_ledgers',
+        scArgs: [nativeToScVal(dto.votingDurationLedgers, { type: 'u32' })],
+      });
+    }
+    if (dto.gracePeriodLedgers !== undefined) {
+      calls.push({
+        param: 'gracePeriodLedgers',
+        method: 'set_grace_period_ledgers',
+        scArgs: [nativeToScVal(dto.gracePeriodLedgers, { type: 'u32' })],
+      });
+    }
+    if (calls.length === 0) {
+      throw new BadRequestException('At least one protocol parameter must be provided');
+    }
+
+    const transactions = [];
+    for (const call of calls) {
+      const tx = await this.sorobanService.buildAdminCallTransaction({
+        admin,
+        method: call.method,
+        scArgs: call.scArgs,
+      });
+      transactions.push({ param: call.param, ...tx });
+    }
+
+    await this.auditService.write({
+      actor: admin,
+      action: 'protocol_params_update',
+      payload: { ...dto },
+      ipAddress: req.ip,
+    });
+    return { status: 'pending_signature', transactions };
   }
 
   // ── Governance: Quorum ────────────────────────────────────────────
