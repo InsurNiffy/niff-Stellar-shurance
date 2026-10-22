@@ -1023,7 +1023,15 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
     // ── INTERACTION: token transfer. If this returns Err, the `?` below
     // aborts the whole invocation and the host rolls back every storage
     // write made above — the claim reverts to `Approved`, never stuck `Paid`.
-    payout(env, &claim)?;
+    payout(env, &mut claim)?;
+
+    // Issue #1613: the reinsurance fallback inside `payout` may have set the
+    // claim to `PayoutFailed` (and persisted it) instead of completing the
+    // disbursement. In that case the claim was never actually paid, so skip
+    // the paid-specific bookkeeping below.
+    if claim.status == ClaimStatus::PayoutFailed {
+        return Ok(());
+    }
 
     crate::rolling_claim_cap::record_claim_paid(
         env,
@@ -1130,7 +1138,7 @@ fn on_reject(env: &Env, claim: &Claim) {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
+fn payout(env: &Env, claim: &mut Claim) -> Result<(), Error> {
     let policy =
         storage::get_policy(env, &claim.claimant, claim.policy_id).ok_or(Error::PolicyNotFound)?;
     let now = env.ledger().sequence();
@@ -1212,6 +1220,37 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
 
         let primary_amount = primary_balance.max(0);
         let reinsurance_amount = net.checked_sub(primary_amount).ok_or(Error::Overflow)?;
+
+        // Issue #1613: announce the fallback attempt before touching the pool so
+        // indexers see the solvency event even if the draw below fails.
+        crate::types::ReinsuranceTriggered {
+            claim_id: claim.claim_id,
+            shortfall_amount: reinsurance_amount,
+            reinsurance_contract: reinsurance.clone(),
+        }
+        .publish(env);
+
+        // Issue #1613: pre-flight check the reinsurance pool's balance/allowance
+        // rather than letting an undercapitalised pool trap the whole transaction.
+        let available =
+            crate::token::reinsurance_available(env, &effective_asset, &reinsurance);
+        if available < reinsurance_amount {
+            // Reinsurance fallback also fails: record the failure and stop here.
+            // The primary-side transfer has not happened yet, so nothing has moved.
+            claim.status = ClaimStatus::PayoutFailed;
+            push_status_transition(&mut claim.status_history, ClaimStatus::PayoutFailed, now);
+            storage::set_claim(env, claim);
+
+            crate::types::ReinsuranceDrawdownFailed {
+                claim_id: claim.claim_id,
+                primary_amount: 0,
+                shortfall_amount: reinsurance_amount,
+                reinsurance_contract: reinsurance,
+            }
+            .publish(env);
+
+            return Ok(());
+        }
 
         // Transfer whatever is available from primary
         if primary_amount > 0 {
