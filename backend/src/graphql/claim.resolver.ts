@@ -1,6 +1,6 @@
 import DataLoader from 'dataloader';
-import { UnauthorizedException, UseGuards } from '@nestjs/common';
-import { Args, Context, Int, Parent, Query, ResolveField, Resolver, Subscription } from '@nestjs/graphql';
+import { BadRequestException, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { Args, Context, Int, Mutation, Parent, Query, ResolveField, Resolver, Subscription } from '@nestjs/graphql';
 import type { Policy } from '@prisma/client';
 import { AuthIdentityService } from '../auth/auth-identity.service';
 import { ClaimsService } from '../claims/claims.service';
@@ -8,8 +8,9 @@ import type { ClaimListItemDto } from '../claims/dto/claim.dto';
 import { PolicyReadService } from '../policy/policy-read.service';
 import type { GraphqlContext, GraphqlRequest } from './graphql.context';
 import { GraphqlRateLimitGuard } from './graphql-rate-limit.guard';
+import { GraphqlAdminAuthGuard } from './graphql-admin-auth.guard';
 import { GraphqlWalletAuthGuard } from './graphql-wallet-auth.guard';
-import { ClaimConnectionNode, ClaimNode, PolicyNode, VoteAddedEvent } from './graphql.types';
+import { ClaimConnectionNode, ClaimEscalationTx, ClaimNode, PolicyNode, VoteAddedEvent } from './graphql.types';
 import { VotePubSubService } from './vote-pubsub.service';
 
 type ClaimNodeSource = ClaimListItemDto & {
@@ -41,6 +42,27 @@ export class ClaimResolver {
       nextCursor: page.pagination.next_cursor,
       total: page.pagination.total,
     };
+  }
+
+  /**
+   * Admin-only. Builds the unsigned `escalate_claim` transaction. Complexity
+   * weight 10 (see fieldExtensionsEstimator in GraphqlOperationGuardService).
+   * Source account: the admin's wallet from the JWT, else CONTRACT_ADMIN_ADDRESS.
+   */
+  @Mutation(() => ClaimEscalationTx, { complexity: 10 })
+  @UseGuards(GraphqlRateLimitGuard, GraphqlAdminAuthGuard)
+  async escalateClaim(
+    @Args('claimId', { type: () => Int }) claimId: number,
+    @Args('newDeadlineLedger', { type: () => Int }) newDeadlineLedger: number,
+    @Context() ctx: GraphqlContext,
+  ): Promise<ClaimEscalationTx> {
+    const admin =
+      (ctx.req as { user?: { walletAddress?: string } }).user?.walletAddress ??
+      process.env['CONTRACT_ADMIN_ADDRESS'];
+    if (!admin) {
+      throw new BadRequestException('No admin wallet available to source the transaction');
+    }
+    return this.claimsService.buildEscalateClaimTransaction(admin, claimId, newDeadlineLedger);
   }
 
   @Query(() => ClaimNode, { nullable: true })

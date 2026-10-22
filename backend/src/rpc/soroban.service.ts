@@ -1713,6 +1713,47 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Build unsigned escalate_claim transaction.
+   * Signature: escalate_claim(claim_id: u64, new_deadline_ledger: u32); the contract
+   * requires the stored admin to authorise, so `admin` is the source account.
+   */
+  async buildEscalateClaimTransaction(args: {
+    admin: string;
+    claimId: number;
+    newDeadlineLedger: number;
+  }): Promise<{ unsignedXdr: string }> {
+    return this.trackRpc('build_escalate_claim', async () => {
+      const server = this.makeServer();
+      const account = await this.loadAccount(server, args.admin);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          new Contract(this.contractId).call(
+            'escalate_claim',
+            nativeToScVal(args.claimId, { type: 'u64' }),
+            nativeToScVal(args.newDeadlineLedger, { type: 'u32' }),
+          ),
+        )
+        .setTimeout(30)
+        .build();
+
+      const simulation = await server.simulateTransaction(tx);
+      if (Api.isSimulationError(simulation)) {
+        this.mapSimulationError(
+          (simulation as SorobanRpc.Api.SimulateTransactionErrorResponse).error,
+        );
+      }
+      const assembled = assembleTransaction(
+        tx,
+        simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse,
+      );
+      return { unsignedXdr: assembled.build().toEnvelope().toXDR('base64') };
+    });
+  }
+
+  /**
    * Build unsigned admin_set_quorum_bps transaction.
    * Signature: admin_set_quorum_bps(admin, bps: u32)
    */
