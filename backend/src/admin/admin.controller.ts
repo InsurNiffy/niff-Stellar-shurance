@@ -20,7 +20,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsArray, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, ArrayNotEmpty, Matches, IsIn } from 'class-validator';
-import { ClaimSeverity } from '@prisma/client';
+import { ClaimSeverity, TicketStatus } from '@prisma/client';
+import { UpdateTicketStatusDto } from '../support/dto/update-ticket-status.dto';
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -1111,8 +1112,33 @@ export class AdminController {
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
     @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
     @Query('assignedTo') assignedTo?: string,
+    @Query('status') status?: string,
   ) {
-    return this.supportService.listTickets(limit || 50, offset || 0, assignedTo);
+    const allowed = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
+    if (status && !allowed.includes(status)) {
+      throw new BadRequestException(`status must be one of ${allowed.join(', ')}`);
+    }
+    return this.supportService.listTickets(
+      limit || 50,
+      offset || 0,
+      assignedTo,
+      status as TicketStatus | undefined,
+    );
+  }
+
+  /**
+   * PATCH /admin/support/tickets/:id/status
+   * Update ticket status; the submitter is notified by email.
+   */
+  @Patch('support/tickets/:id/status')
+  @ApiOperation({ summary: 'Update support ticket status' })
+  async updateSupportTicketStatus(
+    @Param('id') ticketId: string,
+    @Body() dto: UpdateTicketStatusDto,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    return this.supportService.updateTicketStatus(ticketId, dto, actor, req.ip);
   }
 
   /**
