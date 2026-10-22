@@ -2115,6 +2115,12 @@ pub fn increment_holder_nonce(env: &Env, holder: &Address) -> u64 {
 
 /// Check `expected` against the current nonce; return `Err` on mismatch.
 /// No-op (returns `Ok`) when `expected` is `None`.
+///
+/// Called from both `file_claim` and `initiate_policy` (Issue #1607), so a
+/// captured-and-replayed invocation of either entrypoint — identical holder,
+/// identical arguments, identical `expected_nonce` — is rejected once the
+/// first execution has advanced the on-chain nonce. See
+/// `tests/nonce.rs::file_claim_replay_attack_is_rejected` for a reproduction.
 pub fn check_and_bump_nonce(
     env: &Env,
     holder: &Address,
