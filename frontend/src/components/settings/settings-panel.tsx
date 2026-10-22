@@ -49,7 +49,7 @@ export function SettingsPanel() {
     jwt,
   )
 
-  const { startTour } = useOnboardingTour()
+  const { startTour } = useOnboardingTour({ autoStart: false })
 
   async function handleNetworkChange(network: Network) {
     setNetworkError(null)

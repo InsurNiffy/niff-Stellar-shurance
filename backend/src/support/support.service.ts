@@ -20,7 +20,7 @@ export class SupportService {
     private readonly autocloseService?: SupportTicketAutocloseService,
   ) {}
 
-  async submitTicket(dto: CreateTicketDto, remoteIp?: string) {
+  async submitTicket(dto: CreateTicketDto, remoteIp?: string, walletAddress?: string) {
     const valid = await this.captcha.verify(dto.captchaToken, remoteIp);
     if (!valid) {
       throw new BadRequestException('CAPTCHA verification failed');
@@ -32,6 +32,7 @@ export class SupportService {
         subject: dto.subject,
         message: dto.message,
         ipHash: remoteIp ? this.hashIp(remoteIp) : null,
+        walletAddress: walletAddress ?? null,
       },
     });
 
@@ -136,6 +137,27 @@ export class SupportService {
       throw new BadRequestException(`Ticket ${ticketId} not found`);
     }
     return this.mapToResponse(ticket);
+  }
+
+  async listTicketsForWallet(walletAddress: string, limit = 50, offset = 0) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException('Ticket limit must be between 1 and 100');
+    }
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new BadRequestException('Ticket offset must be a non-negative integer');
+    }
+
+    const where = { walletAddress };
+    const [tickets, total] = await Promise.all([
+      this.prisma.supportTicket.findMany({
+        where,
+        take: limit,
+        skip: offset,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.supportTicket.count({ where }),
+    ]);
+    return { tickets: tickets.map((ticket) => this.mapToResponse(ticket)), total };
   }
 
   async listTickets(limit = 50, offset = 0, assignedTo?: string | null) {

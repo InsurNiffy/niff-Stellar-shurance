@@ -6,6 +6,9 @@ import {
   HttpCode,
   HttpStatus,
   Ip,
+  DefaultValuePipe,
+  ParseIntPipe,
+  Query,
   MessageEvent,
   Param,
   Patch,
@@ -23,6 +26,8 @@ import { CreateFaqItemDto, UpdateFaqItemDto, ReorderFaqItemsDto } from './dto/fa
 import { SetTypingDto } from './dto/typing.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminRoleGuard } from '../admin/guards/admin-role.guard';
+import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 
 @ApiTags('Support')
 @Controller('support')
@@ -39,13 +44,25 @@ export class SupportController {
    */
   @Post('tickets')
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(OptionalJwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 600_000 } })
   @ApiOperation({ summary: 'Submit a support ticket (CAPTCHA protected)' })
   @ApiResponse({ status: 201, description: 'Ticket received' })
   @ApiResponse({ status: 400, description: 'CAPTCHA failed or validation error' })
   @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
-  async submitTicket(@Body() dto: CreateTicketDto, @Ip() ip: string) {
-    return this.supportService.submitTicket(dto, ip);
+  async submitTicket(@Body() dto: CreateTicketDto, @Ip() ip: string, @WalletAddress() walletAddress?: string) {
+    return this.supportService.submitTicket(dto, ip, walletAddress);
+  }
+
+  @Get('tickets')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async listMyTickets(
+    @WalletAddress() walletAddress: string,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+  ) {
+    return this.supportService.listTicketsForWallet(walletAddress, limit, offset);
   }
 
   /**

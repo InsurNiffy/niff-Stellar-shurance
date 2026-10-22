@@ -334,6 +334,7 @@ model SupportTicket {
   message          String
   /// One-way hash of submitter IP for spam detection (no raw IP stored).
   ipHash           String?
+  walletAddress    String?      @map("wallet_address")
   status           TicketStatus @default(OPEN)
   /// Staff member assigned to handle this ticket (null = unassigned).
   assignedTo       String?      @map("assigned_to")
@@ -345,6 +346,7 @@ model SupportTicket {
   replies          SupportTicketReply[]
 
   @@index([status])
+  @@index([walletAddress])
   @@index([assignedTo])
   @@index([createdAt])
   @@index([firstRespondedAt])

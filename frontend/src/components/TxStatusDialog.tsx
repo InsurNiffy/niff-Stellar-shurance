@@ -1,5 +1,14 @@
-import { useEffect, useRef } from 'react';
-import type { TxState } from '../hooks/useContractTx';
+import { useEffect } from 'react';
+import type { ContractTxState as TxState } from '../hooks/useContractTx';
+import { StellarExplorerLink } from './ui/StellarExplorerLink';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
 
 /**
  * Human-readable copy for each lifecycle step. Kept in sync with the
@@ -43,6 +52,10 @@ export interface TxStatusDialogProps {
   explorerUrl?: string | null;
   /** Human-readable error message, if the transaction failed. */
   error?: string | null;
+  /** Transaction hash for the Stellar Expert link. */
+  transactionHash?: string | null;
+  /** Available XDR diagnostic information. */
+  xdrError?: string | null;
   /** Retry handler shown when the transaction failed. */
   onRetry?: () => void;
   /** Close handler. Closing never cancels an in-flight transaction. */
@@ -61,102 +74,80 @@ export function TxStatusDialog({
   open,
   explorerUrl,
   error,
+  transactionHash,
+  xdrError,
   onRetry,
   onClose,
 }: TxStatusDialogProps) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-
-  // Move focus into the dialog when it opens for accessibility.
   useEffect(() => {
-    if (open) {
-      dialogRef.current?.focus();
+    if (!open || state !== 'success') return;
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate([80, 40, 80]);
     }
-  }, [open]);
-
-  if (!open) {
-    return null;
-  }
+    const timer = window.setTimeout(onClose, 10_000);
+    return () => window.clearTimeout(timer);
+  }, [open, state, onClose]);
 
   const activeIndex = STEP_INDEX[state];
   const isError = state === 'error';
   const isSuccess = state === 'success';
 
   return (
-    <div
-      className="tx-status-dialog__backdrop"
-      role="presentation"
-      onClick={onClose}
-    >
-      <div
-        ref={dialogRef}
-        className="tx-status-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Transaction status"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="tx-status-dialog__header">
-          <h2 className="tx-status-dialog__title">Transaction status</h2>
-          <button
-            type="button"
-            className="tx-status-dialog__close"
-            aria-label="Close"
-            onClick={onClose}
-          >
-            ×
-          </button>
-        </header>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <DialogContent hideCloseButton className="max-h-[85vh] overflow-y-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Transaction status</DialogTitle>
+          <DialogDescription className="sr-only">
+            Current progress of your Stellar transaction.
+          </DialogDescription>
+        </DialogHeader>
 
-        <ol className="tx-status-dialog__steps">
+        <ol className="space-y-3" aria-label="Transaction progress">
           {ORDERED_STEPS.map((step, index) => {
             const isDone = isSuccess || (activeIndex > index && !isError);
             const isActive = !isError && activeIndex === index;
             return (
               <li
                 key={step}
-                className={[
-                  'tx-status-dialog__step',
-                  isDone ? 'is-done' : '',
-                  isActive ? 'is-active' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
+                className={`flex items-center gap-3 text-sm ${isDone ? 'text-primary' : isActive ? 'font-medium text-foreground' : 'text-muted-foreground'}`}
                 aria-current={isActive ? 'step' : undefined}
               >
-                <span className="tx-status-dialog__step-marker" aria-hidden="true">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs" aria-hidden="true">
                   {isDone ? '✓' : index + 1}
                 </span>
-                <span className="tx-status-dialog__step-label">
-                  {STEP_LABELS[step]}
-                </span>
+                <span>{STEP_LABELS[step]}</span>
               </li>
             );
           })}
         </ol>
 
         {isError && (
-          <p className="tx-status-dialog__error" role="alert">
-            {error ?? 'Something went wrong. Please try again.'}
-          </p>
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">
+            <p>{error ?? 'Something went wrong. Please try again.'}</p>
+            {xdrError && <pre className="mt-2 whitespace-pre-wrap break-all text-xs">XDR detail: {xdrError}</pre>}
+          </div>
         )}
 
-        {isSuccess && explorerUrl && (
-          <a
-            className="tx-status-dialog__explorer"
-            href={explorerUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            View on explorer ↗
-          </a>
+        {isSuccess && (transactionHash || explorerUrl) && (
+          transactionHash ? (
+            <StellarExplorerLink type="tx" value={transactionHash} label="View on Stellar Expert" />
+          ) : (
+            <a
+              className="inline-flex items-center text-sm underline underline-offset-4"
+              href={explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              View on Stellar Expert ↗
+            </a>
+          )
         )}
 
-        <footer className="tx-status-dialog__footer">
+        <DialogFooter>
           {isError && onRetry && (
             <button
               type="button"
-              className="tx-status-dialog__retry"
+              className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted"
               onClick={onRetry}
             >
               Retry
@@ -164,14 +155,14 @@ export function TxStatusDialog({
           )}
           <button
             type="button"
-            className="tx-status-dialog__dismiss"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             onClick={onClose}
           >
             {isSuccess || isError ? 'Close' : 'Continue in background'}
           </button>
-        </footer>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

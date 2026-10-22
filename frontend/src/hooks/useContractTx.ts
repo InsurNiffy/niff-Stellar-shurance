@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { signTransaction } from '@stellar/freighter-api';
-import { Horizon, SorobanRpc, TransactionBuilder, Networks } from '@stellar/stellar-sdk';
+import { SorobanRpc, TransactionBuilder, Networks } from '@stellar/stellar-sdk';
+import { getConfig } from '@/config/env';
+import { stellarExpertUrl } from '@/features/wallet/utils/stellarExpert';
 
 /**
  * Lifecycle states for an on-chain contract transaction.
@@ -34,6 +36,7 @@ export interface ContractTxError {
   code?: number;
   /** Whether the user can safely retry the same operation. */
   retryable: boolean;
+  xdrError?: string;
 }
 
 export interface ContractTxResult {
@@ -55,15 +58,13 @@ export interface UseContractTxOptions {
   networkPassphrase?: string;
   /** Soroban RPC endpoint used to submit and poll for confirmation. */
   rpcUrl?: string;
-  /** Horizon endpoint used to build the explorer link. */
-  horizonUrl?: string;
   /** How long to wait for confirmation before surfacing a timeout. */
   confirmTimeoutMs?: number;
 }
 
-const DEFAULT_NETWORK_PASSPHRASE = Networks.TESTNET;
-const DEFAULT_RPC_URL = 'https://soroban-testnet.stellar.org';
-const DEFAULT_HORIZON_URL = 'https://horizon-testnet.stellar.org';
+const config = getConfig();
+const DEFAULT_NETWORK_PASSPHRASE = config.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
+const DEFAULT_RPC_URL = config.sorobanRpcUrl;
 const DEFAULT_CONFIRM_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 2_000;
 
@@ -76,12 +77,12 @@ const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
   5: 'The provided amount is invalid.',
 };
 
-function explorerUrlFor(hash: string, horizonUrl: string): string {
-  return `${horizonUrl.replace(/\/$/, '')}/tx/${hash}`;
+function explorerUrlFor(hash: string): string {
+  return stellarExpertUrl('tx', hash, config.network);
 }
 
 function classifyError(error: unknown): ContractTxError {
-  const raw = error as { message?: string; response?: { data?: { extras?: { result_codes?: { transaction?: string } } } }; code?: number };
+  const raw = error as { message?: string; response?: { data?: { extras?: { result_codes?: { transaction?: string }; result_xdr?: string } } }; resultXdr?: string; resultXdrBase64?: string; result_xdr?: string; code?: number };
   const message = raw?.message ?? String(error);
   const lower = message.toLowerCase();
 
@@ -97,6 +98,11 @@ function classifyError(error: unknown): ContractTxError {
     return { kind: 'timeout', message: 'The transaction timed out. It may still confirm — check the explorer.', retryable: true };
   }
 
+  const xdrError = raw.resultXdrBase64 ?? raw.resultXdr ?? raw.result_xdr ?? raw.response?.data?.extras?.result_xdr ?? undefined;
+  const txCode = raw.response?.data?.extras?.result_codes?.transaction;
+  if (txCode) {
+    return { kind: 'unknown', message: txCode.replace(/_/g, ' ').toLowerCase(), retryable: true, xdrError };
+  }
   const code = typeof raw?.code === 'number' ? raw.code : undefined;
   if (code !== undefined || lower.includes('simulation')) {
     return {
@@ -104,10 +110,11 @@ function classifyError(error: unknown): ContractTxError {
       message: (code !== undefined && CONTRACT_ERROR_MESSAGES[code]) || 'The contract simulation failed.',
       code,
       retryable: false,
+      xdrError,
     };
   }
 
-  return { kind: 'unknown', message: message || 'Something went wrong.', retryable: true };
+  return { kind: 'unknown', message: message || 'Something went wrong.', retryable: true, xdrError };
 }
 
 /**
@@ -122,7 +129,6 @@ export function useContractTx({
   invalidateKeys,
   networkPassphrase = DEFAULT_NETWORK_PASSPHRASE,
   rpcUrl = DEFAULT_RPC_URL,
-  horizonUrl = DEFAULT_HORIZON_URL,
   confirmTimeoutMs = DEFAULT_CONFIRM_TIMEOUT_MS,
 }: UseContractTxOptions) {
   const queryClient = useQueryClient();
@@ -169,7 +175,7 @@ export function useContractTx({
 
       if (submission.status === 'ERROR') {
         throw Object.assign(new Error('Transaction submission failed'), {
-          code: submission.errorResult ? undefined : undefined,
+          resultXdrBase64: submission.errorResult?.toXDR?.('base64') ?? undefined,
         });
       }
 
@@ -185,7 +191,9 @@ export function useContractTx({
           break;
         }
         if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-          throw new Error('Transaction failed on-chain');
+          throw Object.assign(new Error('Transaction failed on-chain'), {
+            resultXdrBase64: 'resultXdr' in status ? status.resultXdr : undefined,
+          });
         }
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       }
@@ -194,7 +202,7 @@ export function useContractTx({
         throw new Error('Transaction confirmation timed out');
       }
 
-      const txResult: ContractTxResult = { hash, explorerUrl: explorerUrlFor(hash, horizonUrl) };
+      const txResult: ContractTxResult = { hash, explorerUrl: explorerUrlFor(hash) };
       if (mountedRef.current) setResult(txResult);
       safeSetState('success');
 
@@ -212,7 +220,7 @@ export function useContractTx({
       safeSetState('error');
       return undefined;
     }
-  }, [build, networkPassphrase, rpcUrl, horizonUrl, confirmTimeoutMs, queryClient, safeSetState]);
+  }, [build, networkPassphrase, rpcUrl, confirmTimeoutMs, queryClient, safeSetState]);
 
   const reset = useCallback(() => {
     setState('idle');
