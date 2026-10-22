@@ -70,6 +70,29 @@ pub enum GovernanceError {
     ProposerCooldownActive = 306,
     /// Proposer cooldown value is out of the allowed bounds.
     ProposerCooldownOutOfBounds = 307,
+    /// `finalize_governance_proposal` was called before `proposal.deadline`
+    /// has passed — there is nothing yet to auto-reject.
+    ProposalNotExpired = 308,
+    /// `finalize_governance_proposal` was called on a proposal that already
+    /// reached quorum and was applied. An applied proposal is a success
+    /// outcome, never an expiry, so it cannot be closed via this path.
+    ProposalAlreadyApplied = 309,
+}
+
+/// Emitted by `finalize_governance_proposal` when a proposal's voting
+/// deadline has passed without reaching quorum and it is permissionlessly
+/// auto-rejected and removed from storage (Issue #1600).
+/// topics: ("niffyinsure", "proposal_expired", proposal_id)
+#[contractevent(topics = ["niffyinsure", "proposal_expired"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalExpired {
+    #[topic]
+    pub proposal_id: u64,
+    pub version: u32,
+    pub param_key: String,
+    pub proposed_value: u32,
+    pub deadline: u32,
+    pub at_ledger: u32,
 }
 
 #[contracttype]
@@ -248,6 +271,50 @@ pub fn vote_proposal(
 
 pub fn get_proposal(env: &Env, proposal_id: u64) -> Option<Proposal> {
     storage::get_proposal(env, proposal_id)
+}
+
+/// Permissionless keeper (Issue #1600): auto-reject a governance proposal
+/// once its voting `deadline` (a ledger sequence) has passed without
+/// reaching quorum. Anyone may call this — no `require_auth` is needed
+/// since it only tidies up state that is already, objectively expired.
+///
+/// Guards:
+/// - `ProposalNotFound` if the proposal does not exist (also covers a
+///   proposal already removed by a prior finalize, vote-triggered rejection,
+///   or resolution).
+/// - `ProposalAlreadyApplied` if the proposal already passed quorum and took
+///   effect — an applied proposal is never eligible for expiry rejection.
+/// - `ProposalNotExpired` if called at or before `deadline`.
+///
+/// On success the proposal is removed from storage (same convention already
+/// used by `vote_proposal` when a vote lands after the deadline) and a
+/// `ProposalExpired` event is emitted.
+pub fn finalize_governance_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceError> {
+    let proposal =
+        storage::get_proposal(env, proposal_id).ok_or(GovernanceError::ProposalNotFound)?;
+
+    if proposal.applied {
+        return Err(GovernanceError::ProposalAlreadyApplied);
+    }
+
+    let now = env.ledger().sequence();
+    if now <= proposal.deadline {
+        return Err(GovernanceError::ProposalNotExpired);
+    }
+
+    storage::remove_proposal(env, proposal_id);
+
+    ProposalExpired {
+        proposal_id,
+        version: EVENT_SCHEMA_VERSION,
+        param_key: proposal.param_key,
+        proposed_value: proposal.proposed_value,
+        deadline: proposal.deadline,
+        at_ledger: now,
+    }
+    .publish(env);
+
+    Ok(())
 }
 
 pub fn get_governance_cooldown_ledgers(env: &Env) -> u32 {

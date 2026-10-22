@@ -1063,6 +1063,18 @@ impl NiffyInsure {
         governance::get_proposal(&env, proposal_id)
     }
 
+    /// Permissionless keeper (Issue #1600): close out a governance proposal
+    /// whose voting deadline has passed without reaching quorum, removing it
+    /// and emitting `proposal_expired`. Callable by anyone; reverts with
+    /// `ProposalNotExpired` before the deadline and `ProposalAlreadyApplied`
+    /// on a proposal that already passed quorum and took effect.
+    pub fn finalize_governance_proposal(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<(), GovernanceError> {
+        governance::finalize_governance_proposal(&env, proposal_id)
+    }
+
     /// Admin-only: set the per-proposer cooldown (ledgers between proposals from same address).
     /// 0 = disabled. Bounded by `governance::MAX_PROPOSER_COOLDOWN_LEDGERS`.
     pub fn admin_set_proposer_cooldown(
