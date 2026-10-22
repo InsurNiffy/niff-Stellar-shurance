@@ -88,3 +88,7 @@ Target URLs are validated on create **and** update:
 - Hostnames such as `localhost` / `*.local` are blocked, and **every hostname
   is re-checked after DNS resolution** so a public name cannot rebind to an
   internal address.
+- A daily job (`WebhookSsrfRevalidationService`, 03:00) re-resolves every
+  active subscription URL. Subscriptions that now fail the SSRF checks are
+  disabled, the tenant's `contact_email` is notified, and every result is
+  logged to the `webhook_ssrf_audit` table.

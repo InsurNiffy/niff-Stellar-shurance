@@ -5,6 +5,7 @@ import { WebhookSubscriptionsController } from './webhook-subscriptions.controll
 import { WebhookSubscriptionsService, WEBHOOK_DNS_LOOKUP } from './webhook-subscriptions.service';
 import { WebhookDeliveryService } from './webhook-delivery.service';
 import { OutboundWebhookService } from './outbound-webhook.service';
+import { WebhookSsrfRevalidationService } from './webhook-ssrf-revalidation.service';
 import { defaultDnsLookup } from './ssrf';
 import { setOutboundJobProcessor } from './outbound.queue';
 
@@ -18,6 +19,7 @@ import { setOutboundJobProcessor } from './outbound.queue';
     WebhookSubscriptionsService,
     WebhookDeliveryService,
     OutboundWebhookService,
+    WebhookSsrfRevalidationService,
     { provide: WEBHOOK_DNS_LOOKUP, useValue: defaultDnsLookup },
   ],
   exports: [WebhookSubscriptionsService, WebhookDeliveryService, OutboundWebhookService],
