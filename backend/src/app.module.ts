@@ -51,6 +51,7 @@ const IDEMPOTENCY_ROUTES = [
   { path: 'claims', method: RequestMethod.POST },
   { path: 'policies', method: RequestMethod.POST },
   { path: 'tx/submit', method: RequestMethod.POST },
+  { path: 'policies/:id/renew', method: RequestMethod.PATCH },
 ];
 
 @Module({
