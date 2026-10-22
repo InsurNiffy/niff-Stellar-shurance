@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../cache/redis.service';
 import { MetricsService } from '../metrics/metrics.service';
 
-const DEFAULT_TTL_SECONDS = 300; // 5 minutes
+const DEFAULT_TTL_SECONDS = 60;
 const KEY_PREFIX = 'assets:allowed';
 
 @Injectable()

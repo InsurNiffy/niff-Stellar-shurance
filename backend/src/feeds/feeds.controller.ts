@@ -1,7 +1,7 @@
-import { Controller, Get, Headers, Res } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Headers, Query, Res } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { FeedsService } from './feeds.service';
+import { ActivityFeedPageDto, FeedsService } from './feeds.service';
 
 /** True when the caller's Accept header explicitly asks for JSON. */
 function prefersJson(acceptHeader?: string): boolean {
@@ -47,5 +47,22 @@ export class FeedsController {
     const xml = await this.feedsService.getCachedClaimsAtomFeed();
     res.set('Content-Type', 'application/atom+xml; charset=utf-8');
     res.end(xml);
+  }
+
+  /**
+   * GET /feeds/activity?address=<addr>&cursor=<cursor>&limit=20
+   *
+   * Paginated activity feed of indexed on-chain events for a wallet address.
+   */
+  @Get('activity')
+  async activity(
+    @Query('address') address?: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ): Promise<ActivityFeedPageDto> {
+    if (!address) throw new BadRequestException('address is required');
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : 20;
+    if (Number.isNaN(parsedLimit)) throw new BadRequestException('limit must be an integer');
+    return this.feedsService.getActivityFeed(address, cursor, parsedLimit);
   }
 }
