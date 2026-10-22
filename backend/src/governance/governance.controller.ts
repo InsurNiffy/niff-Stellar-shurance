@@ -1,62 +1,28 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
-import { AdminGuard } from '../auth/admin.guard';
+import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GovernanceService } from './governance.service';
-import { CreateProposalDto } from './dto/create-proposal.dto';
-import { VoteProposalDto } from './dto/vote-proposal.dto';
-import { DelegateVoteDto } from './dto/delegate-vote.dto';
-import { RevokeVoteDelegationDto } from './dto/revoke-vote-delegation.dto';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { DelegateVoteDto } from './dto/governance.dto';
 
-@Controller('v1/governance')
+@ApiTags('governance')
+@Controller('governance/delegations')
 export class GovernanceController {
   constructor(private readonly governanceService: GovernanceService) {}
 
-  @Get('voters')
-  @UseGuards(AdminGuard)
-  async getVoters(@Query() query: PaginationQueryDto) {
-    return this.governanceService.getVoters(query);
+  @Post()
+  @ApiOperation({ summary: 'Build an unsigned vote delegation transaction' })
+  async delegate(@Body() dto: DelegateVoteDto) {
+    return this.governanceService.buildDelegate(dto);
   }
 
-  @Get('delegations/:address')
-  async getDelegations(@Param('address') address: string) {
-    return this.governanceService.getDelegations(address);
+  @Get(':address')
+  @ApiOperation({ summary: 'Fetch the current vote delegation for an address' })
+  async getDelegation(@Param('address') address: string) {
+    return this.governanceService.getDelegation(address);
   }
 
-  @Get('proposals')
-  async getProposals(@Query() query: PaginationQueryDto) {
-    return this.governanceService.getProposals(query);
-  }
-
-  @Get('proposals/:id')
-  async getProposal(@Param('id') id: string) {
-    return this.governanceService.getProposal(id);
-  }
-
-  @Post('create_proposal')
-  async createProposal(@Body() dto: CreateProposalDto) {
-    return this.governanceService.buildCreateProposal(dto);
-  }
-
-  @Post('vote_proposal')
-  async voteProposal(@Body() dto: VoteProposalDto) {
-    return this.governanceService.buildVoteProposal(dto);
-  }
-
-  @Post('delegate_vote')
-  async delegateVote(@Body() dto: DelegateVoteDto) {
-    return this.governanceService.buildDelegateVote(dto);
-  }
-
-  @Post('revoke_vote_delegation')
-  async revokeVoteDelegation(@Body() dto: RevokeVoteDelegationDto) {
-    return this.governanceService.buildRevokeVoteDelegation(dto);
+  @Delete(':address')
+  @ApiOperation({ summary: 'Build an unsigned undelegate transaction' })
+  async undelegate(@Param('address') address: string) {
+    return this.governanceService.buildUndelegate(address);
   }
 }
