@@ -1,0 +1,37 @@
+name: Golden Vectors Approval
+
+# Changes to the golden vectors file require sign-off from two approvers (#1638).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/src/soroban/golden-vectors.json'
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  require-two-approvals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require 2 approvals when golden vectors change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if ! gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' \
+              | grep -qx 'backend/src/soroban/golden-vectors.json'; then
+            echo "Golden vectors unchanged — no extra approval required."
+            exit 0
+          fi
+          APPROVALS=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq '[group_by(.user.login)[] | last | select(.state == "APPROVED")] | length')
+          echo "Distinct approvals: $APPROVALS"
+          if [ "$APPROVALS" -lt 2 ]; then
+            echo "::error::backend/src/soroban/golden-vectors.json changed — 2 approving reviews required (have $APPROVALS)."
+            exit 1
+          fi

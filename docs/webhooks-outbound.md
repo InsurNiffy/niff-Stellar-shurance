@@ -77,6 +77,15 @@ Other headers sent with each delivery: `X-Event-Type`, `X-Idempotency-Key`,
   the `webhook_deliveries` table with the response code, success flag and error
   message — query it via `WebhookDeliveryService.deliveryLog(url)`.
 
+## Dead-letter queue
+
+- Once retries are exhausted the delivery is written to the `webhook_dlq` table
+  (with `failed_at` and the last error).
+- `GET /admin/webhooks/dlq` lists pending entries (viewer role or above).
+- `POST /admin/webhooks/dlq/:id/retry` re-enqueues an entry and sets `retried_at`.
+- An error-level `ALERT` log is emitted when the pending DLQ size exceeds
+  `WEBHOOK_DLQ_ALERT_THRESHOLD` (default 100).
+
 ## SSRF validation
 
 Target URLs are validated on create **and** update:
