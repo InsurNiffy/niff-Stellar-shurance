@@ -88,6 +88,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check OpenAPI spec drift
+        run: |
+          npm run openapi:generate
+          if ! git diff --exit-code -- openapi.json; then
+            echo "::error::backend/openapi.json is stale. Run 'npm run openapi:generate' in backend/, commit the result, then run 'make generate-client' from the repo root to sync the TypeScript client."
+            exit 1
+          fi
+
       - name: Test
         run: npm test
 

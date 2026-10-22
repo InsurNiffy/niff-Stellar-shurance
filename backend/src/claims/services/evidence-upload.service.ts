@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { AppException } from '../../common/errors';
 import { ConfigService } from '@nestjs/config';
 import { IpfsService } from '../../ipfs/services/ipfs.service';
 import { AuditService } from '../../admin/audit.service';
@@ -111,10 +112,10 @@ export class EvidenceUploadService {
       await this.writeAudit(walletAddress, 'evidence_upload_rate_limited', {
         retryAfterSeconds,
       });
-      throw new HttpException(
-        `Upload rate limit exceeded. Retry after ${retryAfterSeconds}s`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+      throw new AppException('RATE_LIMIT_EXCEEDED', {
+        message: `Upload rate limit exceeded. Retry after ${retryAfterSeconds}s`,
+        details: { retryAfter: retryAfterSeconds },
+      });
     }
   }
 

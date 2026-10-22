@@ -117,3 +117,14 @@ describe('error-catalog.json export', () => {
     }
   });
 });
+
+describe('error i18n messages', () => {
+  it('has an English message for every catalog i18nKey', () => {
+    const messages = JSON.parse(
+      fs.readFileSync(path.join(__dirname, 'i18n', 'en.json'), 'utf8'),
+    ) as Record<string, string>;
+    for (const entry of Object.values(ERROR_CATALOG) as CatalogEntry[]) {
+      expect(messages[entry.i18nKey]).toEqual(expect.any(String));
+    }
+  });
+});
