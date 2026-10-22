@@ -10,5 +10,6 @@ import { AuthModule } from '../../auth/auth.module';
   imports: [RateLimitModule, AuthModule],
   controllers: [CommentController],
   providers: [CommentService, CommentRepository, SanitizationService],
+  exports: [CommentService],
 })
 export class CommentsModule {}
