@@ -356,8 +356,11 @@ impl NiffyInsure {
         soroban_sdk::BytesN::from_array(&env, &[0u8; 32])
     }
 
-    /// Read-only: balance of the default payout token held by this contract (payout reserve).
-    /// Matches funds available for `process_claim` for the configured default asset.
+    /// Read-only: SEP-41 balance of the configured default asset held by the
+    /// `Treasury` address (defaults to this contract's own address until
+    /// `set_treasury` is called). Pairs with `get_min_solvency_ratio_bps()`
+    /// for off-chain solvency monitoring (Issue #1604): the admin dashboard's
+    /// solvency widget and the `treasury.balance_low` webhook both poll this.
     pub fn get_treasury_balance(env: Env) -> i128 {
         let token_addr = storage::get_token(&env);
         crate::token::get_treasury_balance(&env, &token_addr)
