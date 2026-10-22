@@ -175,3 +175,97 @@ fn cooldown_zero_disables_per_proposer_limit() {
         client.try_create_proposal(&proposer, &String::from_str(&env, "quorum_bps"), &6_000u32);
     assert!(result.is_ok(), "zero cooldown must allow rapid proposals");
 }
+
+// ── finalize_governance_proposal (Issue #1606) ────────────────────────────────
+//
+// Permissionless keeper that auto-rejects proposals past their voting
+// deadline, so stale proposals don't linger in storage forever when nobody
+// bothers to vote them to a quorum decision.
+
+#[test]
+fn finalize_expired_proposal_removes_and_emits_event() {
+    let (env, client, _admin) = setup();
+    let proposer = Address::generate(&env);
+    seed_proposer(&env, &client, &proposer);
+
+    let id = client.create_proposal(&proposer, &String::from_str(&env, "quorum_bps"), &5_000u32);
+    let proposal = client.get_proposal(&id).unwrap();
+
+    // Advance ledger past the deadline without anyone voting.
+    env.ledger()
+        .with_mut(|l| l.sequence_number = proposal.deadline + 1);
+
+    client.finalize_governance_proposal(&id);
+
+    // Proposal is gone, and the parameter was never applied.
+    assert!(client.get_proposal(&id).is_none());
+}
+
+#[test]
+fn finalize_before_deadline_reverts() {
+    let (env, client, _admin) = setup();
+    let proposer = Address::generate(&env);
+    seed_proposer(&env, &client, &proposer);
+
+    let id = client.create_proposal(&proposer, &String::from_str(&env, "quorum_bps"), &5_000u32);
+
+    let result = client.try_finalize_governance_proposal(&id);
+    assert_eq!(
+        result,
+        Err(Ok(GovernanceError::ProposalNotExpired)),
+        "finalizing before the deadline must revert"
+    );
+    assert!(client.get_proposal(&id).is_some());
+}
+
+#[test]
+fn finalize_unknown_proposal_reverts() {
+    let (env, client, _admin) = setup();
+    let result = client.try_finalize_governance_proposal(&999u64);
+    assert_eq!(result, Err(Ok(GovernanceError::ProposalNotFound)));
+}
+
+#[test]
+fn finalize_already_closed_proposal_reverts() {
+    let (env, client, _admin) = setup();
+    let proposer = Address::generate(&env);
+    seed_proposer(&env, &client, &proposer);
+
+    let id = client.create_proposal(&proposer, &String::from_str(&env, "quorum_bps"), &5_000u32);
+    let proposal = client.get_proposal(&id).unwrap();
+
+    // Approve so it reaches quorum (single eligible voter → quorum of 1) and applies.
+    client.vote_proposal(&proposer, &id, &true);
+    assert!(client.get_proposal(&id).unwrap().applied);
+
+    env.ledger()
+        .with_mut(|l| l.sequence_number = proposal.deadline + 1);
+
+    let result = client.try_finalize_governance_proposal(&id);
+    assert_eq!(
+        result,
+        Err(Ok(GovernanceError::ProposalAlreadyClosed)),
+        "finalizing an already-applied proposal must revert"
+    );
+}
+
+#[test]
+fn finalize_cannot_be_called_twice() {
+    let (env, client, _admin) = setup();
+    let proposer = Address::generate(&env);
+    seed_proposer(&env, &client, &proposer);
+
+    let id = client.create_proposal(&proposer, &String::from_str(&env, "quorum_bps"), &5_000u32);
+    let proposal = client.get_proposal(&id).unwrap();
+
+    env.ledger()
+        .with_mut(|l| l.sequence_number = proposal.deadline + 1);
+
+    client.finalize_governance_proposal(&id);
+    let result = client.try_finalize_governance_proposal(&id);
+    assert_eq!(
+        result,
+        Err(Ok(GovernanceError::ProposalNotFound)),
+        "a second finalize call on an already-removed proposal must revert"
+    );
+}
