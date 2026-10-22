@@ -550,6 +550,11 @@ pub struct Subscription {
     pub pet_ids: Vec<u64>,
     /// Ledger at which this subscription expires.
     pub expires_at: u32,
+    /// Off-chain callback/notification address for this subscription. Must be
+    /// present on the `AllowedPayoutRecipient` allowlist at registration time
+    /// (see Issue #1617) so subscriptions cannot be used to probe or spam
+    /// arbitrary addresses.
+    pub callback: Address,
 }
 
 // ── Vet specialization ────────────────────────────────────────────────────────

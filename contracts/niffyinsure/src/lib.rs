@@ -74,6 +74,8 @@ pub enum SubscriptionError {
     TooManySubscriptions = 1,
     /// Subscription not found or already expired.
     NotFound = 2,
+    /// Callback address is not on the `AllowedPayoutRecipient` allowlist.
+    CallbackNotAllowed = 3,
 }
 #[contractevent(topics = ["niffyinsure", "voter_removed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1269,9 +1271,17 @@ impl NiffyInsure {
         event_types: Vec<types::EventType>,
         pet_ids: Vec<u64>,
         ttl_ledgers: u32,
+        callback: Address,
     ) -> Result<u64, SubscriptionError> {
         owner.require_auth();
         storage::bump_instance(&env);
+
+        // Callback must be on the AllowedPayoutRecipient allowlist so this
+        // entrypoint cannot be used to register arbitrary addresses as
+        // notification targets (Issue #1617).
+        if !storage::is_allowed_payout_recipient(&env, &callback) {
+            return Err(SubscriptionError::CallbackNotAllowed);
+        }
 
         let now = env.ledger().sequence();
         let expires_at = now.saturating_add(ttl_ledgers);
@@ -1302,10 +1312,12 @@ impl NiffyInsure {
             event_types,
             pet_ids,
             expires_at,
+            callback: callback.clone(),
         };
         storage::set_subscription(&env, &sub);
         ids.push_back(sub_id);
         storage::set_owner_subscription_ids(&env, &owner, &ids);
+        events::emit_subscription_created(&env, &owner, sub_id, &callback, expires_at);
 
         Ok(sub_id)
     }
@@ -1338,6 +1350,7 @@ impl NiffyInsure {
             }
         }
         storage::set_owner_subscription_ids(&env, &owner, &updated);
+        events::emit_subscription_cancelled(&env, &owner, sub_id);
         Ok(())
     }
 
