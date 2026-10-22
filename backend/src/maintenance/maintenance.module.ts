@@ -18,11 +18,12 @@ import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
 import { VoteReconciliationJob } from './vote-reconciliation.job';
 import { RampReconciliationService } from '../jobs/ramp-reconciliation.service';
 import { RampHealthCheckService } from '../jobs/ramp-health-check.service';
+import { AppLoggerService } from '../common/logger/app-logger.service';
 import { AppealFinalizeKeeperService } from '../jobs/appeal-finalize-keeper.service';
 
 @Module({
   imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule, MetricsModule],
-  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService, AppealFinalizeKeeperService],
+  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService, VoteReconciliationJob, RampReconciliationService, RampHealthCheckService, AppealFinalizeKeeperService, AppLoggerService],
   exports: [PrivacyService, SolvencyMonitoringService],
 })
 export class MaintenanceModule {}
