@@ -67,6 +67,8 @@ export class MetricsService implements OnModuleInit {
   // ── Slow query metrics ────────────────────────────────────────────────────
   /** Total queries exceeding SLOW_QUERY_THRESHOLD_MS. */
   readonly slowQueriesTotal: client.Counter<string>;
+  /** Requests that arrived without X-Correlation-ID (one was generated). */
+  readonly correlationIdMissingTotal: client.Counter<string>;
 
   // ── DB pool metrics ───────────────────────────────────────────────────────
   /** Number of connections currently executing a query. */
@@ -302,6 +304,12 @@ export class MetricsService implements OnModuleInit {
       name: 'claim_summary_cache_total',
       help: 'Claims board summary Redis cache results',
       labelNames: ['result'],
+      registers: [this.registry],
+    });
+
+    this.correlationIdMissingTotal = new client.Counter({
+      name: 'correlation_id_missing_total',
+      help: 'Total requests received without an X-Correlation-ID header',
       registers: [this.registry],
     });
 
