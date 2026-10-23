@@ -97,6 +97,22 @@ identifier, not PII.
 4. **Response:** Returns request ID and rows affected count.
 5. **Verification:** Admin can list requests via `GET /admin/privacy/requests` to track status.
 
+### Self-service erasure (`DELETE /api/profile`)
+
+An authenticated user can erase their own off-chain data:
+
+- `HolderProfile.displayName` is replaced with `[deleted]` and `HolderProfile.email` is set to `null`.
+- Every `ClaimComment` authored by the wallet is soft-deleted (`deleted_at` set, `deleted_by` = the wallet).
+- A `privacy.erasure_completed` event (`{ walletAddress, commentsDeleted, completedAt }`) is emitted on `privacyBus`.
+- Response: `{ commentsDeleted: number }`.
+
+### On-chain data is out of scope
+
+Data written to the Soroban contracts (policies, claims, votes, transaction
+hashes, wallet addresses) is immutable and cannot be modified or deleted by the
+backend. It is outside the scope of GDPR erasure; only off-chain database
+records are anonymized or deleted.
+
 ### PII Fields Erased/Anonymized
 
 - **Claims:** `description` → '[redacted]', `imageUrls` → []

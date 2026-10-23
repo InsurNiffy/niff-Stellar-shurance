@@ -144,6 +144,16 @@ export class MetricsService implements OnModuleInit {
   /** Appeal SLA monitor job failures. */
   readonly appealsSlaCheckErrorsTotal: client.Counter<string>;
 
+  // ── Business KPIs ─────────────────────────────────────────────────────
+  readonly claimsFiledTotal: client.Counter<string>;
+  /** Labels: status (APPROVED | REJECTED | PAID …) */
+  readonly claimsResolvedTotal: client.Counter<string>;
+  readonly activePoliciesGauge: client.Gauge<string>;
+  /** Treasury balance in stroops. */
+  readonly treasuryBalanceGauge: client.Gauge<string>;
+  /** Ledgers between chain tip and the last indexed ledger. */
+  readonly indexerLedgerLagGauge: client.Gauge<string>;
+
   constructor(cardinalityGuard: MetricsCardinalityGuard) {
     this.cardinalityGuard = cardinalityGuard;
     this.registry = new client.Registry();
@@ -431,6 +441,37 @@ export class MetricsService implements OnModuleInit {
       help: 'Appeal SLA monitor job failures',
       registers: [this.registry],
     });
+
+    this.claimsFiledTotal = new client.Counter({
+      name: 'claims_filed_total',
+      help: 'Total claims filed',
+      registers: [this.registry],
+    });
+
+    this.claimsResolvedTotal = new client.Counter({
+      name: 'claims_resolved_total',
+      help: 'Total claims resolved, by final status',
+      labelNames: ['status'],
+      registers: [this.registry],
+    });
+
+    this.activePoliciesGauge = new client.Gauge({
+      name: 'active_policies_gauge',
+      help: 'Number of currently active policies',
+      registers: [this.registry],
+    });
+
+    this.treasuryBalanceGauge = new client.Gauge({
+      name: 'treasury_balance_gauge',
+      help: 'Treasury balance in stroops',
+      registers: [this.registry],
+    });
+
+    this.indexerLedgerLagGauge = new client.Gauge({
+      name: 'indexer_ledger_lag',
+      help: 'Ledgers between chain tip and last indexed ledger',
+      registers: [this.registry],
+    });
   }
 
   onModuleInit(): void {
@@ -441,6 +482,11 @@ export class MetricsService implements OnModuleInit {
    * Record a GraphQL query rejected for exceeding depth/complexity limits.
    * reason: 'depth' | 'complexity'
    */
+  recordIndexerLag(args: { network: string; lag: number }): void {
+    this.indexerLag.set(args.lag);
+    this.indexerLedgerLagGauge.set(args.lag);
+  }
+
   recordGraphqlComplexityRejected(reason: 'depth' | 'complexity'): void {
     this.graphqlComplexityRejectedTotal.inc({ reason });
   }

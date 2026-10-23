@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Download } from 'lucide-react'
+import { Download, Loader2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -10,7 +10,8 @@ import {
   fetchHorizonTransactions,
   type HorizonOperationRecord,
 } from '@/lib/api/horizon-transactions'
-import { downloadTransactionsCsv } from '@/lib/export-transactions-csv'
+import { buildTransactionsCsv } from '@/lib/export-transactions-csv'
+import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
 import { TransactionFilterBar } from './TransactionFilterBar'
@@ -113,8 +114,10 @@ export function HorizonTransactionList({
   const [hasMore, setHasMore] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadMoreRef = useRef<HTMLDivElement | null>(null)
+  const { toast } = useToast()
 
   const loadPage = useCallback(
     async (append: boolean, pageCursor?: string) => {
@@ -217,10 +220,38 @@ export function HorizonTransactionList({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => downloadTransactionsCsv(records)}
+            disabled={isExporting}
+            onClick={async () => {
+              setIsExporting(true)
+              try {
+                await new Promise<void>((resolve) => {
+                  const csv = buildTransactionsCsv(records)
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+                  const url = URL.createObjectURL(blob)
+                  const anchor = document.createElement('a')
+                  anchor.href = url
+                  anchor.download = `transactions-${new Date().toISOString().slice(0, 10)}.csv`
+                  document.body.appendChild(anchor)
+                  anchor.click()
+                  document.body.removeChild(anchor)
+                  URL.revokeObjectURL(url)
+                  resolve()
+                })
+                toast({
+                  title: 'Export ready',
+                  description: `${records.length} transaction${records.length !== 1 ? 's' : ''} downloaded as CSV.`,
+                })
+              } finally {
+                setIsExporting(false)
+              }
+            }}
           >
-            <Download className="mr-2 h-4 w-4" />
-            Export CSV
+            {isExporting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            {isExporting ? 'Exporting…' : 'Export CSV'}
           </Button>
         </div>
       )}

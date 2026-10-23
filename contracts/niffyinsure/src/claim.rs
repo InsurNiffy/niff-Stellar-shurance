@@ -1012,7 +1012,7 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
         return Err(Error::DisputeWindowActive);
     }
 
-    // ── EFFECTS: persist the terminal status before the external interaction ──
+    // ── EFFECTS: persist the terminal status and cap deduction before the external interaction ──
     let old_status = claim.status.clone();
     claim.status = ClaimStatus::Paid;
     push_status_transition(&mut claim.status_history, ClaimStatus::Paid, now);
@@ -1020,9 +1020,19 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
     storage::remove_claim_rate_limit_prev(env, claim_id);
     storage::set_claim(env, &claim);
 
+    // Atomically record cap deduction in the payout transaction (CEI effect before transfer)
+    crate::rolling_claim_cap::record_claim_paid(
+        env,
+        &claim.claimant,
+        claim.policy_id,
+        claim.amount,
+        now,
+    );
+
     // ── INTERACTION: token transfer. If this returns Err, the `?` below
     // aborts the whole invocation and the host rolls back every storage
-    // write made above — the claim reverts to `Approved`, never stuck `Paid`.
+    // write made above — the claim reverts to `Approved`, never stuck `Paid`,
+    // and the rolling cap accumulator deduction is rolled back atomically.
     payout(env, &mut claim)?;
 
     // Issue #1613: the reinsurance fallback inside `payout` may have set the
@@ -1040,6 +1050,13 @@ pub fn process_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
         claim.amount,
         now,
     );
+
+    // ── INTERACTION: token transfer. If this returns Err, the `?` below
+    // aborts the whole invocation and the host rolls back every storage
+    // write made above — the claim reverts to `Approved`, never stuck `Paid`,
+    // and the rolling cap accumulator deduction is rolled back atomically.
+    payout(env, &claim)?;
+
     events::emit_claim_status_changed(env, claim_id, old_status, ClaimStatus::Paid);
     Ok(())
 }
@@ -1816,8 +1833,10 @@ pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), E
         return Err(Error::AppealWindowClosed);
     }
 
-    // Cap: only one appeal allowed per claim.
-    if claim.appeals_count >= ledger::MAX_APPEALS_PER_CLAIM {
+    // Cap: admin-configurable number of appeals per claim (default
+    // ledger::MAX_APPEALS_PER_CLAIM, overridable via
+    // admin::set_max_appeals_per_claim, Issue #1605).
+    if claim.appeals_count >= storage::get_max_appeals_per_claim(env) {
         return Err(Error::AppealAlreadyUsed);
     }
 

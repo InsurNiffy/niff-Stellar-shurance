@@ -16,6 +16,8 @@
  *   root layout) to register the global error handlers.
  */
 
+import { getConsent } from '@/lib/cookie-consent';
+
 const STELLAR_ADDRESS_RE = /\bG[A-Z0-9]{54,56}\b/g;
 const SECRET_KEY_RE = /\bS[A-Z0-9]{54,56}\b/g;
 const BEARER_RE = /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi;
@@ -59,6 +61,8 @@ class BrowserLogShipper {
 
   capture(entry: Omit<BrowserLogEntry, 'timestamp' | 'url' | 'userAgent'>): void {
     if (typeof window === 'undefined') return;
+    // Block log shipping until the user has granted analytics consent
+    if (getConsent() !== 'accepted') return;
     const safeMessage = sanitize(truncate(entry.message, 500));
     const safeStack = entry.stack
       ? sanitize(truncate(entry.stack, MAX_STACK_LENGTH))
@@ -78,6 +82,11 @@ class BrowserLogShipper {
 
   flush(): void {
     if (this.buffer.length === 0) return;
+    // Drop buffered entries if consent has been revoked since they were captured
+    if (getConsent() !== 'accepted') {
+      this.buffer.length = 0;
+      return;
+    }
     const entries = this.buffer.splice(0);
     const body = JSON.stringify({ entries });
     if (navigator.sendBeacon) {

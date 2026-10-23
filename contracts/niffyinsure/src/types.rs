@@ -254,6 +254,36 @@ pub enum ClaimStatus {
     PayoutFailed = 12,
 }
 
+/// Compile-time guard (Issue #1615): classifies every `ClaimStatus` variant as
+/// "live" (reachable through normal contract execution) or reserved/never
+/// constructed. The match is exhaustive **by variant name**, not behind
+/// `matches!`, so adding a new `ClaimStatus` variant without adding an arm
+/// here is a compile error — forcing whoever adds it to explicitly decide
+/// whether it is live or reserved. `Appealed` is pinned to `false` on purpose;
+/// see the doc comment on the variant for why it must never be constructed.
+const fn is_live_claim_status(status: &ClaimStatus) -> bool {
+    match status {
+        ClaimStatus::Processing
+        | ClaimStatus::Pending
+        | ClaimStatus::Approved
+        | ClaimStatus::PayoutTimeout
+        | ClaimStatus::Paid
+        | ClaimStatus::Rejected
+        | ClaimStatus::UnderAppeal
+        | ClaimStatus::AppealApproved
+        | ClaimStatus::AppealRejected
+        | ClaimStatus::Withdrawn
+        | ClaimStatus::Disputed => true,
+        // RESERVED — never constructed. Do not change this to `true`.
+        ClaimStatus::Appealed => false,
+    }
+}
+
+// Force the guard above to be evaluated at compile time: if `Appealed` is
+// ever accidentally flipped to "live", or if a future variant is added
+// without updating `is_live_claim_status`, this fails to build.
+const _: () = assert!(!is_live_claim_status(&ClaimStatus::Appealed));
+
 impl ClaimStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
@@ -560,6 +590,11 @@ pub struct Subscription {
     pub pet_ids: Vec<u64>,
     /// Ledger at which this subscription expires.
     pub expires_at: u32,
+    /// Off-chain callback/notification address for this subscription. Must be
+    /// present on the `AllowedPayoutRecipient` allowlist at registration time
+    /// (see Issue #1617) so subscriptions cannot be used to probe or spam
+    /// arbitrary addresses.
+    pub callback: Address,
 }
 
 // ── Vet specialization ────────────────────────────────────────────────────────

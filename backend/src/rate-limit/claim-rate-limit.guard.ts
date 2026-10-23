@@ -8,7 +8,7 @@ import { RateLimitException } from './rate-limit.exception';
  * ClaimRateLimitGuard — per-wallet sliding window rate limit for claim filing.
  *
  * Enforces:
- *   MAX_CLAIMS_PER_WALLET_PER_HOUR  (env, default 5)
+ *   MAX_CLAIMS_PER_WALLET_PER_HOUR  (env, default 3)
  *   MAX_CLAIMS_PER_WALLET_PER_DAY   (env, default 20)
  *
  * Returns 429 with Retry-After and X-RateLimit-* headers on limit exceeded.
@@ -30,7 +30,7 @@ export class ClaimRateLimitGuard implements CanActivate {
     const wallet = req.user?.walletAddress ?? req.body?.holder;
     if (!wallet) return true; // let auth guard handle missing wallet
 
-    const hourLimit = this.config.get<number>('MAX_CLAIMS_PER_WALLET_PER_HOUR', 5);
+    const hourLimit = this.config.get<number>('MAX_CLAIMS_PER_WALLET_PER_HOUR', 3);
     const dayLimit = this.config.get<number>('MAX_CLAIMS_PER_WALLET_PER_DAY', 20);
 
     try {

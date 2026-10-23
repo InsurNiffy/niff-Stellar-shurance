@@ -70,6 +70,28 @@ Bull Board is available at `/admin/queues` (requires admin JWT):
 
 ---
 
+## Admin DLQ Endpoints
+
+Both endpoints require an admin JWT (`JwtAuthGuard` + `AdminRoleGuard`) and are
+subject to the admin IP allowlist.
+
+| Method | Path | Min role | Description |
+|--------|------|----------|-------------|
+| `GET`  | `/admin/queues/:queueName/failed?start=0&end=49` | `viewer` | List failed jobs (id, name, data, failedReason, attemptsMade, timestamps) |
+| `POST` | `/admin/queues/:queueName/failed/:jobId/retry` | default admin role | Move a failed job back to waiting; writes a `dlq_job_replayed` audit row |
+
+Unknown queue or job ids return `404`.
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_JWT" \
+  https://api.niffyinsure.com/admin/queues/notifications/failed
+
+curl -X POST -H "Authorization: Bearer $ADMIN_JWT" \
+  https://api.niffyinsure.com/admin/queues/notifications/failed/1234/retry
+```
+
+---
+
 ## Replay Procedure
 
 ### Option A — API (recommended for single jobs)

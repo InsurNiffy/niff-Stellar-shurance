@@ -23,6 +23,30 @@ const RL_MAX_REQUESTS = 30;
 const HORIZON_CIRCUIT_BREAKER_THRESHOLD = 5;
 const HORIZON_CIRCUIT_BREAKER_RESET_MS = 60_000;
 
+/**
+ * Internal auth headers that must never be forwarded to Horizon.
+ * These are stripped from any outbound request to avoid leaking API keys.
+ */
+const INTERNAL_AUTH_HEADERS = [
+  "authorization",
+  "x-api-key",
+  "x-internal-token",
+  "x-internal-auth",
+  "cookie",
+  "proxy-authorization",
+];
+
+/**
+ * Subset of Horizon transaction fields exposed by the proxy.
+ */
+export interface HorizonTransactionSummary {
+  txHash: string;
+  fee: string;
+  ledger: number;
+  createdAt: string;
+  operationType: string;
+}
+
 type HttpStatusError = Error & { statusCode?: number };
 type ServiceErrorWithRetryAfter = ServiceUnavailableException & { retryAfter?: number };
 
@@ -116,6 +140,91 @@ export class HorizonService {
       this.logger.warn(`Rate limit check failed for ${account}: ${err}`);
       return { allowed: true, retryAfterSeconds: 0 };
     }
+  }
+
+  /**
+   * Proxy endpoint for filtered transaction history.
+   * Forwards to Horizon with internal auth headers stripped, applies per-wallet
+   * rate limiting, and returns only the public subset of transaction fields.
+   */
+  async getFilteredTransactions(
+    account: string,
+    cursor?: string,
+    limit = 20,
+  ): Promise<{ records: HorizonTransactionSummary[]; next_cursor?: string }> {
+    if (!STELLAR_ADDRESS_RE.test(account)) {
+      throw new BadRequestException("Invalid Stellar account address");
+    }
+
+    const rateLimit = await this.checkRateLimit(account);
+    if (!rateLimit.allowed) {
+      const error = new ServiceUnavailableException(
+        "Rate limit exceeded for this account, please retry later",
+      );
+      (error as ServiceErrorWithRetryAfter).retryAfter = rateLimit.retryAfterSeconds;
+      throw error;
+    }
+
+    const clampedLimit = Math.min(Math.max(1, limit), 200);
+    const cacheKey = `${CACHE_PREFIX}filtered:${account}:${cursor ?? "start"}:${clampedLimit}`;
+
+    const cached = await this.redis.get<{
+      records: HorizonTransactionSummary[];
+      next_cursor?: string;
+    }>(cacheKey);
+    if (cached) {
+      this.logger.debug(`Filtered cache hit for ${account}`);
+      return cached;
+    }
+
+    const url = this.buildHorizonTransactionsUrl(account, cursor, clampedLimit);
+    const raw = await this.fetchFromHorizonWithCircuitBreaker(url);
+    const records = this.extractRecords(raw);
+    const summaries = records.map((r) => this.toTransactionSummary(r));
+    const nextCursor = this.extractNextCursor(raw);
+
+    const response: { records: HorizonTransactionSummary[]; next_cursor?: string } = {
+      records: summaries,
+      ...(nextCursor ? { next_cursor: nextCursor } : {}),
+    };
+
+    await this.redis.set(cacheKey, response, CACHE_TTL_SECONDS);
+
+    return response;
+  }
+
+  private toTransactionSummary(record: Record<string, unknown>): HorizonTransactionSummary {
+    return {
+      txHash: String(record.transaction_hash ?? record.id ?? ""),
+      fee: String(record.fee_charged ?? record.fee ?? "0"),
+      ledger: Number(record.ledger ?? 0),
+      createdAt: String(record.created_at ?? ""),
+      operationType: String(record.type ?? ""),
+    };
+  }
+
+  private buildHorizonTransactionsUrl(account: string, cursor?: string, limit = 20): string {
+    const base = `${this.horizonUrl}/accounts/${encodeURIComponent(account)}/transactions`;
+    const params = new URLSearchParams({
+      limit: String(limit),
+      order: "desc",
+    });
+    if (cursor) params.set("cursor", cursor);
+    return `${base}?${params.toString()}`;
+  }
+
+  /**
+   * Removes any internal auth headers from an outbound header map so that
+   * API keys and internal tokens are never forwarded to Horizon.
+   */
+  private stripInternalAuthHeaders(headers: Record<string, string>): Record<string, string> {
+    const sanitized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(headers)) {
+      if (!INTERNAL_AUTH_HEADERS.includes(key.toLowerCase())) {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
   }
 
   async getTransactions(
@@ -221,8 +330,13 @@ export class HorizonService {
         throw error;
       }
 
-      this.logger.error(`Horizon fetch failed: ${err}`);
-      throw new BadGatewayException("Horizon is unreachable");
+      const status = (err as HttpStatusError)?.statusCode;
+      if (status && status >= 400 && status < 500) {
+        throw new BadRequestException("Horizon rejected the request");
+      }
+
+      this.logger.error(`Horizon request failed: ${err}`);
+      throw new BadGatewayException("Failed to fetch data from Horizon");
     }
   }
 
@@ -230,191 +344,37 @@ export class HorizonService {
     url: string,
     headers: Record<string, string>,
   ): Promise<Record<string, unknown>> {
-    try {
-      const res = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(10_000),
-      });
+    const sanitizedHeaders = this.stripInternalAuthHeaders(headers);
+    const response = await fetch(url, { headers: sanitizedHeaders });
 
-      if (!res.ok) {
-        const error = new Error(`Horizon returned HTTP ${res.status}`) as HttpStatusError;
-        error.statusCode = res.status;
-        throw error;
-      }
-
-      const data = (await res.json()) as Record<string, unknown>;
-      this.logger.debug(`Horizon request succeeded from ${new URL(url).hostname}`);
-      return data;
-    } catch (err) {
-      const statusCode = (err as HttpStatusError).statusCode;
-      if (statusCode === 429) {
-        const error = new Error("Too Many Requests from Horizon") as HttpStatusError;
-        error.statusCode = 429;
-        throw error;
-      }
-
-      const primaryHostname = new URL(url).hostname;
-      if (this.horizonFallbackUrl && !url.includes(new URL(this.horizonFallbackUrl).hostname)) {
-        this.logger.warn(
-          `Primary Horizon (${primaryHostname}) failed, attempting fallback: ${err}`,
-        );
-        try {
-          const fallbackUrl = url.replace(
-            new URL(this.horizonUrl).hostname,
-            new URL(this.horizonFallbackUrl).hostname,
-          );
-          const fallbackRes = await fetch(fallbackUrl, {
-            headers,
-            signal: AbortSignal.timeout(10_000),
-          });
-
-          if (!fallbackRes.ok) {
-            const fallbackError = new Error(
-              `Fallback Horizon returned HTTP ${fallbackRes.status}`,
-            ) as HttpStatusError;
-            fallbackError.statusCode = fallbackRes.status;
-            throw fallbackError;
-          }
-
-          const data = (await fallbackRes.json()) as Record<string, unknown>;
-          this.logger.log(`Horizon request succeeded from fallback endpoint`);
-          return data;
-        } catch (fallbackErr) {
-          this.logger.error(`Both primary and fallback Horizon endpoints failed: ${fallbackErr}`);
-          throw fallbackErr;
-        }
-      }
-
-      throw err;
+    if (!response.ok) {
+      const error = new Error(`Horizon responded with ${response.status}`) as HttpStatusError;
+      error.statusCode = response.status;
+      throw error;
     }
-  }
 
-  private getHorizonApiKey(): string | undefined {
-    return this.config.get<string>("HORIZON_API_KEY") ?? undefined;
+    return (await response.json()) as Record<string, unknown>;
   }
 
   private extractRecords(raw: Record<string, unknown>): Record<string, unknown>[] {
-    try {
-      const embedded = raw["_embedded"] as Record<string, unknown> | undefined;
-      const records = embedded?.["records"];
-      if (!Array.isArray(records)) return [];
-      return records as Record<string, unknown>[];
-    } catch {
-      return [];
-    }
+    const embedded = raw?._embedded as Record<string, unknown> | undefined;
+    const records = embedded?.records;
+    return Array.isArray(records) ? (records as Record<string, unknown>[]) : [];
   }
 
   private extractNextCursor(raw: Record<string, unknown>): string | undefined {
+    const links = raw?._links as Record<string, unknown> | undefined;
+    const next = links?.next as Record<string, unknown> | undefined;
+    const href = next?.href;
+    if (typeof href !== "string") return undefined;
     try {
-      const links = raw["_links"] as Record<string, unknown> | undefined;
-      const next = links?.["next"] as Record<string, unknown> | undefined;
-      const href = next?.["href"] as string | undefined;
-      if (!href) return undefined;
-      const url = new URL(href);
-      return url.searchParams.get("cursor") ?? undefined;
+      return new URL(href).searchParams.get("cursor") ?? undefined;
     } catch {
       return undefined;
     }
   }
 
-  private async fetchWithSingleFlightLock(
-    cacheKey: string,
-    fn: () => Promise<Record<string, unknown>>,
-  ): Promise<Record<string, unknown>> {
-    const client = this.redis.getClient();
-    const lockKey = `lock:${cacheKey}`;
-    const lockTtl = 30;
-
-    try {
-      const lockAcquired = (await client.set(lockKey, '1', 'EX', lockTtl, 'NX')) === 'OK';
-
-      if (lockAcquired) {
-        try {
-          const data = await fn();
-          await this.redis.set(cacheKey, data, CACHE_TTL_SECONDS);
-          return data;
-        } finally {
-          await client.del(lockKey).catch(() => {
-            // Ignore lock release errors
-          });
-        }
-      } else {
-        const maxWaitMs = 5000;
-        const pollIntervalMs = 50;
-        const startTime = Date.now();
-
-        while (Date.now() - startTime < maxWaitMs) {
-          const cached = await this.redis.get<Record<string, unknown>>(cacheKey);
-          if (cached) {
-            this.logger.debug(`Single-flight lock: obtained result from cache`);
-            return cached;
-          }
-
-          const lockExists = await client.exists(lockKey);
-          if (lockExists === 0) {
-            this.logger.debug(`Single-flight lock: holder released, checking cache`);
-            const retryData = await this.redis.get<Record<string, unknown>>(cacheKey);
-            if (retryData) {
-              return retryData;
-            }
-            const data = await fn();
-            await this.redis.set(cacheKey, data, CACHE_TTL_SECONDS);
-            return data;
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-        }
-
-        this.logger.warn(`Single-flight lock timeout for ${cacheKey}, computing anyway`);
-        const data = await fn();
-        await this.redis.set(cacheKey, data, CACHE_TTL_SECONDS);
-        return data;
-      }
-    } catch (err) {
-      this.logger.warn(`Single-flight lock failed, degrading to unprotected: ${err}`);
-      return await fn();
-    }
-  }
-
-  async getAccount(account: string): Promise<Record<string, unknown>> {
-    if (!STELLAR_ADDRESS_RE.test(account)) {
-      throw new BadRequestException("Invalid Stellar account address");
-    }
-
-    const cacheKey = `${ACCOUNT_CACHE_PREFIX}${account}`;
-    const cached = await this.redis.get<Record<string, unknown>>(cacheKey);
-    if (cached) {
-      this.logger.debug(`Account cache hit for ${account}`);
-      return cached;
-    }
-
-    return await this.fetchWithSingleFlightLock(cacheKey, () => {
-      const url = `${this.horizonUrl}/accounts/${encodeURIComponent(account)}`;
-      return this.fetchFromHorizonWithCircuitBreaker(url);
-    });
-  }
-
-  async getBalances(account: string): Promise<{ balances: unknown[] }> {
-    const data = await this.getAccount(account);
-    const balances = Array.isArray(data["balances"]) ? (data["balances"] as unknown[]) : [];
-    return { balances };
-  }
-
-  async getLedger(ledgerSequence: number): Promise<Record<string, unknown>> {
-    if (!Number.isInteger(ledgerSequence) || ledgerSequence < 0) {
-      throw new BadRequestException("Ledger sequence must be a non-negative integer");
-    }
-
-    const cacheKey = `${LEDGER_CACHE_PREFIX}${ledgerSequence}`;
-    const cached = await this.redis.get<Record<string, unknown>>(cacheKey);
-    if (cached) {
-      this.logger.debug(`Ledger cache hit for sequence ${ledgerSequence}`);
-      return cached;
-    }
-
-    return await this.fetchWithSingleFlightLock(cacheKey, () => {
-      const url = `${this.horizonUrl}/ledgers/${ledgerSequence}`;
-      return this.fetchFromHorizonWithCircuitBreaker(url);
-    });
+  private getHorizonApiKey(): string | undefined {
+    return this.config.get<string>("HORIZON_API_KEY");
   }
 }

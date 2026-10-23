@@ -2,9 +2,8 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-  HttpException,
-  HttpStatus,
 } from '@nestjs/common';
+import { AppException } from '../../common/errors';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { SanitizationService } from '../sanitization.service';
@@ -37,10 +36,10 @@ export class CommentService {
     const rateLimitKey = `comment:${authorAddress.toLowerCase()}:${claimId}`;
     const { allowed, retryAfterSeconds } = await this.rateLimit.checkWalletLimit(rateLimitKey);
     if (!allowed) {
-      throw new HttpException(
-        `Rate limit exceeded. Retry after ${retryAfterSeconds}s.`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+      throw new AppException('RATE_LIMIT_EXCEEDED', {
+        message: `Rate limit exceeded. Retry after ${retryAfterSeconds}s.`,
+        details: { retryAfter: retryAfterSeconds },
+      });
     }
 
     const sanitizedBody = this.sanitization.sanitizeDescription(body);

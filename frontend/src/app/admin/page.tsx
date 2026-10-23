@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { TreasuryHealthCard } from '@/components/admin/TreasuryHealthCard'
 import { useAuth } from '@/lib/hooks/useAuth'
 import {
   adminApi,
@@ -138,6 +139,7 @@ export default function AdminPage() {
       <div className="grid gap-6 md:grid-cols-2">
         <SolvencyWidget jwt={jwt} />
         <ReindexWidget jwt={jwt} />
+        <TreasuryHealthCard jwt={jwt} />
       </div>
       <EvidenceLimitsWidget jwt={jwt} />
       <FeatureFlagsWidget jwt={jwt} />
