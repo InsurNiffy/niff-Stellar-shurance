@@ -356,8 +356,11 @@ impl NiffyInsure {
         soroban_sdk::BytesN::from_array(&env, &[0u8; 32])
     }
 
-    /// Read-only: balance of the default payout token held by this contract (payout reserve).
-    /// Matches funds available for `process_claim` for the configured default asset.
+    /// Read-only: SEP-41 balance of the configured default asset held by the
+    /// `Treasury` address (defaults to this contract's own address until
+    /// `set_treasury` is called). Pairs with `get_min_solvency_ratio_bps()`
+    /// for off-chain solvency monitoring (Issue #1604): the admin dashboard's
+    /// solvency widget and the `treasury.balance_low` webhook both poll this.
     pub fn get_treasury_balance(env: Env) -> i128 {
         let token_addr = storage::get_token(&env);
         crate::token::get_treasury_balance(&env, &token_addr)
@@ -1061,6 +1064,18 @@ impl NiffyInsure {
 
     pub fn get_proposal(env: Env, proposal_id: u64) -> Option<Proposal> {
         governance::get_proposal(&env, proposal_id)
+    }
+
+    /// Permissionless keeper: close out a proposal whose voting deadline has
+    /// passed without reaching quorum, removing it and emitting
+    /// `proposal_expired`. Anyone may call this to keep governance state
+    /// tidy; it is a no-op guard against re-finalizing an already-closed or
+    /// already-applied proposal.
+    pub fn finalize_governance_proposal(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<(), GovernanceError> {
+        governance::finalize_governance_proposal(&env, proposal_id)
     }
 
     /// Admin-only: set the per-proposer cooldown (ledgers between proposals from same address).
@@ -1945,6 +1960,21 @@ impl NiffyInsure {
     /// Read the current cooldown window in ledgers (falls back to 0 when unset).
     pub fn get_cooldown_ledgers(env: Env) -> u32 {
         storage::get_cooldown_ledgers(&env)
+    }
+
+    /// Admin-only: set the maximum number of appeals allowed per claim.
+    /// Must be in `[1, 3]`. Was previously hardcoded to 1.
+    pub fn admin_set_max_appeals_per_claim(
+        env: Env,
+        new_cap: u32,
+    ) -> Result<(), AdminError> {
+        admin::set_max_appeals_per_claim(&env, new_cap)
+    }
+
+    /// Read the current max-appeals-per-claim cap (falls back to
+    /// `ledger::MAX_APPEALS_PER_CLAIM` when unset).
+    pub fn get_max_appeals_per_claim(env: Env) -> u32 {
+        storage::get_max_appeals_per_claim(&env)
     }
 
     /// Admin-only: update the allowlisted IPFS gateway URL prefixes for evidence validation.
