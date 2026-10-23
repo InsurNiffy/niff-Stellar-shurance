@@ -22,9 +22,9 @@ import {
   CanActivate,
   ExecutionContext,
   HttpException,
-  HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { AppException } from '../common/errors';
 import { Reflector } from '@nestjs/core';
 import { Request, Response } from 'express';
 import {
@@ -86,15 +86,10 @@ export class HttpRateLimitGuard implements CanActivate {
           'X-RateLimit-Reset',
           String(Math.floor(Date.now() / 1000) + retryAfterSeconds),
         );
-        throw new HttpException(
-          {
-            statusCode: HttpStatus.TOO_MANY_REQUESTS,
-            error: 'Too Many Requests',
-            message: 'Rate limit exceeded.',
-            retryAfter: retryAfterSeconds,
-          },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
+        throw new AppException('RATE_LIMIT_EXCEEDED', {
+          message: 'Rate limit exceeded.',
+          details: { retryAfter: retryAfterSeconds },
+        });
       }
 
       return true;

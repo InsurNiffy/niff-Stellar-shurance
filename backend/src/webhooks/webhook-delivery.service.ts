@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OutboundWebhookJob } from './outbound.queue';
 import { signRawBody, SIGNATURE_HEADER } from './signature';
 import { backoffDelayMs, isExhausted } from './backoff';
+import { WebhookDlqService } from './webhook-dlq.service';
 
 /** Injection token for the HTTP poster — tests inject a fake transport. */
 export const WEBHOOK_HTTP_POST = 'WEBHOOK_HTTP_POST';
@@ -50,6 +51,7 @@ export class WebhookDeliveryService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() @Inject(WEBHOOK_HTTP_POST) private readonly httpPost: HttpPostFn = defaultHttpPost,
+    @Optional() private readonly dlq?: WebhookDlqService,
   ) {}
 
   /** Performs one delivery attempt and records it. Never throws. */
@@ -103,6 +105,7 @@ export class WebhookDeliveryService {
           `attempt=${attempt} code=${result.responseCode ?? 'n/a'} ` +
           (exhausted ? 'retries exhausted' : `next retry in ${delay}ms`),
       );
+      if (exhausted) await this.dlq?.add(job, attempt, result.error);
     }
 
     return result;

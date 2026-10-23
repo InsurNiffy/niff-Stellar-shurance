@@ -161,7 +161,8 @@ npm run test:e2e
 ```bash
 npm run env:example:generate   # regenerate .env.example from env.definitions.ts
 npm run env:example:check      # verify .env.example is not drifted
-npm run export-spec            # regenerate backend/openapi.json from DTOs
+npm run openapi:generate       # regenerate backend/openapi.json from DTOs
+npm run openapi:check          # regenerate and fail if openapi.json is stale
 npm run error-catalog:check    # verify error codes are consistent
 ```
 
@@ -171,11 +172,13 @@ If you modify a backend DTO (request/response body), the OpenAPI spec must be re
 
 ```bash
 cd backend
-npm run export-spec
+npm run openapi:generate
 git add openapi.json
+cd ..
+make generate-client   # sync the TypeScript client with the new spec
 ```
 
-CI will fail if the spec drifts from the committed version. Always regenerate and commit the updated file when DTOs change.
+The `Backend CI` workflow regenerates the spec on every PR and fails if it differs from the committed `backend/openapi.json`. Always regenerate and commit the updated spec (and the regenerated frontend client) when DTOs change.
 
 ### Fixing CI: `unit-tests` job
 
@@ -183,7 +186,7 @@ CI will fail if the spec drifts from the committed version. Always regenerate an
 |---|---|
 | `npm test` fails | Run `npm test` locally and fix the failing test |
 | `.env.example` drift | Run `npm run env:example:generate` and commit the updated file |
-| OpenAPI spec drift | Run `npm run export-spec` and commit the updated `backend/openapi.json` |
+| OpenAPI spec drift | Run `npm run openapi:generate`, commit the updated `backend/openapi.json`, then run `make generate-client` from the repo root |
 | `npm audit` high/critical | Update or patch the flagged dependency |
 
 ### Fixing CI: `address-normalization` job

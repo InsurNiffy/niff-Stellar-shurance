@@ -56,6 +56,19 @@ pub struct ProposalResolved {
     pub at_ledger: u32,
 }
 
+/// Emitted by `finalize_governance_proposal` when an expired, unresolved
+/// proposal is permissionlessly closed out past its voting deadline.
+/// topics: ("niffyinsure", "proposal_expired", proposal_id)
+#[contractevent(topics = ["niffyinsure", "proposal_expired"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalExpired {
+    #[topic]
+    pub proposal_id: u64,
+    pub version: u32,
+    pub param_key: String,
+    pub at_ledger: u32,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -273,28 +286,30 @@ pub fn get_proposal(env: &Env, proposal_id: u64) -> Option<Proposal> {
     storage::get_proposal(env, proposal_id)
 }
 
-/// Permissionless keeper (Issue #1600): auto-reject a governance proposal
-/// once its voting `deadline` (a ledger sequence) has passed without
-/// reaching quorum. Anyone may call this — no `require_auth` is needed
-/// since it only tidies up state that is already, objectively expired.
+/// Permissionless keeper entrypoint: auto-reject a proposal once its voting
+/// deadline (`proposal.deadline`, a ledger sequence) has passed without
+/// reaching quorum. Anyone may call this — no auth is required beyond the
+/// call itself, since it only closes out an already-expired proposal.
 ///
 /// Guards:
-/// - `ProposalNotFound` if the proposal does not exist (also covers a
-///   proposal already removed by a prior finalize, vote-triggered rejection,
-///   or resolution).
-/// - `ProposalAlreadyApplied` if the proposal already passed quorum and took
-///   effect — an applied proposal is never eligible for expiry rejection.
-/// - `ProposalNotExpired` if called at or before `deadline`.
+/// - Errors with `ProposalNotFound` if the proposal doesn't exist (including
+///   proposals already removed by a prior finalize/reject/expiry).
+/// - Errors with `ProposalAlreadyClosed` if the proposal was already applied
+///   (passed quorum and took effect) — finalizing an applied proposal is
+///   never valid.
+/// - Errors with `ProposalNotExpired` if called before `deadline` has passed.
 ///
-/// On success the proposal is removed from storage (same convention already
-/// used by `vote_proposal` when a vote lands after the deadline) and a
-/// `ProposalExpired` event is emitted.
-pub fn finalize_governance_proposal(env: &Env, proposal_id: u64) -> Result<(), GovernanceError> {
+/// On success the proposal is removed from storage and a `ProposalExpired`
+/// event is emitted.
+pub fn finalize_governance_proposal(
+    env: &Env,
+    proposal_id: u64,
+) -> Result<(), GovernanceError> {
     let proposal =
         storage::get_proposal(env, proposal_id).ok_or(GovernanceError::ProposalNotFound)?;
 
     if proposal.applied {
-        return Err(GovernanceError::ProposalAlreadyApplied);
+        return Err(GovernanceError::ProposalAlreadyClosed);
     }
 
     let now = env.ledger().sequence();
@@ -307,7 +322,7 @@ pub fn finalize_governance_proposal(env: &Env, proposal_id: u64) -> Result<(), G
     ProposalExpired {
         proposal_id,
         version: EVENT_SCHEMA_VERSION,
-        param_key: proposal.param_key,
+        param_key: proposal.param_key.clone(),
         proposed_value: proposal.proposed_value,
         deadline: proposal.deadline,
         at_ledger: now,

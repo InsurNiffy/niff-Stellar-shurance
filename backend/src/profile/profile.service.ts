@@ -1,3 +1,4 @@
+import EventEmitter from 'events';
 import { Injectable, ConflictException, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,6 +9,11 @@ import type { HolderProfile } from '@prisma/client';
 
 /** Fields written to the audit log with masked values. */
 const SENSITIVE_FIELDS = new Set<string>(['email']);
+
+/** In-process bus for privacy lifecycle events (e.g. `privacy.erasure_completed`). */
+export const privacyBus = new EventEmitter();
+
+export const ANONYMIZED_DISPLAY_NAME = '[deleted]';
 
 @Injectable()
 export class ProfileService {
@@ -35,6 +41,7 @@ export class ProfileService {
 
       const updateData = {
         ...(dto.displayName !== undefined && { displayName: dto.displayName }),
+        ...(dto.avatarUrl !== undefined && { avatarUrl: dto.avatarUrl }),
         ...(dto.email !== undefined && { email: dto.email }),
         ...(dto.locale !== undefined && { locale: dto.locale }),
         ...(notifPrefs !== undefined && { notificationPreferences: notifPrefs }),
@@ -48,6 +55,7 @@ export class ProfileService {
         create: {
           walletAddress,
           displayName: dto.displayName,
+          avatarUrl: dto.avatarUrl,
           email: dto.email,
           locale: dto.locale,
           notificationPreferences: notifPrefs ?? Prisma.JsonNull,
@@ -61,6 +69,33 @@ export class ProfileService {
       }
       throw err;
     }
+  }
+
+  /**
+   * GDPR right-to-erasure (Art. 17) for off-chain data: anonymizes the profile's
+   * displayName/email and soft-deletes every ClaimComment authored by the wallet.
+   * On-chain data is immutable and outside the scope of this operation.
+   */
+  async erase(walletAddress: string): Promise<{ commentsDeleted: number }> {
+    const now = new Date();
+    const [, comments] = await this.prisma.$transaction([
+      this.prisma.holderProfile.updateMany({
+        where: { walletAddress },
+        data: { displayName: ANONYMIZED_DISPLAY_NAME, email: null },
+      }),
+      this.prisma.claimComment.updateMany({
+        where: { authorAddress: walletAddress, deletedAt: null },
+        data: { deletedAt: now, deletedBy: walletAddress },
+      }),
+    ]);
+
+    privacyBus.emit('privacy.erasure_completed', {
+      walletAddress,
+      commentsDeleted: comments.count,
+      completedAt: now.toISOString(),
+    });
+
+    return { commentsDeleted: comments.count };
   }
 
   /**
@@ -88,6 +123,7 @@ export class ProfileService {
 
     const fieldMap = {
       displayName: dto.displayName,
+      avatarUrl: dto.avatarUrl,
       email: dto.email,
       locale: dto.locale,
       notificationPreferences: dto.notificationPreferences,

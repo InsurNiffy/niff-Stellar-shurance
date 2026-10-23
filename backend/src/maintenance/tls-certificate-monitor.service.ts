@@ -5,6 +5,14 @@ import { CertificateCheckerService, CertificateCheckResult } from '../common/tls
 import { RedisService } from '../cache/redis.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { Gauge, register } from 'prom-client';
+
+const tlsCertExpiryDays = new Gauge({
+  name: 'tls_cert_expiry_days',
+  help: 'Days remaining until the TLS certificate for a domain expires',
+  labelNames: ['domain'],
+  registers: [register],
+});
 
 /**
  * Alert tier types for certificate expiry.
@@ -148,6 +156,8 @@ export class TlsCertificateMonitorService {
         );
         continue;
       }
+
+      tlsCertExpiryDays.set({ domain: hostname }, daysRemaining!);
 
       if (status === 'ok') {
         this.logger.debug(
@@ -324,7 +334,7 @@ export class TlsCertificateMonitorService {
 
   /**
    * Load endpoint configuration from file or environment variable.
-   * Priority: TLS_ENDPOINTS_JSON env var > config/tls-endpoints.json file > empty
+   * Priority: TLS_ENDPOINTS_JSON env var > config/tls-endpoints.example.json file > empty
    */
   private async loadEndpointsConfig(): Promise<TlsEndpointConfig[]> {
     // Try environment variable first.
@@ -340,7 +350,7 @@ export class TlsCertificateMonitorService {
     // Try config file.
     const configPath = this.config.get<string>(
       'TLS_ENDPOINTS_CONFIG_PATH',
-      'config/tls-endpoints.json',
+      'config/tls-endpoints.example.json',
     );
     try {
       const content = await fs.readFile(configPath, 'utf-8');

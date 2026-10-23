@@ -3,6 +3,7 @@ import { createLogger, format, transports, Logger } from 'winston';
 import { ConfigService } from '@nestjs/config';
 import type { TransformableInfo } from 'logform';
 import { LokiTransport } from './loki.transport';
+import { getRequestId } from '../../logging/request-context.store';
 
 /**
  * Sensitive header / field names that must never appear in log output.
@@ -136,6 +137,7 @@ export function redactBody(
  * | message      | string  | Human-readable summary                           |
  * | service      | string  | Always "niffyinsure-api"                         |
  * | requestId    | string  | Correlation ID (x-request-id or generated)       |
+ * | correlation_id | string | Request correlation ID (every in-request line)   |
  * | method       | string  | HTTP verb                                        |
  * | url          | string  | Request path (no query string for PII safety)    |
  * | statusCode   | number  | HTTP response status                             |
@@ -183,6 +185,13 @@ export class AppLoggerService implements LoggerService {
       format: format.combine(
         format.timestamp(),
         format.errors({ stack: true }),
+        format((info) => {
+          const correlationId = getRequestId();
+          if (correlationId && info.correlation_id === undefined) {
+            info.correlation_id = correlationId;
+          }
+          return info;
+        })(),
         format((info) => redactLogInfo(info))(),
         // OTel extension point: add traceId/spanId here from active context
         format.json(),
