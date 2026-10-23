@@ -170,6 +170,20 @@ export interface TransactionBuildResult {
   unsignedXdr: string
 }
 
+export interface ProtocolParams {
+  quorumBps: number
+  votingDurationLedgers: number
+  gracePeriodLedgers: number
+  fraudScoreThreshold: number
+  rollingClaimCap: string
+}
+
+export interface ProtocolParamsSnapshot {
+  /** Contract version reported by get_contract_version. */
+  contractVersion: string
+  params: ProtocolParams
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────
 
 export const adminApi = {
@@ -339,6 +353,19 @@ export const adminApi = {
     apiFetch<void>(`${base()}/delegations/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers: authHeaders(jwt),
+    }),
+
+  /** Current on-chain protocol parameters, read via get_contract_version simulation. */
+  getProtocolParams: (jwt: string) =>
+    apiFetch<ProtocolParamsSnapshot>(`${base()}/protocol-params`, {
+      headers: authHeaders(jwt),
+    }),
+
+  updateProtocolParams: (jwt: string, params: Partial<ProtocolParams>) =>
+    apiFetch<TransactionBuildResult>(`${base()}/protocol-params`, {
+      method: 'PUT',
+      headers: authHeaders(jwt),
+      body: JSON.stringify(params),
     }),
 
   getEvidenceLimits: (jwt: string) =>
