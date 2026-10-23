@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GqlExecutionContext } from '@nestjs/graphql';
+import { AppException } from '../common/errors';
 import { AuthIdentityService } from '../auth/auth-identity.service';
 import { RedisService } from '../cache/redis.service';
 import type { GraphqlContext } from './graphql.context';
@@ -36,10 +37,9 @@ export class GraphqlRateLimitGuard implements CanActivate {
       }
 
       if (count > this.limit) {
-        throw new HttpException(
-          'GraphQL operation rate limit exceeded',
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
+        throw new AppException('RATE_LIMIT_EXCEEDED', {
+          message: 'GraphQL operation rate limit exceeded',
+        });
       }
     } catch (error) {
       if (error instanceof HttpException && error.getStatus() === HttpStatus.TOO_MANY_REQUESTS) {

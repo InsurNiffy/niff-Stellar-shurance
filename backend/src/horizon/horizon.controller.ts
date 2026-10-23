@@ -5,12 +5,12 @@ import {
   Param,
   HttpCode,
   HttpStatus,
-  HttpException,
   Logger,
   Res,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type { Response } from "express";
+import { AppException } from "../common/errors";
 import { HorizonService } from "./horizon.service";
 import { HorizonTransactionResponse } from "./dto/horizon-transaction.dto";
 
@@ -47,21 +47,16 @@ export class HorizonController {
   ): Promise<HorizonTransactionResponse> {
     const limit = limitStr !== undefined ? parseInt(limitStr, 10) : 20;
     if (limitStr !== undefined && isNaN(limit)) {
-      throw new HttpException("limit must be a number", HttpStatus.BAD_REQUEST);
+      throw new AppException("VALIDATION_ERROR", { message: "limit must be a number" });
     }
 
     const rl = await this.horizonService.checkRateLimit(address);
     if (!rl.allowed) {
       res?.setHeader("Retry-After", String(rl.retryAfterSeconds));
-      throw new HttpException(
-        {
-          statusCode: 429,
-          error: "Too Many Requests",
-          message: "Rate limit exceeded for this account. Please slow down.",
-          retryAfter: rl.retryAfterSeconds,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+      throw new AppException("RATE_LIMIT_EXCEEDED", {
+        message: "Rate limit exceeded for this account. Please slow down.",
+        details: { retryAfter: rl.retryAfterSeconds },
+      });
     }
 
     try {
