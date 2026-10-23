@@ -11,7 +11,8 @@
  * ISO 3166-1 alpha-2 codes).
  */
 
-import { Injectable, CanActivate, ExecutionContext, HttpException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { AppException } from '../common/errors';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 
@@ -33,14 +34,9 @@ export class GeoBlockGuard implements CanActivate {
       .filter(Boolean);
 
     if (blocked.includes(countryCode.trim().toUpperCase())) {
-      throw new HttpException(
-        {
-          statusCode: 451,
-          error: 'Unavailable For Legal Reasons',
-          message: `Policy initiation is not available in your region (${countryCode.trim().toUpperCase()}).`,
-        },
-        451,
-      );
+      throw new AppException('REGION_BLOCKED', {
+        message: `Policy initiation is not available in your region (${countryCode.trim().toUpperCase()}).`,
+      });
     }
 
     return true;

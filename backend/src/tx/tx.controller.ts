@@ -91,7 +91,7 @@ export class TxController {
    */
   @Post('submit')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @UseGuards(OptionalJwtAuthGuard, WalletRateLimitGuard)
   @ApiBearerAuth()
   @ApiOperation({

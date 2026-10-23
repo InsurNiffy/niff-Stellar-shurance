@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { trace } from '@opentelemetry/api';
 import { MetricsService } from '../../metrics/metrics.service';
 import { AppLoggerService, redactHeaders } from '../logger/app-logger.service';
+import { getRequestContext, requestContextStorage } from '../../logging/request-context.store';
 
 /**
  * RequestContextMiddleware
@@ -14,6 +15,8 @@ import { AppLoggerService, redactHeaders } from '../logger/app-logger.service';
  *  3. Echo `X-Correlation-ID` (incoming or generated) on every response.
  *  4. Emit structured JSON request/response log entries (no body, no PII).
  *  5. Record HTTP latency and status metrics via MetricsService.
+ *  6. Bind the requestId to AsyncLocalStorage so every log line emitted while
+ *     handling the request carries a `correlation_id` field.
  *
  * The requestId is stored on `req.requestId` so downstream handlers and the
  * exception filter can include it in error responses.
@@ -52,6 +55,7 @@ export class RequestContextMiddleware implements NestMiddleware {
 
     this.logger.structured('info', 'request_received', {
       requestId,
+      correlation_id: requestId,
       method: req.method,
       url: req.path, // path only — no query string to avoid leaking tokens
       ip: req.ip ?? req.socket?.remoteAddress,
@@ -65,6 +69,7 @@ export class RequestContextMiddleware implements NestMiddleware {
 
       this.logger.structured('info', 'request_completed', {
         requestId,
+        correlation_id: requestId,
         method: req.method,
         route,
         statusCode: res.statusCode,
@@ -80,6 +85,7 @@ export class RequestContextMiddleware implements NestMiddleware {
       });
     });
 
-    next();
+    const existing = getRequestContext();
+    requestContextStorage.run({ ...existing, requestId }, next);
   }
 }

@@ -17,6 +17,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request } from 'express';
 import { Feature } from '../feature-flags/feature.decorator';
 import { RAMP_FEATURE_FLAG, RAMP_WEBHOOK_SECRET_HEADER } from './ramp.constants';
+import { RampInitiateRequest, RampPremiumService, RampQuoteRequest } from './ramp-premium.service';
 
 interface RampPurchaseCompletedPayload {
   type: 'PURCHASE_CREATED' | 'PURCHASE_FAILED' | 'PURCHASE_REFUNDED';
@@ -50,7 +51,10 @@ interface RampInteractiveFlowResponse {
 export class RampController {
   private readonly logger = new Logger(RampController.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly premium: RampPremiumService,
+  ) {}
 
   @Get('config')
   @Feature(RAMP_FEATURE_FLAG)
@@ -72,6 +76,22 @@ export class RampController {
     url.searchParams.set('utm_campaign', this.config.get<string>('RAMP_UTM_CAMPAIGN', 'onramp'));
 
     return { url: url.toString() };
+  }
+
+  /** Fetch a fiat -> crypto quote for paying a premium. */
+  @Post('quote')
+  @HttpCode(200)
+  @Feature(RAMP_FEATURE_FLAG)
+  quote(@Body() dto: RampQuoteRequest) {
+    return this.premium.quote(dto);
+  }
+
+  /** Initiate a fiat premium payment; returns the provider widget URL. */
+  @Post('initiate')
+  @HttpCode(201)
+  @Feature(RAMP_FEATURE_FLAG)
+  initiate(@Body() dto: RampInitiateRequest) {
+    return this.premium.initiate(dto);
   }
 
   /**
@@ -121,6 +141,17 @@ export class RampController {
     if (!purchase?.id || !type) {
       throw new BadRequestException('Invalid Ramp webhook payload');
     }
+
+    await this.premium.recordStatus({
+      purchaseId: purchase.id,
+      status: purchase.status,
+      receiverAddress: purchase.receiverAddress,
+      cryptoAmount: purchase.cryptoAmount,
+      cryptoCurrency: purchase.cryptoCurrency,
+      fiatValue: purchase.fiatValue,
+      fiatCurrency: purchase.fiatCurrency,
+      finalTxHash: purchase.finalTxHash,
+    });
 
     switch (type) {
       case 'PURCHASE_CREATED':

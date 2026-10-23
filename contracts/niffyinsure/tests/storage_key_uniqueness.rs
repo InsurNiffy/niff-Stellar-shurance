@@ -169,3 +169,112 @@ fn all_datakey_variants_are_unique() {
         );
     }
 }
+
+/// A second holder address, distinct from [`zero_address`], used to prove that
+/// parameterised `DataKey` variants are keyed on their *parameters* and not
+/// just their discriminant.
+fn second_address(env: &Env) -> Address {
+    Address::from_string(&String::from_str(
+        env,
+        "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    ))
+}
+
+/// A second instantiation of every parameterised `DataKey` variant, using a
+/// different address and/or a different numeric id than
+/// [`all_parameterised_variants`]. Pairing each variant with two distinct
+/// parameter sets (e.g. `Policy(addr_a, 0)` vs `Policy(addr_a, 1)` and
+/// `Policy(addr_a, 0)` vs `Policy(addr_b, 0)`) catches a storage key
+/// implementation that serialises parameterised variants without actually
+/// mixing the parameter values into the XDR encoding — a bug the original
+/// single-instantiation test could not detect.
+fn all_parameterised_variants_alt(env: &Env) -> Vec<DataKey> {
+    let zb = second_address(env);
+    vec![
+        DataKey::AllowedAsset(zb.clone()),
+        DataKey::ActivePolicyCount(zb.clone()),
+        DataKey::VoterBucket(1),
+        DataKey::VoterMember(zb.clone()),
+        DataKey::LastClaimResolvedLedger(zb.clone(), 1),
+        DataKey::PolicyExpiredEventEndLedger(zb.clone(), 1),
+        DataKey::Policy(zb.clone(), 1),
+        DataKey::PolicyCounter(zb.clone()),
+        DataKey::Proposal(1),
+        DataKey::ProposalVote(1, zb.clone()),
+        DataKey::Claim(1),
+        DataKey::OpenClaim(zb.clone(), 1),
+        DataKey::Vote(1, zb.clone()),
+        DataKey::AppealVote(1, zb.clone()),
+        DataKey::ClaimVoters(1),
+        DataKey::LastClaimLedger(zb.clone()),
+        DataKey::AppealVoters(1),
+        DataKey::AppealClaimQuorumBps(1),
+        DataKey::ClaimQuorumBps(1),
+        DataKey::ClaimRateLimitPrev(1),
+        DataKey::ClaimFilingFeePaid(1),
+        DataKey::ClaimVoterPowerOverride(1, zb.clone()),
+        DataKey::HolderNonce(zb.clone()),
+        DataKey::OracleTrigger(1),
+        DataKey::TriggerStatus(1),
+        DataKey::OraclePubKey(zb.clone()),
+        DataKey::OracleNonce(zb.clone()),
+        DataKey::OracleQuorum(zb.clone()),
+        DataKey::RollingClaimState(zb.clone(), 1),
+        DataKey::CommitRevealPhases(1),
+        DataKey::VoteCommitment(1, zb.clone()),
+        DataKey::PolicyTypeConfig(PolicyType::Health),
+        DataKey::PolicyTypeActive(PolicyType::Health),
+        DataKey::AssetPremiumTable(zb.clone()),
+        DataKey::Whitelisted(zb.clone()),
+        DataKey::ClaimFraudScore(1),
+        DataKey::AllowedAssetConfig(zb.clone()),
+        DataKey::Delegation(zb.clone()),
+        DataKey::AuthorizedDepositor(zb.clone()),
+        DataKey::AllowedPayoutRecipient(zb.clone()),
+        DataKey::TreatmentCount(1),
+        DataKey::VetSpecializations(zb.clone()),
+        DataKey::Subscription(1),
+        DataKey::OwnerSubscriptionIds(zb.clone()),
+        DataKey::AssetDecimals(zb.clone()),
+        DataKey::AssetLedger(zb.clone()),
+    ]
+}
+
+/// Extends the collision audit (Issue #1614): every parameterised `DataKey`
+/// variant must also be distinguishable from *itself* instantiated with
+/// different parameters, and from every other variant's alternate
+/// instantiation. Combined with [`all_datakey_variants_are_unique`], this
+/// proves the full cross product of (variant × parameter set) that the repo
+/// actually constructs serialises to a unique storage slot, not just that
+/// the discriminants themselves don't collide at a single sample point.
+#[test]
+fn all_datakey_parameterised_variants_are_unique_across_parameter_sets() {
+    let env = Env::default();
+
+    let mut seen: HashSet<Val> = HashSet::new();
+
+    let all_keys = all_unit_variants(&env)
+        .into_iter()
+        .chain(all_parameterised_variants(&env))
+        .chain(all_parameterised_variants_alt(&env));
+
+    for key in all_keys {
+        let val = key_val(&env, &key);
+        assert!(
+            seen.insert(val),
+            "DataKey collision detected across parameter sets: {:?} shares a \
+             storage slot with another variant/parameter combination",
+            key,
+        );
+    }
+
+    // Sanity check: a key must differ from the *same* variant instantiated
+    // with different parameters (e.g. Policy(addr, 0) != Policy(addr, 1)).
+    let za = zero_address(&env);
+    let policy_a0 = key_val(&env, &DataKey::Policy(za.clone(), 0));
+    let policy_a1 = key_val(&env, &DataKey::Policy(za.clone(), 1));
+    let zb = second_address(&env);
+    let policy_b0 = key_val(&env, &DataKey::Policy(zb, 0));
+    assert_ne!(policy_a0, policy_a1, "Policy keys must differ by index param");
+    assert_ne!(policy_a0, policy_b0, "Policy keys must differ by address param");
+}

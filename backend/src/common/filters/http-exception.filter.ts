@@ -7,7 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { AppException, getCatalogEntry } from '../errors';
+import { STATUS_CODES } from 'http';
+import { AppException, getCatalogEntry, ProblemDetailDto } from '../errors';
 
 /**
  * Maps raw Stellar / Soroban error strings to catalog codes.
@@ -23,6 +24,22 @@ const STELLAR_ERROR_MAP: Record<string, string> = {
   ledgerClosed: 'LEDGER_CLOSED',
   timeout: 'TIMEOUT_ERROR',
 };
+
+/** Catalog code used for the RFC 7807 `type` when an error carries no catalog code. */
+const STATUS_FALLBACK_CODE: Record<number, string> = {
+  400: 'VALIDATION_ERROR',
+  401: 'UNAUTHORIZED',
+  403: 'FORBIDDEN',
+  404: 'NOT_FOUND',
+  429: 'RATE_LIMIT_EXCEEDED',
+  500: 'INTERNAL_ERROR',
+};
+
+function problemType(errorCode: string | undefined, status: number): string {
+  const code =
+    errorCode && getCatalogEntry(errorCode) ? errorCode : STATUS_FALLBACK_CODE[status];
+  return code ? `/api/v1/errors#${code}` : 'about:blank';
+}
 
 function normalizeStellarError(raw: string): string | undefined {
   const lower = raw.toLowerCase();
@@ -102,7 +119,28 @@ export class HttpExceptionFilter implements ExceptionFilter {
       this.logger.debug(`${request.method} ${request.url} → ${status}`);
     }
 
+    const details =
+      typeof rawResponse === 'object' && rawResponse !== null
+        ? (rawResponse as Record<string, unknown>).details
+        : undefined;
+
+    const problem: ProblemDetailDto = {
+      type: problemType(errorCode, status),
+      title: STATUS_CODES[status] ?? 'Error',
+      status,
+      detail: String(message),
+      instance: request.url,
+      extensions: {
+        code: errorCode || 'INTERNAL_SERVER_ERROR',
+        ...(i18nKey ? { i18nKey } : {}),
+        ...(request.requestId ? { requestId: request.requestId } : {}),
+        ...(details !== undefined ? { details } : {}),
+      },
+    };
+
+    // RFC 7807 fields are top-level; the legacy envelope is kept for existing clients.
     response.status(status).json({
+      ...problem,
       data: null,
       meta: {
         statusCode: status,

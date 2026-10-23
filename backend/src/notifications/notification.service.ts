@@ -75,7 +75,7 @@ export function updatePreferences(prefs: UserPreferences): UserPreferences {
 
 let _transport: nodemailer.Transporter | null = null;
 
-function getTransport(): nodemailer.Transporter {
+export function getTransport(): nodemailer.Transporter {
   if (_transport) return _transport;
   _transport = nodemailer.createTransport({
     host: config.smtp.host,
