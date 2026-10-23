@@ -65,6 +65,23 @@ class RemoveVoterDto {
   voter!: string;
 }
 
+class AddAllowedAssetDto {
+  @IsString()
+  @Matches(/^C[A-Z2-7]{55}$/, { message: 'contractId must be a valid Soroban contract address (C...)' })
+  contractId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  symbol?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(18)
+  decimals?: number;
+}
+
 class SetQuorumBpsDto {
   @IsInt()
   @Min(1)
@@ -226,6 +243,64 @@ export class AdminController {
     return result;
   }
 
+  // ── Assets: SEP-41 allowlist ──────────────────────────────────────
+
+  /**
+   * POST /admin/assets
+   *
+   * Build an unsigned set_allowed_asset(asset, true, ...) transaction.
+   * The allowlist cache is invalidated when the indexer sees the update event.
+   */
+  @Post('assets')
+  @ApiOperation({ summary: 'Build add-to-allowlist transaction for a SEP-41 asset' })
+  async addAllowedAsset(@Body() dto: AddAllowedAssetDto, @Req() req: AdminRequest) {
+    const admin = req.user?.walletAddress ?? '';
+    const result = await this.sorobanService.buildSetAllowedAssetTransaction({
+      admin,
+      asset: dto.contractId,
+      allowed: true,
+      symbol: dto.symbol,
+      decimals: dto.decimals,
+    });
+
+    await this.auditService.write({
+      actor: admin,
+      action: 'asset_allowlist_add',
+      payload: { contractId: dto.contractId, symbol: dto.symbol, decimals: dto.decimals },
+      ipAddress: req.ip,
+    });
+
+    return result;
+  }
+
+  /**
+   * DELETE /admin/assets/:contractId
+   *
+   * Build an unsigned set_allowed_asset(asset, false, ...) transaction.
+   */
+  @Delete('assets/:contractId')
+  @ApiOperation({ summary: 'Build remove-from-allowlist transaction for a SEP-41 asset' })
+  async removeAllowedAsset(@Param('contractId') contractId: string, @Req() req: AdminRequest) {
+    if (!/^C[A-Z2-7]{55}$/.test(contractId)) {
+      throw new BadRequestException('contractId must be a valid Soroban contract address (C...)');
+    }
+    const admin = req.user?.walletAddress ?? '';
+    const result = await this.sorobanService.buildSetAllowedAssetTransaction({
+      admin,
+      asset: contractId,
+      allowed: false,
+    });
+
+    await this.auditService.write({
+      actor: admin,
+      action: 'asset_allowlist_remove',
+      payload: { contractId },
+      ipAddress: req.ip,
+    });
+
+    return result;
+  }
+
   /**
    * POST /admin/voters/register
    *
@@ -378,6 +453,7 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return { status: 'pending_signature', transactions };
+  }
   }
 
   // ── Governance: Quorum ────────────────────────────────────────────

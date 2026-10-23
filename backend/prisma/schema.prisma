@@ -512,6 +512,8 @@ model RegisteredVoter {
 model HolderProfile {
   walletAddress         String   @id @unique @map("wallet_address")
   displayName           String?  @map("display_name")
+  /// HTTPS URL on an allowed CDN host (AVATAR_CDN_HOSTS).
+  avatarUrl             String?  @map("avatar_url")
   /// Stored as-is; anonymized by the privacy service on request.
   email                 String?
   locale                String?  @default("en")

@@ -41,6 +41,7 @@ export class ProfileService {
 
       const updateData = {
         ...(dto.displayName !== undefined && { displayName: dto.displayName }),
+        ...(dto.avatarUrl !== undefined && { avatarUrl: dto.avatarUrl }),
         ...(dto.email !== undefined && { email: dto.email }),
         ...(dto.locale !== undefined && { locale: dto.locale }),
         ...(notifPrefs !== undefined && { notificationPreferences: notifPrefs }),
@@ -54,6 +55,7 @@ export class ProfileService {
         create: {
           walletAddress,
           displayName: dto.displayName,
+          avatarUrl: dto.avatarUrl,
           email: dto.email,
           locale: dto.locale,
           notificationPreferences: notifPrefs ?? Prisma.JsonNull,
@@ -121,6 +123,7 @@ export class ProfileService {
 
     const fieldMap = {
       displayName: dto.displayName,
+      avatarUrl: dto.avatarUrl,
       email: dto.email,
       locale: dto.locale,
       notificationPreferences: dto.notificationPreferences,
