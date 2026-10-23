@@ -20,8 +20,9 @@ import { HorizonTransactionResponse } from "./dto/horizon-transaction.dto";
  * Routes (all under the global /api/v1 prefix via URI versioning):
  *   GET /v1/accounts/:address/transactions   — paginated operation history
  *   GET /v1/accounts/:address/balances       — account balances
+ *   GET /v1/horizon/transactions             — filtered transaction history proxy
  */
-@Controller("accounts")
+@Controller()
 export class HorizonController {
   private readonly logger = new Logger(HorizonController.name);
 
@@ -37,7 +38,7 @@ export class HorizonController {
    *   cursor  — paging_token from a previous response (optional)
    *   limit   — number of records to return, 1–200 (default 20)
    */
-  @Get(":address/transactions")
+  @Get("accounts/:address/transactions")
   @HttpCode(HttpStatus.OK)
   async getTransactions(
     @Param("address") address: string,
@@ -79,11 +80,72 @@ export class HorizonController {
    * Horizon account resource. Each element has:
    *   balance, asset_type, asset_code (if not native), asset_issuer (if not native)
    */
-  @Get(":address/balances")
+  @Get("accounts/:address/balances")
   @HttpCode(HttpStatus.OK)
   async getBalances(
     @Param("address") address: string,
   ): Promise<{ balances: unknown[] }> {
     return await this.horizonService.getBalances(address);
+  }
+
+  /**
+   * GET /v1/horizon/transactions?account=<address>
+   *
+   * Proxies Horizon transaction history for a wallet address while keeping
+   * internal API keys server-side. Internal auth headers are stripped before
+   * forwarding, rate limiting is applied per wallet address, and only a
+   * filtered subset of Horizon fields is returned:
+   *   txHash, fee, ledger, createdAt, operationType
+   *
+   * Query params:
+   *   account — Stellar wallet address (required)
+   *   cursor  — paging_token from a previous response (optional)
+   *   limit   — number of records to return, 1–200 (default 20)
+   */
+  @Get("horizon/transactions")
+  @HttpCode(HttpStatus.OK)
+  async getHorizonTransactions(
+    @Query("account") account?: string,
+    @Query("cursor") cursor?: string,
+    @Query("limit") limitStr?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<HorizonTransactionResponse> {
+    if (!account || account.trim().length === 0) {
+      throw new HttpException(
+        "account query parameter is required",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const limit = limitStr !== undefined ? parseInt(limitStr, 10) : 20;
+    if (limitStr !== undefined && isNaN(limit)) {
+      throw new HttpException("limit must be a number", HttpStatus.BAD_REQUEST);
+    }
+
+    const rl = await this.horizonService.checkRateLimit(account);
+    if (!rl.allowed) {
+      res?.setHeader("Retry-After", String(rl.retryAfterSeconds));
+      throw new HttpException(
+        {
+          statusCode: 429,
+          error: "Too Many Requests",
+          message: "Rate limit exceeded for this account. Please slow down.",
+          retryAfter: rl.retryAfterSeconds,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    try {
+      return await this.horizonService.getTransactions(account, cursor, limit);
+    } catch (err) {
+      if (err instanceof ServiceUnavailableException) {
+        const retryAfter = (err as ServiceUnavailableException & { retryAfter?: number }).retryAfter;
+        if (retryAfter) {
+          res?.setHeader("Retry-After", String(retryAfter));
+        }
+      }
+      throw err;
+    }
   }
 }
