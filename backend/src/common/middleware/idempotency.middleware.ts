@@ -1,5 +1,5 @@
 /**
- * IdempotencyMiddleware — safe retries for POST /ipfs/upload and POST /tx/submit.
+ * IdempotencyMiddleware — safe retries for POST /ipfs/upload, POST /tx/submit and PATCH /policies/:id/renew.
  *
  * ## How it works
  *

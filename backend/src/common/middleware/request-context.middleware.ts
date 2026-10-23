@@ -12,9 +12,10 @@ import { getRequestContext, requestContextStorage } from '../../logging/request-
  * Responsibilities:
  *  1. Attach / propagate a requestId from `x-request-id` header or generate one.
  *  2. Echo the requestId back in the response as `x-request-id`.
- *  3. Emit structured JSON request/response log entries (no body, no PII).
- *  4. Record HTTP latency and status metrics via MetricsService.
- *  5. Bind the requestId to AsyncLocalStorage so every log line emitted while
+ *  3. Echo `X-Correlation-ID` (incoming or generated) on every response.
+ *  4. Emit structured JSON request/response log entries (no body, no PII).
+ *  5. Record HTTP latency and status metrics via MetricsService.
+ *  6. Bind the requestId to AsyncLocalStorage so every log line emitted while
  *     handling the request carries a `correlation_id` field.
  *
  * The requestId is stored on `req.requestId` so downstream handlers and the
@@ -37,6 +38,12 @@ export class RequestContextMiddleware implements NestMiddleware {
 
     // Echo back so clients can correlate
     res.setHeader('x-request-id', requestId);
+
+    // Issue #1633: X-Correlation-ID on every response (set before handlers so
+    // 4xx/5xx responses carry it too). Falls back to the request id.
+    const incomingCorrelationId = (req.headers['x-correlation-id'] as string | undefined)?.trim();
+    if (!incomingCorrelationId) this.metrics.correlationIdMissingTotal.inc();
+    res.setHeader('X-Correlation-ID', incomingCorrelationId || requestId);
 
     // Propagate requestId as a span attribute on the active OTel span (if any)
     const activeSpan = trace.getActiveSpan()
