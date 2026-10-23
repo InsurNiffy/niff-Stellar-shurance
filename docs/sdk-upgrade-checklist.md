@@ -26,7 +26,7 @@
 | `23.x` | EOL | `contractevent` topic ordering changed |
 | `24.x` | EOL | `contracterror` discriminant validation tightened |
 | `25.3.1` | **Current (pinned)** | — |
-| `26.x` | Not yet tested | Monitor release notes |
+| `26.x` | Under evaluation — covered by scheduled `test (next-minor)` CI job (#1652) | Pending checklist sign-off; record failures from the weekly job here |
 
 ---
 
@@ -112,4 +112,4 @@ If an upgrade causes a production regression:
 | `test (pinned)` | Every PR | Tests against the current pinned SDK version |
 | `test (next-minor)` | Scheduled (weekly) | Early warning for the next SDK minor release |
 
-Add the scheduled job to `.github/workflows/sdk-compat.yml` when the next minor version is available.
+The `test (next-minor)` job in `.github/workflows/sdk-compat.yml` rewrites the `niffyinsure` pin to the next SDK release line (currently `26.x`) and runs the contract tests weekly; failures open an `sdk-compat` issue.

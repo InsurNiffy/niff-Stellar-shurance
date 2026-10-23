@@ -83,6 +83,21 @@ export class ClaimsService {
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
   }
 
+  /** Build an unsigned `escalate_claim` transaction for the admin wallet to sign. */
+  async buildEscalateClaimTransaction(
+    admin: string,
+    claimId: number,
+    newDeadlineLedger: number,
+  ): Promise<{ claimId: number; unsignedXdr: string }> {
+    await this.getClaimById(claimId);
+    const { unsignedXdr } = await this.soroban.buildEscalateClaimTransaction({
+      admin,
+      claimId,
+      newDeadlineLedger,
+    });
+    return { claimId, unsignedXdr };
+  }
+
   /** Get the appropriate client for reads — replica if enabled, otherwise primary. */
   private getReadClient() {
     return this.prismaReplica.isEnabled() ? this.prismaReplica : this.prisma;
@@ -224,9 +239,7 @@ export class ClaimsService {
       }
       const age = Date.now() - comment.createdAt.getTime();
       if (age > CLAIM_COMMENT_EDIT_WINDOW_MS) {
-        throw new ForbiddenException(
-          'Comments may only be deleted by the author within 10 minutes of posting',
-        );
+        throw new ForbiddenException('The comment edit window has expired');
       }
     }
 
@@ -234,205 +247,36 @@ export class ClaimsService {
       where: { id: commentId },
       data: { deletedAt: new Date() },
     });
-    await this.publishCommentEvent('deleted', { id: commentId, claimId });
+
+    await this.publishCommentEvent('deleted', this.toCommentDto({ ...comment, reportedAt: comment.reportedAt ?? null }));
   }
 
-  /** POST /v1/claims/:id/comments/:commentId/report — anyone may report. */
-  async reportClaimComment(
-    claimId: number,
-    commentId: number,
-    walletAddress: string,
-    reason?: string,
-  ): Promise<{ reported: boolean }> {
-    const comment = await this.prisma.claimComment.findFirst({
-      where: { id: commentId, claimId, deletedAt: null },
-      select: { id: true },
-    });
-    if (!comment) {
-      throw new NotFoundException(`Comment with ID ${commentId} not found`);
+  /**
+   * Serve pre-computed aggregation metrics (#1622) for the claim detail
+   * endpoint. Falls back to a live computation when no snapshot exists yet
+   * (e.g. a freshly created claim before the scheduled job has run).
+   */
+  private async resolveAggregation(claimId: number) {
+    const snapshot = await this.aggregation.getSnapshot(claimId);
+    if (snapshot) {
+      return snapshot;
     }
-
-    await this.prisma.claimCommentReport.create({
-      data: {
-        commentId,
-        reporterAddress: walletAddress.toLowerCase(),
-        reason: reason?.trim() || null,
-      },
-    });
-    await this.prisma.claimComment.update({
-      where: { id: commentId },
-      data: { reportedAt: new Date() },
-    });
-
-    await this.publishCommentEvent('reported', { id: commentId, claimId });
-    return { reported: true };
+    return this.aggregation.computeForClaim(claimId);
   }
 
-  /** Push comment changes over the live event stream. */
   private async publishCommentEvent(
-    action: 'created' | 'deleted' | 'reported',
-    payload: unknown,
+    action: 'created' | 'deleted',
+    comment: ClaimCommentDto,
   ): Promise<void> {
     try {
       await this.redis.publish(CLAIM_COMMENT_EVENT_CHANNEL, {
-        type: `claim_comment.${action}`,
-        payload,
+        action,
+        comment,
       });
     } catch (err) {
-      this.logger.warn(`Failed to publish claim comment event: ${(err as Error).message}`);
+      this.logger.warn(
+        `Failed to publish claim comment event: ${(err as Error).message}`,
+      );
     }
-  }
-
-  async listClaims(params: ListClaimsParams): Promise<ClaimsListResponseDto> {
-    const { after, status } = params;
-    const limit = clampLimit(params.limit);
-    const tenantId = this.tenantCtx.tenantId;
-    const cacheKey = this.claimSummaryCache.key({ tenantId, after, limit, status });
-
-    return this.claimSummaryCache.getOrCompute(cacheKey, async () => {
-      this.logger.debug(`Claim summary cache miss for ${cacheKey}`);
-
-      const lastLedger = await this.getLastLedger();
-      const statusFilter = status
-        ? { status: status.toUpperCase() as 'PENDING' | 'APPROVED' | 'PAID' | 'REJECTED' }
-        : {};
-      const keysetWhere = buildKeysetWhere(after);
-      const where: Prisma.ClaimWhereInput = claimTenantWhere(tenantId, {
-        ...statusFilter,
-        ...(keysetWhere ?? {}),
-      });
-
-      const readClient = this.getReadClient();
-      const [claims, total] = await Promise.all([
-        readClient.claim.findMany({
-          where,
-          include: {
-            votes: { where: { deletedAt: null }, select: { vote: true } },
-            evidenceMetadata: true,
-          },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          take: limit,
-        }),
-        readClient.claim.count({ where: claimTenantWhere(tenantId, statusFilter) }),
-      ]);
-
-      return {
-        data: await Promise.all(
-          claims.map(async (claim) => {
-            const agg = await this.aggregation.aggregate(claim.id, lastLedger);
-            return this.claimViewMapper.transformClaim(claim, lastLedger, {
-              quorum_progress_pct: agg.quorum_progress_pct,
-              votes_needed: agg.votes_needed,
-              deadline_estimate_utc: agg.deadline_estimate_utc,
-            });
-          }),
-        ),
-        pagination: {
-          next_cursor: buildNextCursor(claims, limit, total),
-          total,
-        },
-      };
-    });
-  }
-
-  async getClaimsNeedingVote(
-    walletAddress: string,
-    params: ListClaimsParams,
-  ): Promise<ClaimsListResponseDto> {
-    const { after } = params;
-    const limit = clampLimit(params.limit);
-    const tenantId = this.tenantCtx.tenantId;
-    const lastLedger = await this.getLastLedger();
-
-    const readClient = this.getReadClient();
-    const votedClaimIds = await readClient.vote.findMany({
-      where: { voterAddress: walletAddress.toLowerCase(), deletedAt: null },
-      select: { claimId: true },
-    });
-    const votedIds = votedClaimIds.map((v) => v.claimId);
-    const keysetWhere = buildKeysetWhere(after);
-
-    const baseWhere: Prisma.ClaimWhereInput = claimTenantWhere(tenantId, {
-      status: 'PENDING',
-      ...(votedIds.length > 0 ? { id: { notIn: votedIds } } : {}),
-    });
-
-    const [allOpen, page] = await Promise.all([
-      readClient.claim.count({ where: baseWhere }),
-      readClient.claim.findMany({
-        where: { ...baseWhere, ...(keysetWhere ?? {}) },
-        include: {
-          votes: { where: { deletedAt: null }, select: { vote: true } },
-          evidenceMetadata: true,
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: limit,
-      }),
-    ]);
-
-    const openClaims = page.filter(
-      (claim) => this.claimViewMapper.getVotingDeadlineLedger(claim.createdAtLedger) > lastLedger,
-    );
-
-    return {
-      data: await Promise.all(
-        openClaims.map(async (claim) => {
-          const agg = await this.aggregation.aggregate(claim.id, lastLedger);
-          return this.claimViewMapper.transformClaim(claim, lastLedger, {
-            quorum_progress_pct: agg.quorum_progress_pct,
-            votes_needed: agg.votes_needed,
-            deadline_estimate_utc: agg.deadline_estimate_utc,
-          });
-        }),
-      ),
-      pagination: {
-        next_cursor: buildNextCursor(openClaims, limit, allOpen),
-        total: allOpen,
-      },
-    };
-  }
-
-  async getClaimById(id: number, walletAddress?: string): Promise<ClaimDetailResponseDto> {
-    const tenantId = this.tenantCtx.tenantId;
-    const cacheKey = `claims:detail:${tenantId ?? 'global'}:${id}`;
-    const cached = await this.redis.get<ClaimDetailResponseDto>(cacheKey);
-
-    if (cached && !walletAddress) {
-      this.logger.debug(`Cache hit for ${cacheKey}`);
-      return cached;
-    }
-
-    const lastLedger = await this.getLastLedger();
-    const readClient = this.getReadClient();
-    const claim = await readClient.claim.findFirst({
-      where: claimTenantWhere(tenantId, { id }),
-      include: {
-        votes: {
-          where: { deletedAt: null },
-          select: { vote: true },
-        },
-        evidenceMetadata: true,
-      },
-    });
-
-    // Enforce tenant ownership — returns 404 for cross-tenant reads
-    assertTenantOwnership(claim, tenantId, `Claim ${id}`);
-
-    if (!claim) {
-      throw new NotFoundException(`Claim with ID ${id} not found`);
-    }
-
-    const agg = await this.aggregation.aggregate(id, lastLedger);
-    const response = this.claimViewMapper.transformClaim(claim, lastLedger, {
-      quorum_progress_pct: agg.quorum_progress_pct,
-      votes_needed: agg.votes_needed,
-      deadline_estimate_utc: agg.deadline_estimate_utc,
-    });
-
-    return response;
-  }
-
-  private async getLastLedger(): Promise<number> {
-    return this.reconciliation.getLastLedger();
   }
 }

@@ -54,3 +54,9 @@ that action, rather than only relying on the id the backend assigns:
 5. If the id only appears in the frontend error but not in backend logs/traces, the request
    never reached the backend (network/client-side failure) — narrow the investigation to the
    frontend/network layer instead.
+
+## X-Correlation-ID response header
+
+`RequestContextMiddleware` sets `X-Correlation-ID` on every response, including 4xx/5xx,
+echoing the incoming `X-Correlation-ID` or falling back to the request id. Requests that
+arrive without the header increment the Prometheus counter `correlation_id_missing_total`.

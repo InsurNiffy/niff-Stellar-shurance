@@ -408,6 +408,54 @@ pub fn emit_asset_allowlisted(
     .publish(env);
 }
 
+// ── Event subscriptions (Issue #1617) ──────────────────────────────────────
+
+#[contractevent(topics = ["niffyins", "sub_created"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubscriptionCreatedData {
+    #[topic]
+    pub owner: Address,
+    pub version: u32,
+    pub sub_id: u64,
+    pub callback: Address,
+    pub expires_at: u32,
+}
+
+pub fn emit_subscription_created(
+    env: &Env,
+    owner: &Address,
+    sub_id: u64,
+    callback: &Address,
+    expires_at: u32,
+) {
+    SubscriptionCreatedData {
+        owner: owner.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        sub_id,
+        callback: callback.clone(),
+        expires_at,
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["niffyins", "sub_cancelled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubscriptionCancelledData {
+    #[topic]
+    pub owner: Address,
+    pub version: u32,
+    pub sub_id: u64,
+}
+
+pub fn emit_subscription_cancelled(env: &Env, owner: &Address, sub_id: u64) {
+    SubscriptionCancelledData {
+        owner: owner.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        sub_id,
+    }
+    .publish(env);
+}
+
 // ── Admin rotation / config events ───────────────────────────────────────────
 
 /// Emitted by `propose_admin`.

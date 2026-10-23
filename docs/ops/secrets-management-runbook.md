@@ -24,6 +24,8 @@
 
 The `.github/workflows/secrets-rotation-reminders.yml` workflow runs every Monday at 09:00 UTC. It reads last-rotated dates from `docs/ops/.secret-rotation-dates.json` and opens a GitHub issue labelled `secrets-rotation` when any secret is overdue or within 14 days of its deadline.
 
+The same check runs on pull requests that touch the dates file, emitting a GitHub Actions warning annotation for every overdue secret and a notice for any due within 14 days. On scheduled runs the issue (or a comment on the existing open `secrets-rotation` issue) mentions the on-call engineer configured in the `ONCALL_GITHUB_HANDLE` repository variable, and the run fails if any secret is overdue. Intervals come from `_intervals` in the dates file (default 90 days); non-date values such as `removed-YYYY-MM-DD` are skipped.
+
 **After every rotation:** update `docs/ops/.secret-rotation-dates.json` with the new date and commit it.
 
 ---

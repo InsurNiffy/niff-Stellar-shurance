@@ -15,6 +15,12 @@ import { getContracts } from '@/lib/network-manifest'
 import { validateRpcUrl, validateManifestReachable, PUBLIC_RPC, STATUS_PAGES, type AppSettings } from '@/lib/settings-store'
 import type { Network } from '@/lib/network-manifest'
 import { resetTour, useOnboardingTour } from '@/hooks/use-onboarding-tour'
+import {
+  getCookieConsent,
+  setCookieConsent,
+  COOKIE_CONSENT_EVENT,
+  type CookieConsentValue,
+} from '@/lib/cookie-consent'
 
 const NETWORKS: Network[] = ['testnet', 'mainnet']
 const CURRENCIES: AppSettings['displayCurrency'][] = ['XLM', 'USD', 'EUR']
@@ -50,6 +56,29 @@ export function SettingsPanel() {
   )
 
   const { startTour } = useOnboardingTour({ autoStart: false })
+
+  // ── Consent state ─────────────────────────────────────────────────────────
+  const [consentValue, setConsentValue] = useState<CookieConsentValue | null>(null)
+
+  useEffect(() => {
+    const stored = getCookieConsent()
+    setConsentValue(stored?.value ?? null)
+
+    function onConsentChange() {
+      const updated = getCookieConsent()
+      setConsentValue(updated?.value ?? null)
+    }
+    window.addEventListener(COOKIE_CONSENT_EVENT, onConsentChange)
+    return () => window.removeEventListener(COOKIE_CONSENT_EVENT, onConsentChange)
+  }, [])
+
+  function handleRevokeConsent() {
+    setCookieConsent('declined')
+  }
+
+  function handleGrantConsent() {
+    setCookieConsent('accepted')
+  }
 
   async function handleNetworkChange(network: Network) {
     setNetworkError(null)
@@ -247,6 +276,50 @@ export function SettingsPanel() {
           >
             Stellar infrastructure status <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
+        </CardContent>
+      </Card>
+
+      {/* ── Privacy & Analytics ──────────────────────────────────── */}
+      <Card id="privacy">
+        <CardHeader>
+          <CardTitle>Privacy &amp; analytics</CardTitle>
+          <CardDescription>
+            Manage your analytics and error-logging consent. When declined,
+            no usage events or error logs are sent.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Analytics &amp; error logging</p>
+              <p className="text-xs text-muted-foreground">
+                {consentValue === 'accepted'
+                  ? 'Currently enabled — cookieless analytics and error logs are active.'
+                  : consentValue === 'declined'
+                    ? 'Currently disabled — no data is collected or shipped.'
+                    : 'No choice recorded — banner will appear on next visit.'}
+              </p>
+            </div>
+            {consentValue === 'accepted' ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRevokeConsent}
+                aria-label="Revoke analytics consent"
+              >
+                Revoke
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGrantConsent}
+                aria-label="Grant analytics consent"
+              >
+                Enable
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 

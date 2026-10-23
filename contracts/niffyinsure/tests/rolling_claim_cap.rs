@@ -513,3 +513,109 @@ fn rolling_cap_window_boundary_ledgers() {
         }
     }
 }
+
+/// Issue #1609: file claims to cap, verify error, wait for window, file again successfully.
+#[test]
+fn file_claims_to_cap_verify_error_wait_for_window_file_again_successfully() {
+    let (env, client, _admin, token) = setup();
+    let holder = Address::generate(&env);
+    let v1 = Address::generate(&env);
+    let v2 = Address::generate(&env);
+    fund_and_bind(&env, &client, &token, &holder);
+    seed_two_voters(&client, &v1, &v2);
+
+    let policy = client.initiate_policy(
+        &holder,
+        &PolicyType::Auto,
+        &RegionTier::Medium,
+        &AgeBand::Adult,
+        &CoverageType::Standard,
+        &80,
+        &1_000_000i128,
+        &token,
+        &niffyinsure::types::InitiatePolicyOptions::test_defaults(&env),
+    );
+
+    let urls = vec![&env];
+
+    // 1. File claim up to the full cap and approve/pay it
+    let details1 = String::from_str(&env, "reach cap");
+    let c1 = client
+        .try_file_claim(
+            &holder,
+            &policy.policy_id,
+            &CAP,
+            &details1,
+            &urls,
+            &None,
+        )
+        .unwrap()
+        .unwrap();
+    approve_and_pay(&env, &client, &v1, &v2, c1);
+
+    // Headroom is completely exhausted
+    assert_eq!(
+        client.get_rolling_claim_remaining(&holder, &policy.policy_id),
+        0
+    );
+
+    // 2. Advance past per-holder claim rate limit so rate limit does not mask the cap error
+    advance_past_claim_rate_limit(&env);
+
+    // Verify error: attempting to file any new claim within the same window fails with RollingClaimCapExceeded
+    let details2 = String::from_str(&env, "over cap");
+    match client.try_file_claim(
+        &holder,
+        &policy.policy_id,
+        &1i128,
+        &details2,
+        &urls,
+        &None,
+    ) {
+        Ok(Err(e)) => assert_eq!(e, Error::RollingClaimCapExceeded.into()),
+        Ok(Ok(id)) => panic!("expected RollingClaimCapExceeded, got success claim_id={id}"),
+        Err(e) => {
+            let s = format!("{e:?}");
+            assert!(
+                s.contains("RollingClaimCapExceeded"),
+                "expected RollingClaimCapExceeded, got {s}"
+            );
+        }
+    }
+
+    // 3. Wait for window: advance ledger past the current rolling claim window bucket
+    advance_past_claim_rate_limit(&env);
+    env.ledger().with_mut(|l| {
+        let w = WINDOW;
+        let seq = l.sequence_number;
+        l.sequence_number = seq.saturating_div(w).saturating_add(1).saturating_mul(w);
+    });
+
+    // Verify rolling claim capacity has reset for the new window
+    assert_eq!(
+        client.get_rolling_claim_remaining(&holder, &policy.policy_id),
+        CAP
+    );
+
+    // 4. File again successfully in the new window
+    let details3 = String::from_str(&env, "new window claim");
+    let c2 = client
+        .try_file_claim(
+            &holder,
+            &policy.policy_id,
+            &CAP,
+            &details3,
+            &urls,
+            &None,
+        )
+        .unwrap()
+        .unwrap();
+    approve_and_pay(&env, &client, &v1, &v2, c2);
+
+    assert_eq!(client.get_claim(&c2).status, ClaimStatus::Paid);
+    assert_eq!(
+        client.get_rolling_claim_remaining(&holder, &policy.policy_id),
+        0
+    );
+}
+

@@ -112,3 +112,6 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
     - Contract: status history log, keeper entrypoints, withdraw claim
     - Backend: policy expiry keeper, appeal finalize keeper, claim discussion threads
     - Frontend: discussion thread UI, TxStatusDialog
+
+<!-- handsoff-issue-1619 -->
+- #1619: Backend: SSE real-time updates — Redis pub/sub for multi-instance claim status

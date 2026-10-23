@@ -46,6 +46,16 @@ describe('ClaimRateLimitGuard', () => {
     expect(mockRes.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
   });
 
+  it('enforces claim filing at 3 per hour per wallet by default', async () => {
+    rateLimitService.checkWalletEvidenceLimit
+      .mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 1200 });
+
+    await expect(guard.canActivate(makeCtx('GWALLET'))).rejects.toThrow(RateLimitException);
+    expect(rateLimitService.checkWalletEvidenceLimit).toHaveBeenCalledWith('claim:hour:GWALLET', 3, 3600);
+    expect(mockRes.setHeader).toHaveBeenCalledWith('Retry-After', '1200');
+    expect(mockRes.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '3');
+  });
+
   it('returns 429 when daily limit exceeded', async () => {
     rateLimitService.checkWalletEvidenceLimit
       .mockResolvedValueOnce({ allowed: true, retryAfterSeconds: 0 })

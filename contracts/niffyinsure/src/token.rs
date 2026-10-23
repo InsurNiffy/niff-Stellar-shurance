@@ -221,3 +221,18 @@ pub(crate) fn transfer_from_reinsurance(
         &amount,
     );
 }
+
+/// Pre-flight check (Issue #1613): the most this contract could successfully
+/// draw from the reinsurance pool right now, i.e. the smaller of the pool's
+/// own `asset` balance and the allowance it has granted this contract.
+///
+/// Used by `claim::process_claim`'s reinsurance fallback so an undercapitalised
+/// or under-approved reinsurance pool results in a clean `ClaimStatus::PayoutFailed`
+/// transition instead of the SEP-41 `transfer_from` trapping and reverting the
+/// whole transaction (including the primary-treasury partial payout already made).
+pub fn reinsurance_available(env: &Env, asset: &Address, reinsurance: &Address) -> i128 {
+    let client = token::TokenClient::new(env, asset);
+    let balance = client.balance(reinsurance);
+    let allowance = client.allowance(reinsurance, &env.current_contract_address());
+    balance.min(allowance)
+}

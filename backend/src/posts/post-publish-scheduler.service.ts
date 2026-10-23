@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { postBus, POST_PUBLISHED_EVENT, PostPublishedEvent } from './post-events';
 
 /**
  * Flips scheduled draft posts to PUBLISHED once their publishAt passes, so
@@ -15,17 +16,28 @@ export class PostPublishSchedulerService {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async publishDuePosts(): Promise<void> {
-    const result = await this.prisma.post.updateMany({
-      where: {
-        status: 'DRAFT',
-        deletedAt: null,
-        publishAt: { lte: new Date() },
-      },
+    const where = {
+      status: 'DRAFT' as const,
+      deletedAt: null,
+      publishAt: { lte: new Date() },
+    };
+    const due = await this.prisma.post.findMany({ where });
+    if (due.length === 0) return;
+
+    await this.prisma.post.updateMany({
+      where: { id: { in: due.map((p) => p.id) }, status: 'DRAFT' },
       data: { status: 'PUBLISHED' },
     });
 
-    if (result.count > 0) {
-      this.logger.log(`Published ${result.count} scheduled post(s)`);
+    for (const post of due) {
+      const event: PostPublishedEvent = {
+        postId: post.id,
+        title: post.title,
+        authorAddress: post.authorAddress,
+        publishedAt: new Date(),
+      };
+      postBus.emit(POST_PUBLISHED_EVENT, event);
     }
+    this.logger.log(`Published ${due.length} scheduled post(s)`);
   }
 }

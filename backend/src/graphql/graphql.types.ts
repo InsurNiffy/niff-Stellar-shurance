@@ -229,3 +229,12 @@ export class VoteAddedEvent {
   @Field(() => Int)
   totalVotes!: number;
 }
+
+@ObjectType()
+export class ClaimEscalationTx {
+  @Field(() => Int)
+  claimId!: number;
+
+  @Field(() => String, { description: 'Unsigned transaction XDR (base64) for the admin wallet to sign' })
+  unsignedXdr!: string;
+}

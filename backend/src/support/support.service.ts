@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
-import { FaqItem, SupportTicket } from '@prisma/client';
+import nodemailer from 'nodemailer';
+import { config as appConfig } from '../config/env';
+import { FaqItem, SupportTicket, TicketStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CaptchaService } from './captcha.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
@@ -97,6 +99,8 @@ export class SupportService {
       },
     });
 
+    await this.sendStatusEmail(updated.email, updated.subject, dto.status);
+
     this.logger.log(`Support ticket ${ticketId} status updated from ${ticket.status} to ${dto.status}`);
     return this.mapToResponse(updated);
   }
@@ -160,8 +164,33 @@ export class SupportService {
     return { tickets: tickets.map((ticket) => this.mapToResponse(ticket)), total };
   }
 
-  async listTickets(limit = 50, offset = 0, assignedTo?: string | null) {
-    const where = assignedTo !== undefined ? { assignedTo: assignedTo || undefined } : {};
+  private async sendStatusEmail(to: string, subject: string, status: string): Promise<void> {
+    try {
+      const transport = nodemailer.createTransport({
+        host: appConfig.smtp.host,
+        port: appConfig.smtp.port,
+      });
+      await transport.sendMail({
+        from: appConfig.smtp.from,
+        to,
+        subject: `Update on your support ticket: ${subject}`,
+        text: `Your support ticket "${subject}" is now ${status}.`,
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to send ticket status email: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async listTickets(
+    limit = 50,
+    offset = 0,
+    assignedTo?: string | null,
+    status?: TicketStatus,
+  ) {
+    const where = {
+      ...(assignedTo !== undefined ? { assignedTo: assignedTo || undefined } : {}),
+      ...(status ? { status } : {}),
+    };
     const [tickets, total] = await Promise.all([
       this.prisma.supportTicket.findMany({
         where,

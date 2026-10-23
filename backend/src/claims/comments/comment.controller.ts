@@ -10,14 +10,15 @@ import {
   HttpStatus,
   ParseIntPipe,
   Req,
+  Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { WalletAddress } from '../../auth/decorators/wallet-address.decorator';
 import { AuthIdentityService } from '../../auth/auth-identity.service';
 import { CommentService } from './comment.service';
-import { CreateCommentDto, CommentResponseDto } from './comment.dto';
+import { CreateCommentDto, CommentResponseDto, CommentListResponseDto } from './comment.dto';
 
 @ApiTags('claims')
 @Controller('claims/:id/comments')
@@ -29,9 +30,15 @@ export class CommentController {
 
   @Get()
   @ApiOperation({ summary: 'List active comments for a claim' })
-  @ApiResponse({ status: 200, type: [CommentResponseDto] })
-  list(@Param('id', ParseIntPipe) claimId: number): Promise<CommentResponseDto[]> {
-    return this.commentService.list(claimId);
+  @ApiQuery({ name: 'after', required: false, type: String })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, type: CommentListResponseDto })
+  list(
+    @Param('id', ParseIntPipe) claimId: number,
+    @Query('after') after?: string,
+    @Query('limit') limit?: string,
+  ): Promise<CommentListResponseDto> {
+    return this.commentService.list(claimId, after, limit ? parseInt(limit, 10) || undefined : undefined);
   }
 
   @Post()
@@ -44,7 +51,7 @@ export class CommentController {
     @Body() dto: CreateCommentDto,
     @WalletAddress() walletAddress: string,
   ): Promise<CommentResponseDto> {
-    return this.commentService.create(claimId, walletAddress, dto.body);
+    return this.commentService.create(claimId, walletAddress, dto.body, dto.parentId);
   }
 
   @Delete(':commentId')
