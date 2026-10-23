@@ -78,6 +78,9 @@ export class ClaimNode {
   @Field(() => String)
   evidenceGatewayUrl!: string;
 
+  @Field(() => String, { nullable: true })
+  requiredSpecialization?: string | null;
+
   @Field(() => Int)
   createdAtLedger!: number;
 
