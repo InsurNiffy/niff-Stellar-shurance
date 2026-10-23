@@ -381,6 +381,160 @@ mod experimental_build_tests {
         assert_eq!(result, Err(OracleError::ReplayedNonce));
     }
 
+    /// Issue #1610: key rotation. After `register_oracle_key` replaces a
+    /// source's Ed25519 key, a trigger signed with the OLD key must fail
+    /// verification (the host's `ed25519_verify` traps on an invalid
+    /// signature, per Soroban convention — see `check_oracle_trigger` step 9)
+    /// even though the source is still registered, and a trigger signed with
+    /// the NEW key must verify successfully.
+    #[test]
+    #[should_panic]
+    fn check_oracle_trigger_key_rotation_invalidates_old_key() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let cid = setup_contract(&env);
+
+        let old_keypair = generate_keypair();
+        let new_keypair = generate_keypair();
+        let old_pub_key: BytesN<32> = BytesN::from_array(&env, old_keypair.verifying_key().as_bytes());
+        let new_pub_key: BytesN<32> = BytesN::from_array(&env, new_keypair.verifying_key().as_bytes());
+        let source_addr = Address::generate(&env);
+
+        let policy_id: u32 = 1;
+        let timestamp: u64 = 1_000_000;
+        let nonce: u64 = 1;
+        let mut msg = Bytes::new(&env);
+        msg.extend_from_array(&policy_id.to_be_bytes());
+        msg.extend_from_array(&timestamp.to_be_bytes());
+        msg.extend_from_array(&nonce.to_be_bytes());
+        msg.push_back(1u8);
+
+        // Signed with the OLD key, but the source will be rotated to the NEW key.
+        let sig_from_old_key = sign_msg(&old_keypair, &env, &msg);
+        let trigger = niffyinsure::types::OracleTrigger {
+            policy_id,
+            event_type: niffyinsure::types::TriggerEventType::WeatherEvent,
+            source: OracleSource::Registered(source_addr.clone()),
+            payload: {
+                let mut b = Bytes::new(&env);
+                b.push_back(1u8);
+                b
+            },
+            timestamp,
+            trigger_ledger: 1000,
+            nonce,
+            signature: sig_from_old_key,
+        };
+
+        // Expected to panic: the host's ed25519_verify traps because `trigger`
+        // was signed with the now-rotated-away old key.
+        let _ = env.as_contract(&cid, || {
+            niffyinsure::storage::set_oracle_enabled(&env, true);
+            niffyinsure::storage::set_oracle_pub_key(&env, &source_addr, &old_pub_key);
+            // Rotate the key before the trigger is submitted.
+            niffyinsure::storage::set_oracle_pub_key(&env, &source_addr, &new_pub_key);
+            niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 17280)
+        });
+    }
+
+    /// Companion to the rotation-invalidation test above: a trigger signed
+    /// with the CURRENT (post-rotation) key must still verify successfully.
+    #[test]
+    fn check_oracle_trigger_accepts_signature_from_rotated_key() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let cid = setup_contract(&env);
+
+        let old_keypair = generate_keypair();
+        let new_keypair = generate_keypair();
+        let old_pub_key: BytesN<32> = BytesN::from_array(&env, old_keypair.verifying_key().as_bytes());
+        let new_pub_key: BytesN<32> = BytesN::from_array(&env, new_keypair.verifying_key().as_bytes());
+        let source_addr = Address::generate(&env);
+
+        let policy_id: u32 = 1;
+        let timestamp: u64 = 1_000_000;
+        let nonce: u64 = 1;
+        let mut msg = Bytes::new(&env);
+        msg.extend_from_array(&policy_id.to_be_bytes());
+        msg.extend_from_array(&timestamp.to_be_bytes());
+        msg.extend_from_array(&nonce.to_be_bytes());
+        msg.push_back(1u8);
+        let sig_from_new_key = sign_msg(&new_keypair, &env, &msg);
+        let trigger = niffyinsure::types::OracleTrigger {
+            policy_id,
+            event_type: niffyinsure::types::TriggerEventType::WeatherEvent,
+            source: OracleSource::Registered(source_addr.clone()),
+            payload: {
+                let mut b = Bytes::new(&env);
+                b.push_back(1u8);
+                b
+            },
+            timestamp,
+            trigger_ledger: 1000,
+            nonce,
+            signature: sig_from_new_key,
+        };
+
+        let result = env.as_contract(&cid, || {
+            niffyinsure::storage::set_oracle_enabled(&env, true);
+            // Register the old key first, then rotate to the new key — mirrors
+            // an operator calling `register_oracle_key` again after a rotation.
+            niffyinsure::storage::set_oracle_pub_key(&env, &source_addr, &old_pub_key);
+            niffyinsure::storage::set_oracle_pub_key(&env, &source_addr, &new_pub_key);
+            niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 17280)
+        });
+        assert!(result.is_ok());
+    }
+
+    /// Issue #1610: quorum failure. A source configured with `quorum > 1`
+    /// (multi-oracle aggregation required) must reject an otherwise
+    /// validly-signed single-sig trigger with `QuorumNotMet`, since this
+    /// contract does not yet support signature aggregation.
+    #[test]
+    fn check_oracle_trigger_rejects_when_quorum_not_met() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let cid = setup_contract(&env);
+
+        let keypair = generate_keypair();
+        let pub_key: BytesN<32> = BytesN::from_array(&env, keypair.verifying_key().as_bytes());
+        let source_addr = Address::generate(&env);
+
+        let policy_id: u32 = 1;
+        let timestamp: u64 = 1_000_000;
+        let nonce: u64 = 1;
+        let mut msg = Bytes::new(&env);
+        msg.extend_from_array(&policy_id.to_be_bytes());
+        msg.extend_from_array(&timestamp.to_be_bytes());
+        msg.extend_from_array(&nonce.to_be_bytes());
+        msg.push_back(1u8);
+        let sig = sign_msg(&keypair, &env, &msg);
+
+        let trigger = niffyinsure::types::OracleTrigger {
+            policy_id,
+            event_type: niffyinsure::types::TriggerEventType::WeatherEvent,
+            source: OracleSource::Registered(source_addr.clone()),
+            payload: {
+                let mut b = Bytes::new(&env);
+                b.push_back(1u8);
+                b
+            },
+            timestamp,
+            trigger_ledger: 1000,
+            nonce,
+            signature: sig,
+        };
+
+        let result = env.as_contract(&cid, || {
+            niffyinsure::storage::set_oracle_enabled(&env, true);
+            niffyinsure::storage::set_oracle_pub_key(&env, &source_addr, &pub_key);
+            // Require 2-of-N aggregated attestation for this source.
+            niffyinsure::storage::set_oracle_quorum(&env, &source_addr, 2);
+            niffyinsure::validate::check_oracle_trigger(&env, &trigger, 1000, 17280)
+        });
+        assert_eq!(result, Err(OracleError::QuorumNotMet));
+    }
+
     #[test]
     fn check_trigger_status_transition_valid_paths() {
         assert!(niffyinsure::validate::check_trigger_status_transition(
