@@ -119,6 +119,11 @@
     "i18nKey": "errors.policy.batchTooLarge",
     "description": "Batch request exceeds the maximum allowed policy count."
   },
+  "REGION_BLOCKED": {
+    "httpStatus": 451,
+    "i18nKey": "errors.policy.regionBlocked",
+    "description": "Policy initiation is not available in the requester's region."
+  },
   "CLAIM_NOT_FOUND": {
     "httpStatus": 404,
     "i18nKey": "errors.claim.notFound",
