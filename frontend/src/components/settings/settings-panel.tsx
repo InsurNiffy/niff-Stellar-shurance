@@ -55,7 +55,7 @@ export function SettingsPanel() {
     jwt,
   )
 
-  const { startTour } = useOnboardingTour()
+  const { startTour } = useOnboardingTour({ autoStart: false })
 
   // ── Consent state ─────────────────────────────────────────────────────────
   const [consentValue, setConsentValue] = useState<CookieConsentValue | null>(null)

@@ -9,10 +9,10 @@ export interface TicketPayload {
   captchaToken: string;
 }
 
-export async function submitSupportTicket(payload: TicketPayload): Promise<{ id: string; status: string }> {
+export async function submitSupportTicket(payload: TicketPayload, jwt?: string | null): Promise<{ id: string; status: string }> {
   const res = await fetch(`${API_BASE_URL}/api/support/tickets`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) },
     body: JSON.stringify(payload),
   });
 
@@ -40,6 +40,17 @@ export interface TicketTypingState {
   staffId: string | null
   updatedAt: number
   expiresAt: number
+}
+
+export async function listMySupportTickets(jwt: string, limit = 50, offset = 0): Promise<{ tickets: SupportTicketView[]; total: number }> {
+  const res = await fetch(`${API_BASE_URL}/api/support/tickets?limit=${limit}&offset=${offset}`, {
+    headers: { Authorization: `Bearer ${jwt}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { message?: string };
+    throw new Error(err.message || 'Failed to load ticket history');
+  }
+  return res.json();
 }
 
 export async function getSupportTicket(ticketId: string): Promise<SupportTicketView> {

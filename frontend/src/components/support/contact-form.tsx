@@ -10,8 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { submitSupportTicket } from "@/lib/api/support";
+import { useAuth } from "@/lib/hooks/useAuth";
+import { toast } from "@/components/ui/use-toast";
 
 import { CaptchaWidget } from "./captcha-widget";
+
+interface ContactFormProps {
+  onSubmitted?: () => void;
+}
 
 const schema = z.object({
   email: z.string().email("Valid email required"),
@@ -22,7 +28,8 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 const DEFAULT_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 
-export function ContactForm() {
+export function ContactForm({ onSubmitted }: ContactFormProps) {
+  const { jwt } = useAuth();
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -44,14 +51,21 @@ export function ContactForm() {
       return;
     }
     try {
-      const result = await submitSupportTicket({ ...data, captchaToken });
+      const payload = { ...data, captchaToken };
+      const result = jwt
+        ? await submitSupportTicket(payload, jwt)
+        : await submitSupportTicket(payload);
       setTicketRef(result.id);
       setStatus("success");
+      onSubmitted?.();
+      toast({ title: "Ticket submitted", description: `Ticket ${result.id} was created successfully.` });
       reset();
       setCaptchaToken(null);
     } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : DEFAULT_ERROR_MESSAGE);
+      const message = error instanceof Error ? error.message : DEFAULT_ERROR_MESSAGE;
+      setErrorMsg(message);
       setStatus('error');
+      toast({ title: "Ticket submission failed", description: message, variant: "destructive" });
     }
   };
 
