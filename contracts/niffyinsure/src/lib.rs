@@ -29,6 +29,21 @@ use soroban_sdk::{
     contract, contractevent, contractimpl, panic_with_error, Address, Env, String, Vec,
 };
 
+/// Parses a decimal ASCII digit string (as produced by Cargo's
+/// `CARGO_PKG_VERSION_{MAJOR,MINOR,PATCH}` env vars) into a `u32` at compile time.
+/// Used by `NiffyInsure::get_contract_version` — see `docs/api-versioning-policy.md`.
+const fn parse_u32(s: &str) -> u32 {
+    let bytes = s.as_bytes();
+    let mut value: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i] - b'0';
+        value = value * 10 + digit as u32;
+        i += 1;
+    }
+    value
+}
+
 #[contract]
 pub struct NiffyInsure;
 pub use admin::{AdminAction, AdminError, PendingAdminAction, RoleError};
@@ -59,6 +74,8 @@ pub enum SubscriptionError {
     TooManySubscriptions = 1,
     /// Subscription not found or already expired.
     NotFound = 2,
+    /// Callback address is not on the `AllowedPayoutRecipient` allowlist.
+    CallbackNotAllowed = 3,
 }
 #[contractevent(topics = ["niffyinsure", "voter_removed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -335,6 +352,19 @@ impl NiffyInsure {
     /// Read-only: no storage access, no auth required. Safe to call via simulation.
     pub fn version(env: Env) -> soroban_sdk::String {
         soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Returns the contract's semantic version as `(major, minor, patch)` compile-time
+    /// constants parsed from this crate's `Cargo.toml`. Read-only: no storage access,
+    /// no auth required. Lets backend/frontend verify the connected contract's version
+    /// without parsing the `version()` string. See `docs/api-versioning-policy.md`.
+    pub fn get_contract_version(_env: Env) -> (u32, u32, u32) {
+        // `CARGO_PKG_VERSION_MAJOR/MINOR/PATCH` are provided by Cargo as compile-time
+        // env vars derived straight from this crate's `Cargo.toml` `[package].version`.
+        const MAJOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MAJOR"));
+        const MINOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MINOR"));
+        const PATCH: u32 = parse_u32(env!("CARGO_PKG_VERSION_PATCH"));
+        (MAJOR, MINOR, PATCH)
     }
 
     /// Returns contract identity used by backend and deploy tooling:
@@ -1256,9 +1286,17 @@ impl NiffyInsure {
         event_types: Vec<types::EventType>,
         pet_ids: Vec<u64>,
         ttl_ledgers: u32,
+        callback: Address,
     ) -> Result<u64, SubscriptionError> {
         owner.require_auth();
         storage::bump_instance(&env);
+
+        // Callback must be on the AllowedPayoutRecipient allowlist so this
+        // entrypoint cannot be used to register arbitrary addresses as
+        // notification targets (Issue #1617).
+        if !storage::is_allowed_payout_recipient(&env, &callback) {
+            return Err(SubscriptionError::CallbackNotAllowed);
+        }
 
         let now = env.ledger().sequence();
         let expires_at = now.saturating_add(ttl_ledgers);
@@ -1289,10 +1327,12 @@ impl NiffyInsure {
             event_types,
             pet_ids,
             expires_at,
+            callback: callback.clone(),
         };
         storage::set_subscription(&env, &sub);
         ids.push_back(sub_id);
         storage::set_owner_subscription_ids(&env, &owner, &ids);
+        events::emit_subscription_created(&env, &owner, sub_id, &callback, expires_at);
 
         Ok(sub_id)
     }
@@ -1325,6 +1365,7 @@ impl NiffyInsure {
             }
         }
         storage::set_owner_subscription_ids(&env, &owner, &updated);
+        events::emit_subscription_cancelled(&env, &owner, sub_id);
         Ok(())
     }
 
