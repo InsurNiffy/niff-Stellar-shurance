@@ -35,6 +35,7 @@
     "seed": "ts-node src/database/seed.ts",
     "db:reset": "docker-compose down -v && docker-compose up -d",
     "error-catalog:check": "ts-node scripts/check-error-codes.ts",
+    "flags:check-deprecated": "ts-node scripts/check-deprecated-flags.ts",
     "error-catalog:export": "ts-node scripts/export-error-catalog.ts",
     "env:example:generate": "ts-node scripts/generate-env-example.ts",
     "env:example:check": "ts-node scripts/check-env-example.ts",

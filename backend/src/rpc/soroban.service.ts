@@ -1790,6 +1790,76 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Build unsigned set_allowed_asset transaction (admin auth via invoker).
+   * Signature: set_allowed_asset(asset: Address, allowed: bool, symbol_hint: String, decimals: u32)
+   */
+  async buildSetAllowedAssetTransaction(args: {
+    admin: string;
+    asset: string;
+    allowed: boolean;
+    symbol?: string;
+    decimals?: number;
+  }): Promise<BuildTransactionResult> {
+    return this.trackRpc('build_set_allowed_asset', async () => {
+      const server = this.makeServer();
+      const account = await this.loadAccount(server, args.admin);
+      const ledgerInfo = await server.getLatestLedger();
+
+      const scArgs = [
+        new Address(args.asset).toScVal(),
+        nativeToScVal(args.allowed, { type: 'bool' }),
+        nativeToScVal(args.symbol ?? '', { type: 'string' }),
+        nativeToScVal(args.decimals ?? 7, { type: 'u32' }),
+      ];
+
+      const contract = new Contract(this.contractId);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(contract.call('set_allowed_asset', ...scArgs))
+        .setTimeout(30)
+        .build();
+
+      const simulation = await server.simulateTransaction(tx);
+      if (Api.isSimulationError(simulation)) {
+        const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+        this.mapSimulationError(err.error);
+      }
+
+      const successSim = simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+      const assembled = assembleTransaction(tx, successSim);
+      const unsignedXdr = assembled.build().toEnvelope().toXDR('base64');
+
+      const baseFee = BigInt(BASE_FEE);
+      const resourceFee = BigInt(successSim.minResourceFee ?? '0');
+      const totalFee = baseFee + resourceFee;
+
+      const authRequirements: AuthRequirement[] = [];
+      for (const authEntry of successSim.result?.auth ?? []) {
+        const credentials = authEntry.credentials();
+        if (credentials.switch().value === xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+          const addrObj = credentials.address().address();
+          const stellarAddr = Address.fromScAddress(addrObj);
+          const isContract = addrObj.switch().value === xdr.ScAddressType.scAddressTypeContract().value;
+          authRequirements.push({ address: stellarAddr.toString(), isContract });
+        }
+      }
+
+      return {
+        unsignedXdr,
+        minResourceFee: successSim.minResourceFee ?? '0',
+        baseFee: BASE_FEE.toString(),
+        totalEstimatedFee: totalFee.toString(),
+        totalEstimatedFeeXlm: SorobanService.stroopsToXlm(totalFee),
+        authRequirements,
+        memoConvention: 'Asset allowlist update – no memos used for protocol correlation.',
+        currentLedger: ledgerInfo.sequence,
+      };
+    });
+  }
+
+  /**
    * Build unsigned admin_set_quorum_bps transaction.
    * Signature: admin_set_quorum_bps(admin, bps: u32)
    */
@@ -1859,6 +1929,62 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
       memoConvention: 'Quorum update – no memos used for protocol correlation.',
       currentLedger: ledgerInfo.sequence,
     };
+  }
+
+  /**
+   * Build an unsigned admin contract call (e.g. pause, unpause, set_grace_period_ledgers).
+   * `scArgs` must already be encoded in contract argument order.
+   */
+  async buildAdminCallTransaction(args: {
+    admin: string;
+    method: string;
+    scArgs: xdr.ScVal[];
+  }): Promise<BuildTransactionResult> {
+    return this.trackRpc(`build_${args.method}`, async () => {
+      const server = this.makeServer();
+      const account = await this.loadAccount(server, args.admin);
+      const ledgerInfo = await server.getLatestLedger();
+
+      const contract = new Contract(this.contractId);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(contract.call(args.method, ...args.scArgs))
+        .setTimeout(30)
+        .build();
+
+      const simulation = await server.simulateTransaction(tx);
+      if (Api.isSimulationError(simulation)) {
+        const err = simulation as SorobanRpc.Api.SimulateTransactionErrorResponse;
+        this.mapSimulationError(err.error);
+      }
+
+      const successSim = simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+      const unsignedXdr = assembleTransaction(tx, successSim).build().toEnvelope().toXDR('base64');
+      const totalFee = BigInt(BASE_FEE) + BigInt(successSim.minResourceFee ?? '0');
+
+      const authRequirements: AuthRequirement[] = [];
+      for (const authEntry of successSim.result?.auth ?? []) {
+        const credentials = authEntry.credentials();
+        if (credentials.switch().value === xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+          const addrObj = credentials.address().address();
+          const isContract = addrObj.switch().value === xdr.ScAddressType.scAddressTypeContract().value;
+          authRequirements.push({ address: Address.fromScAddress(addrObj).toString(), isContract });
+        }
+      }
+
+      return {
+        unsignedXdr,
+        minResourceFee: successSim.minResourceFee ?? '0',
+        baseFee: BASE_FEE.toString(),
+        totalEstimatedFee: totalFee.toString(),
+        totalEstimatedFeeXlm: SorobanService.stroopsToXlm(totalFee),
+        authRequirements,
+        memoConvention: `Admin ${args.method} – no memos used for protocol correlation.`,
+        currentLedger: ledgerInfo.sequence,
+      };
+    });
   }
 
   /**

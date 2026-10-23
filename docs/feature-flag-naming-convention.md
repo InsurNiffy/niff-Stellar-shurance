@@ -50,6 +50,14 @@ tags as a prefix, e.g. `description: "[experimental] ..."`:
 A flag should never stay in `rolled-out` indefinitely without a periodic look — that's what the
 cleanup audit (below) is for.
 
+Deprecated flags are registered in
+[`backend/src/feature-flags/flag-lifecycle.ts`](../backend/src/feature-flags/flag-lifecycle.ts)
+with the release they were deprecated in. CI (`npm run flags:check-deprecated`) fails if a flag
+stays deprecated for more than one release cycle (minor version).
+
+As of the 2026-10-22 audit, no flag in `ALLOWED_FLAG_KEYS` is in the `deprecated` stage, so no
+cleanup PRs are required.
+
 ## Audit of existing flags (dry-run against current allowlist)
 
 Audited against `ALLOWED_FLAG_KEYS` in

@@ -3,11 +3,25 @@ import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { SorobanService } from '../rpc/soroban.service';
 import { GetPoliciesBatchDto } from './dto/get-policies-batch.dto';
 import { GetClaimsBatchDto } from './dto/get-claims-batch.dto';
+import { getNetworkConfig } from '../config/network.config';
 
 @ApiTags('chain')
 @Controller('chain')
 export class ChainController {
   constructor(private readonly soroban: SorobanService) {}
+
+  /**
+   * GET /chain/info
+   *
+   * Returns the active network and contract address. The passphrase itself is
+   * validated against STELLAR_NETWORK at startup (see loadNetworkConfig).
+   */
+  @Get('info')
+  @ApiOperation({ summary: 'Get active network name and contract address' })
+  getInfo(): { network: string; contractAddress: string } {
+    const config = getNetworkConfig();
+    return { network: config.network, contractAddress: config.contractIds.niffyinsure };
+  }
 
   @Post('policies/batch')
   @HttpCode(200)

@@ -40,6 +40,7 @@ The Loki transport (`backend/src/common/logger/loki.transport.ts`) is built on N
 | `service` | string | Always `niffyinsure-api` |
 | `env` | string | `NODE_ENV` value |
 | `requestId` | string | Correlation ID (`x-request-id` or generated) |
+| `correlation_id` | string | Request correlation ID, bound by `RequestContextMiddleware` and added to **every** log line emitted while handling a request |
 | `method` | string | HTTP verb |
 | `url` | string | Request path (no query string) |
 | `statusCode` | number | HTTP response status |
@@ -142,6 +143,72 @@ try {
 
 ---
 
+## Shipper configuration examples
+
+The backend always writes one JSON object per line to stdout (Winston `format.json()`), so any
+stdout-based shipper can collect logs without the in-process `LOG_SHIPPING_URL` transport.
+
+### Loki (Promtail)
+
+```yaml
+# promtail-config.yml
+server:
+  http_listen_port: 9080
+positions:
+  filename: /tmp/positions.yaml
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+scrape_configs:
+  - job_name: niffyinsure-api
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/.*backend.*'
+        action: keep
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            service: service
+            correlation_id: correlation_id
+      - labels:
+          level:
+          service:
+      # correlation_id is high-cardinality: keep it in the line, not as a label
+```
+
+### ELK (Filebeat → Elasticsearch)
+
+```yaml
+# filebeat.yml
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      templates:
+        - condition:
+            contains:
+              docker.container.name: backend
+          config:
+            - type: container
+              paths:
+                - /var/lib/docker/containers/${data.docker.container.id}/*.log
+              processors:
+                - decode_json_fields:
+                    fields: ['message']
+                    target: ''
+                    overwrite_keys: true
+output.elasticsearch:
+  hosts: ['http://elasticsearch:9200']
+  index: 'niffyinsure-api-%{+yyyy.MM.dd}'
+setup.template.name: 'niffyinsure-api'
+setup.template.pattern: 'niffyinsure-api-*'
+```
+
+Search a single request in Kibana with `correlation_id:"<x-request-id>"`.
+
+---
+
 ## Loki deployment (reference)
 
 ### Docker Compose (local / staging)
@@ -219,6 +286,9 @@ Set `LOG_SHIPPING_AUTH_TOKEN` to a Grafana Cloud API token scoped to **Logs Writ
 
 # Rate of errors per minute
 rate({service="niffyinsure-api"} | json | level="error" [1m])
+
+# Every log line for a single request
+{service="niffyinsure-api"} | json | correlation_id="<x-request-id>"
 ```
 
 ---

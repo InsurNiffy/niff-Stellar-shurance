@@ -73,6 +73,8 @@ pub enum AdminError {
     MaxSweepPerLedgerOutOfBounds = 125,
     /// Contract has not been initialized yet.
     NotInitialized = 126,
+    /// Max appeals per claim outside the allowed bounds (1–3).
+    MaxAppealsPerClaimOutOfBounds = 127,
 }
 
 /// Payload for a treasury-rotation proposal.
@@ -903,6 +905,33 @@ pub fn set_cooldown_ledgers(env: &Env, new_ledgers: u32) -> Result<(), AdminErro
         new_ledgers,
     }
     .publish(env);
+    Ok(())
+}
+
+// ── Configurable max appeals per claim (Issue #1605) ──────────────────────
+
+#[contractevent(topics = ["niffyinsure", "appeals_cap_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppealsCapUpdated {
+    pub old_cap: u32,
+    pub new_cap: u32,
+}
+
+/// Admin-only: set the maximum number of appeals allowed per claim.
+///
+/// Was previously a compile-time constant (`ledger::MAX_APPEALS_PER_CLAIM = 1`).
+/// `new_cap` must be in `[1, 3]` — at least one appeal must remain possible,
+/// and more than three rounds has no operational justification and would let
+/// an admin stall claim resolution indefinitely.
+pub fn set_max_appeals_per_claim(env: &Env, new_cap: u32) -> Result<(), AdminError> {
+    let _admin = require_param_admin(env);
+    check_and_update_gov_cooldown(env);
+    if new_cap < 1 || new_cap > 3 {
+        return Err(AdminError::MaxAppealsPerClaimOutOfBounds);
+    }
+    let old_cap = storage::get_max_appeals_per_claim(env);
+    storage::set_max_appeals_per_claim(env, new_cap);
+    AppealsCapUpdated { old_cap, new_cap }.publish(env);
     Ok(())
 }
 

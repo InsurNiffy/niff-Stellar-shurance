@@ -129,6 +129,22 @@ export class QueueMonitorService implements OnModuleInit, OnModuleDestroy {
     return this.queues;
   }
 
+  /** List failed (DLQ) jobs for a queue, newest first. */
+  async getFailedJobs(queueName: string, start = 0, end = 49) {
+    const q = this.queues.find((q) => q.name === queueName);
+    if (!q) throw new Error(`Queue "${queueName}" not found`);
+    const jobs = await q.getFailed(start, end);
+    return jobs.map((job) => ({
+      id: job.id,
+      name: job.name,
+      data: job.data,
+      failedReason: job.failedReason,
+      attemptsMade: job.attemptsMade,
+      timestamp: job.timestamp,
+      finishedOn: job.finishedOn,
+    }));
+  }
+
   /**
    * Replay a failed job by moving it back to waiting.
    * Returns the new job id.

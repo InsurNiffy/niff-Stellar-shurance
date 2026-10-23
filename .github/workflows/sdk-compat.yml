@@ -30,25 +30,25 @@ jobs:
       - name: Resolve soroban-sdk version
         id: sdk
         run: |
+          manifest=contracts/niffyinsure/Cargo.toml
+          pinned=$(grep -oP 'soroban-sdk\s*=\s*\{\s*version\s*=\s*"=\K[^"]+' "$manifest" | head -n1)
           if [ "${{ matrix.sdk }}" = "next-minor" ]; then
-            # Bump to the next minor release of soroban-sdk
-            current=$(grep -oP 'soroban-sdk\s*=\s*"\K[^"]+' Cargo.toml | head -n1)
-            major=$(echo "$current" | cut -d. -f1)
-            minor=$(echo "$current" | cut -d. -f2)
-            next_minor="${major}.$((minor + 1)).0"
-            echo "version=$next_minor" >> "$GITHUB_OUTPUT"
+            # Next release line after the pinned one (e.g. 25.3.1 -> 26.x)
+            major=$(echo "$pinned" | cut -d. -f1)
+            echo "version=$((major + 1))" >> "$GITHUB_OUTPUT"
           else
-            pinned=$(grep -oP 'soroban-sdk\s*=\s*"\K[^"]+' Cargo.toml | head -n1)
             echo "version=$pinned" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Pin soroban-sdk to ${{ steps.sdk.outputs.version }}
+        if: matrix.sdk == 'next-minor'
         run: |
-          cargo update -p soroban-sdk --precise "${{ steps.sdk.outputs.version }}" || \
-            cargo update -p soroban-sdk --precise "${{ steps.sdk.outputs.version }}"
+          sed -i -E 's/(soroban-sdk = \{ version = )"=[^"]+"/\1"${{ steps.sdk.outputs.version }}"/' \
+            contracts/niffyinsure/Cargo.toml
+          cargo update -p niffyinsure
 
       - name: Run contract tests
-        run: cargo test --workspace
+        run: cargo test -p niffyinsure
 
   report-failure:
     name: report failure

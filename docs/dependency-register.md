@@ -12,15 +12,15 @@ how Dependabot PRs for these (and other) dependencies get reviewed.
 
 | Layer | Dependency | License | Maintenance activity | Known CVE status (as of this review) |
 |---|---|---|---|---|
-| Contract | `soroban-sdk` | Apache-2.0 | Active, frequent releases (Stellar Development Foundation) | None known |
-| Contract | `soroban-token-sdk` | Apache-2.0 | Active | None known |
-| Backend | `@nestjs/core` | MIT | Active, regular minor releases | None known |
-| Backend | `@stellar/stellar-sdk` | Apache-2.0 | Active | None known |
-| Backend | `typeorm` | MIT | Active | None known |
-| Backend | `graphql` | MIT | Active | None known |
-| Frontend | `next` | MIT | Active, frequent releases (Vercel) | None known |
+| Contract | `soroban-sdk` | Apache-2.0 | Active, frequent releases (Stellar Development Foundation) | Not re-verified 2026-10-22 — `cargo audit` pending (runs in CI) |
+| Contract | `soroban-token-sdk` | Apache-2.0 | Active | Not re-verified 2026-10-22 — `cargo audit` pending (runs in CI) |
+| Backend | `@nestjs/core` | MIT | Active, regular minor releases | Not verified 2026-10-22 — `backend/package-lock.json` is invalid JSON, `npm audit` fails (ENOLOCK) |
+| Backend | `@stellar/stellar-sdk` | Apache-2.0 | Active | Not verified 2026-10-22 — see `@nestjs/core` row |
+| Backend | `typeorm` | MIT | Active | Not verified 2026-10-22 — see `@nestjs/core` row |
+| Backend | `graphql` | MIT | Active | Not verified 2026-10-22 — see `@nestjs/core` row |
+| Frontend | `next` | MIT | Active, frequent releases (Vercel) | **Critical** — DoS via Server Components, middleware bypass, redirect cache poisoning (affects ≤ 16.3.7); fix available via upgrade |
 | Frontend | `react` / `react-dom` | MIT | Active (Meta) | None known |
-| Frontend | `@creit.tech/stellar-wallets-kit` | MIT | Active | None known |
+| Frontend | `@creit.tech/stellar-wallets-kit` | MIT | Active | **High** (transitive: `@hot-wallet/sdk`, `@trezor/connect-web`, `@stellar/stellar-sdk` → `toml`); fix requires semver-major change |
 
 CVE status reflects `npm audit` / `cargo audit` results at time of writing;
 these tools are the authoritative live source (see
@@ -34,4 +34,6 @@ The reviewer records the review date below.
 
 | Review date | Reviewer | Notes |
 |---|---|---|
-| _(none yet — first review pending)_ | | |
+| 2026-10-22 | @jones43r | First quarterly review. `frontend` npm audit: 106 vulns (5 critical, 64 high). Backend npm audit blocked by invalid lockfile; `cargo audit` not run locally (no toolchain) — follow up in CI. |
+
+**Next review due:** Q1 2027 — reviewer to schedule a calendar reminder for 2027-01-15.

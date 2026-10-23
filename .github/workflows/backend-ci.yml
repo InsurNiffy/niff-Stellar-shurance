@@ -85,8 +85,28 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Check deprecated feature flags
+        run: npm run flags:check-deprecated
+
+      - name: Check golden vectors are fresh
+        # Sandboxed: no secrets or tokens in the environment; vectors are derived from local SDK encoding.
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" npm run refresh-vectors
+          if ! git diff --exit-code -- src/soroban/golden-vectors.json; then
+            echo "::error::Golden vectors are stale. Run 'npm run refresh-vectors' in backend/ and commit src/soroban/golden-vectors.json."
+            exit 1
+          fi
+
       - name: Build
         run: npm run build
+
+      - name: Check OpenAPI spec drift
+        run: |
+          npm run openapi:generate
+          if ! git diff --exit-code -- openapi.json; then
+            echo "::error::backend/openapi.json is stale. Run 'npm run openapi:generate' in backend/, commit the result, then run 'make generate-client' from the repo root to sync the TypeScript client."
+            exit 1
+          fi
 
       - name: Test
         run: npm test
