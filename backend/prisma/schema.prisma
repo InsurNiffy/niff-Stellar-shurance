@@ -617,3 +617,20 @@ model WebhookDelivery {
   @@index([subscriptionId])
   @@map("webhook_deliveries")
 }
+
+/// Dead-letter queue for outbound webhooks whose retries are exhausted (#1635).
+model WebhookDlq {
+  id             String    @id @default(uuid()) @map("id")
+  targetUrl      String    @map("target_url")
+  eventType      String    @map("event_type")
+  idempotencyKey String    @map("idempotency_key")
+  payload        Json
+  attempts       Int
+  lastError      String?   @map("last_error")
+  failedAt       DateTime  @default(now()) @map("failed_at")
+  retriedAt      DateTime? @map("retried_at")
+
+  @@index([failedAt])
+  @@index([retriedAt])
+  @@map("webhook_dlq")
+}
