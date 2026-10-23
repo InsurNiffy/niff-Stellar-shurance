@@ -15,6 +15,7 @@ import {
   PageParams,
 } from '../helpers/pagination';
 import { sanitizePostBody } from './sanitize-post-body';
+import { postBus, POST_PUBLISHED_EVENT } from './post-events';
 
 @Injectable()
 export class PostsService {
@@ -79,6 +80,7 @@ export class PostsService {
         publishAt: dto.publishAt ?? null,
       },
     });
+    if (post.status === 'PUBLISHED' && !this.isScheduledForFuture(post)) this.emitPublished(post);
     return this.toDto(post);
   }
 
@@ -95,7 +97,23 @@ export class PostsService {
         ...(dto.publishAt !== undefined ? { publishAt: dto.publishAt } : {}),
       },
     });
+    if (
+      existing.status !== 'PUBLISHED' &&
+      post.status === 'PUBLISHED' &&
+      !this.isScheduledForFuture(post)
+    ) {
+      this.emitPublished(post);
+    }
     return this.toDto(post);
+  }
+
+  private emitPublished(post: { id: number; title: string; authorAddress: string }): void {
+    postBus.emit(POST_PUBLISHED_EVENT, {
+      postId: post.id,
+      title: post.title,
+      authorAddress: post.authorAddress,
+      publishedAt: new Date(),
+    });
   }
 
   private toPrismaStatus(status: PostStatus): PrismaPostStatus {

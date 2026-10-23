@@ -45,6 +45,7 @@ import { AddressNormalizeInterceptor } from './common/interceptors/address-norma
 import { LastSeenInterceptor } from './common/interceptors/last-seen.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { PostsModule } from './posts/posts.module';
+import { GovernanceModule } from './governance/governance.module';
 import { HorizonModule } from './horizon/horizon.module';
 
 /** Mutation routes that require idempotency key support (issue #363). */
@@ -103,6 +104,7 @@ const IDEMPOTENCY_ROUTES = [
     FeedsModule,
     AssetsModule,
     PostsModule,
+    GovernanceModule,
     HorizonModule,
   ],
   controllers: [OracleHooksController, BetaCalculatorsController, XdrDecodeController, PingController],

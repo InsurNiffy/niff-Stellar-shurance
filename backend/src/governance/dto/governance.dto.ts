@@ -246,6 +246,17 @@ export class VoteProposalDto {
 }
 
 export class DelegateVoteDto {
+  @ApiProperty({ description: 'Delegator address (transaction source and signer)' })
+  @IsString()
+  @Matches(STELLAR_ADDRESS_REGEX)
+  delegator!: string;
+
+  @ApiProperty({ description: 'Ledger sequence (inclusive) at which the delegation expires' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  expiryLedger!: number;
+
   @ApiProperty({ description: 'Address receiving the delegated voting power' })
   @IsString()
   @Matches(STELLAR_ADDRESS_REGEX)

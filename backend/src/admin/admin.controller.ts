@@ -49,6 +49,8 @@ import { SorobanService } from '../rpc/soroban.service';
 import { TokenBlacklistService } from '../auth/token-blacklist.service';
 import { SupportService } from '../support/support.service';
 import { CommentRepository } from '../claims/comments/comment.repository';
+import { ModerateCommentDto } from '../claims/comments/comment.dto';
+import { CommentService } from '../claims/comments/comment.service';
 import { TenantConfigAuditService } from '../tenant/tenant-config-audit.service';
 import { TenantConfigAuditHistoryDto } from '../tenant/dto/tenant-config-audit.dto';
 
@@ -175,6 +177,7 @@ export class AdminController {
     private readonly tokenBlacklist: TokenBlacklistService,
     private readonly supportService: SupportService,
     private readonly commentRepository: CommentRepository,
+    private readonly commentService: CommentService,
     private readonly tenantConfigAuditService: TenantConfigAuditService,
   ) {}
 
@@ -1230,6 +1233,29 @@ export class AdminController {
       ...c,
       isDeleted: c.deletedAt !== null,
     }));
+  }
+
+  /**
+   * PATCH /admin/claims/:id/comments/:commentId
+   *
+   * Admin edit and/or hide (`hidden: true`) / unhide a comment. Audited.
+   */
+  @Patch('claims/:id/comments/:commentId')
+  @ApiOperation({ summary: 'Admin edit or hide a claim comment' })
+  async adminModerateComment(
+    @Param('id', ParseIntPipe) claimId: number,
+    @Param('commentId') commentId: string,
+    @Body() dto: ModerateCommentDto,
+    @Req() req: AdminRequest,
+  ) {
+    const result = await this.commentService.moderate(claimId, commentId, dto);
+    await this.auditService.write({
+      actor: req.user?.walletAddress ?? 'unknown',
+      action: 'admin_moderate_comment',
+      payload: { commentId, claimId, edited: dto.body !== undefined, hidden: dto.hidden ?? null },
+      ipAddress: req.ip,
+    });
+    return result;
   }
 
   /**

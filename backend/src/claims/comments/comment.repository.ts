@@ -5,10 +5,22 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class CommentRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  findActive(claimId: number) {
+  findActive(claimId: number, after?: string, take = 20) {
     return this.prisma.claimComment.findMany({
-      where: { claimId, deletedAt: null },
-      orderBy: { createdAt: 'asc' },
+      where: { claimId, deletedAt: null, hiddenAt: null },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: take + 1,
+      ...(after ? { cursor: { id: after }, skip: 1 } : {}),
+    });
+  }
+
+  moderate(id: string, data: { body?: string; hidden?: boolean }) {
+    return this.prisma.claimComment.update({
+      where: { id },
+      data: {
+        ...(data.body !== undefined ? { body: data.body, editedAt: new Date() } : {}),
+        ...(data.hidden !== undefined ? { hiddenAt: data.hidden ? new Date() : null } : {}),
+      },
     });
   }
 
@@ -19,9 +31,9 @@ export class CommentRepository {
     });
   }
 
-  create(claimId: number, authorAddress: string, body: string) {
+  create(claimId: number, authorAddress: string, body: string, parentId?: string) {
     return this.prisma.claimComment.create({
-      data: { claimId, authorAddress, body },
+      data: { claimId, authorAddress, body, parentId: parentId ?? null },
     });
   }
 

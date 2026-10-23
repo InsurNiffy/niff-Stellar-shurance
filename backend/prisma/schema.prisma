@@ -475,6 +475,12 @@ model ClaimComment {
   deletedAt     DateTime? @map("deleted_at")
   /// Staff wallet address who soft-deleted this comment. Null if deleted by author.
   deletedBy     String?   @map("deleted_by")
+  /// Set when an admin hides the comment (moderation). Hidden comments are excluded from the public list.
+  hiddenAt      DateTime? @map("hidden_at")
+  /// Set when an admin edits the comment body.
+  editedAt      DateTime? @map("edited_at")
+  /// Parent comment id when this comment is a reply.
+  parentId      String?   @map("parent_id")
 
   claim         Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
 

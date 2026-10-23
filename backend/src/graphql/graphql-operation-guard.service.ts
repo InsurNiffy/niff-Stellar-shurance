@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GraphQLError, type DocumentNode, type GraphQLSchema } from 'graphql';
-import { getComplexity, simpleEstimator } from 'graphql-query-complexity';
+import { fieldExtensionsEstimator, getComplexity, simpleEstimator } from 'graphql-query-complexity';
 import { resolveGraphqlLimits } from './graphql-limits.util';
 
 type Variables = Record<string, unknown>;
@@ -34,7 +34,7 @@ export class GraphqlOperationGuardService {
       schema,
       query: document,
       variables,
-      estimators: [simpleEstimator({ defaultComplexity: 1 })],
+      estimators: [fieldExtensionsEstimator(), simpleEstimator({ defaultComplexity: 1 })],
     });
 
     if (complexity > limit) {

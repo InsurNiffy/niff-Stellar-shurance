@@ -83,6 +83,21 @@ export class ClaimsService {
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
   }
 
+  /** Build an unsigned `escalate_claim` transaction for the admin wallet to sign. */
+  async buildEscalateClaimTransaction(
+    admin: string,
+    claimId: number,
+    newDeadlineLedger: number,
+  ): Promise<{ claimId: number; unsignedXdr: string }> {
+    await this.getClaimById(claimId);
+    const { unsignedXdr } = await this.soroban.buildEscalateClaimTransaction({
+      admin,
+      claimId,
+      newDeadlineLedger,
+    });
+    return { claimId, unsignedXdr };
+  }
+
   /** Get the appropriate client for reads — replica if enabled, otherwise primary. */
   private getReadClient() {
     return this.prismaReplica.isEnabled() ? this.prismaReplica : this.prisma;

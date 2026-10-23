@@ -1813,6 +1813,13 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
       ];
 
       const contract = new Contract(this.contractId);
+
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(contract.call('set_allowed_asset', ...scArgs))
+     
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
         networkPassphrase: this.networkPassphrase,
