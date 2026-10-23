@@ -1096,11 +1096,11 @@ impl NiffyInsure {
         governance::get_proposal(&env, proposal_id)
     }
 
-    /// Permissionless keeper: close out a proposal whose voting deadline has
-    /// passed without reaching quorum, removing it and emitting
-    /// `proposal_expired`. Anyone may call this to keep governance state
-    /// tidy; it is a no-op guard against re-finalizing an already-closed or
-    /// already-applied proposal.
+    /// Permissionless keeper (Issue #1600): close out a governance proposal
+    /// whose voting deadline has passed without reaching quorum, removing it
+    /// and emitting `proposal_expired`. Callable by anyone; reverts with
+    /// `ProposalNotExpired` before the deadline and `ProposalAlreadyApplied`
+    /// on a proposal that already passed quorum and took effect.
     pub fn finalize_governance_proposal(
         env: Env,
         proposal_id: u64,
