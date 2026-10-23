@@ -13,6 +13,11 @@ pub const MAX_EVIDENCE_URL_BYTES: u32 = 2048;
 /// Default evidence attachment limit when admin config is unset.
 pub const IMAGE_URLS_MAX: u32 = 5;
 pub const REASON_MAX_LEN: u32 = 128;
+/// Max byte length for a region code key in the admin-managed region registry
+/// (and for a `RegionConfig::parent` reference). Sized for ISO 3166-1/3166-2
+/// style codes (e.g. `"US"`, `"US-CA"`, `"GB-ENG"`) with generous headroom,
+/// while keeping the instance-stored `RegionRegistry` map bounded.
+pub const REGION_CODE_MAX_LEN: u32 = 32;
 pub const SAFETY_SCORE_MAX: u32 = 100;
 /// Max byte length for `metadata_uri` on bind / admin update.
 ///

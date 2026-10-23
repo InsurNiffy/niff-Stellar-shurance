@@ -899,3 +899,63 @@ pub fn emit_voter_added(env: &Env, voter: &Address, added_by: &Address) {
     }
     .publish(env);
 }
+
+// ── Region registry events (Issue #1608) ─────────────────────────────────────
+
+/// Emitted by `upsert_region` when a region config is created or updated.
+/// topics: ("niffyinsure", "region_upserted", region: String)
+/// payload: { version, parent, risk_multiplier, active, created, at_ledger }
+/// - `risk_multiplier`: basis points (10_000 = 1x)
+/// - `active` / `created`: u32 flags (1 = true, 0 = false); `created = 0` means
+///   an existing entry was overwritten.
+#[contractevent(topics = ["niffyinsure", "region_upserted"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionUpsertedData {
+    #[topic]
+    pub region: String,
+    pub version: u32,
+    pub parent: String,
+    pub risk_multiplier: i128,
+    pub active: u32,
+    pub created: u32,
+    pub at_ledger: u32,
+}
+
+pub fn emit_region_upserted(
+    env: &Env,
+    region: &String,
+    config: &crate::types::RegionConfig,
+    created: bool,
+) {
+    RegionUpsertedData {
+        region: region.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        parent: config.parent.clone(),
+        risk_multiplier: config.risk_multiplier,
+        active: config.active as u32,
+        created: created as u32,
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+}
+
+/// Emitted by `remove_region` when a region config is deleted.
+/// topics: ("niffyinsure", "region_removed", region: String)
+/// payload: { version, at_ledger }
+#[contractevent(topics = ["niffyinsure", "region_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionRemovedData {
+    #[topic]
+    pub region: String,
+    pub version: u32,
+    pub at_ledger: u32,
+}
+
+pub fn emit_region_removed(env: &Env, region: &String) {
+    RegionRemovedData {
+        region: region.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+}
