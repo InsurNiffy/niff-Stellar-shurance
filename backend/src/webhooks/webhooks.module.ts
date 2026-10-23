@@ -4,7 +4,10 @@ import { AuthModule } from '../auth/auth.module';
 import { WebhookSubscriptionsController } from './webhook-subscriptions.controller';
 import { WebhookSubscriptionsService, WEBHOOK_DNS_LOOKUP } from './webhook-subscriptions.service';
 import { WebhookDeliveryService } from './webhook-delivery.service';
+import { WebhookDlqService } from './webhook-dlq.service';
+import { WebhookDlqController } from './webhook-dlq.controller';
 import { OutboundWebhookService } from './outbound-webhook.service';
+import { WebhookSsrfRevalidationService } from './webhook-ssrf-revalidation.service';
 import { defaultDnsLookup } from './ssrf';
 import { setOutboundJobProcessor } from './outbound.queue';
 
@@ -13,11 +16,13 @@ import { setOutboundJobProcessor } from './outbound.queue';
  */
 @Module({
   imports: [PrismaModule, AuthModule],
-  controllers: [WebhookSubscriptionsController],
+  controllers: [WebhookSubscriptionsController, WebhookDlqController],
   providers: [
     WebhookSubscriptionsService,
     WebhookDeliveryService,
+    WebhookDlqService,
     OutboundWebhookService,
+    WebhookSsrfRevalidationService,
     { provide: WEBHOOK_DNS_LOOKUP, useValue: defaultDnsLookup },
   ],
   exports: [WebhookSubscriptionsService, WebhookDeliveryService, OutboundWebhookService],

@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
 import { ConfigService } from '@nestjs/config';
+import { AppLoggerService } from '../common/logger/app-logger.service';
 
 /**
  * AppealFinalizeKeeperService — Scheduled job that scans for UNDER_APPEAL claims
@@ -31,7 +32,12 @@ export class AppealFinalizeKeeperService {
     private readonly prisma: PrismaService,
     private readonly soroban: SorobanService,
     private readonly config: ConfigService,
+    @Optional() private readonly appLogger?: AppLoggerService,
   ) {}
+
+  private audit(message: string): void {
+    this.appLogger?.log(message, AppealFinalizeKeeperService.name);
+  }
 
   /**
    * Runs every 15 minutes (configurable). Scans for UNDER_APPEAL claims whose
@@ -132,15 +138,23 @@ export class AppealFinalizeKeeperService {
       try {
         this.logger.log(`Finalizing claim ${claimId} (attempt ${attempt + 1})...`);
         const result = await this.soroban.finalizeAppeal(claimId);
-        this.logger.log(
-          `Successfully finalized claim ${claimId}: txHash=${result.txHash}, ledger=${result.ledger}`,
-        );
+        const okMsg = `Successfully finalized claim ${claimId}: txHash=${result.txHash}, ledger=${result.ledger}`;
+        this.logger.log(okMsg);
+        this.audit(okMsg);
         // Reset failure counter on success
         this.failureTracker.delete(claimId);
         return;
       } catch (err) {
         lastError = err as Error;
         const errorMsg = lastError.message || String(lastError);
+
+        // Voting window still open: skip now, retry on the next cron cycle
+        if (/VotingWindowStillOpen|voting window still open/i.test(errorMsg)) {
+          const skipMsg = `Claim ${claimId} voting window still open — skipping, will retry next cycle`;
+          this.logger.log(skipMsg);
+          this.audit(skipMsg);
+          return;
+        }
 
         // Check if this is an already-finalized error (idempotency: treat as success)
         if (
@@ -164,9 +178,9 @@ export class AppealFinalizeKeeperService {
           );
           await this.sleep(delayMs);
         } else {
-          this.logger.error(
-            `Claim ${claimId} finalization failed after ${this.maxRetries + 1} attempts: ${errorMsg}`,
-          );
+          const failMsg = `Claim ${claimId} finalization failed after ${this.maxRetries + 1} attempts: ${errorMsg}`;
+          this.logger.error(failMsg);
+          this.audit(failMsg);
         }
       }
     }

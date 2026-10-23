@@ -267,8 +267,26 @@ model FeatureFlag {
   description String?
   updatedBy   String
   updatedAt   DateTime @updatedAt
+  /// When set, the flag is purged by the weekly maintenance cleanup after this time.
+  expiresAt   DateTime? @map("expires_at")
 
+  @@index([expiresAt])
   @@map("feature_flags")
+}
+
+/// Snapshot of resolved claims older than the archive window, removed from `claims`.
+model ClaimArchive {
+  id          Int      @id /// original claimId
+  policyId    String   @map("policy_id")
+  status      ClaimStatus
+  amount      String
+  snapshot    Json
+  resolvedAt  DateTime @map("resolved_at")
+  archivedAt  DateTime @default(now()) @map("archived_at")
+
+  @@index([policyId])
+  @@index([archivedAt])
+  @@map("claim_archive")
 }
 
 /// Deduplication table for wasm drift alerts — one row per (contract, actual-hash) pair.
@@ -395,6 +413,8 @@ model Tenant {
   id          String   @id @default(uuid())
   name        String
   contractIds String[] // JSON array stored as text
+  /// Contact address for operational notices (e.g. webhook subscription disabled).
+  contactEmail String? @map("contact_email")
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -500,6 +520,8 @@ model RegisteredVoter {
 model HolderProfile {
   walletAddress         String   @id @unique @map("wallet_address")
   displayName           String?  @map("display_name")
+  /// HTTPS URL on an allowed CDN host (AVATAR_CDN_HOSTS).
+  avatarUrl             String?  @map("avatar_url")
   /// Stored as-is; anonymized by the privacy service on request.
   email                 String?
   locale                String?  @default("en")
@@ -605,6 +627,21 @@ model WebhookSubscription {
   @@map("webhook_subscriptions")
 }
 
+/// Result of the daily SSRF re-validation of an active webhook subscription URL (#1654).
+model WebhookSsrfAudit {
+  id             String   @id @default(uuid()) @map("id")
+  subscriptionId String   @map("subscription_id")
+  url            String
+  passed         Boolean
+  reason         String?
+  disabled       Boolean  @default(false)
+  checkedAt      DateTime @default(now()) @map("checked_at")
+
+  @@index([subscriptionId])
+  @@index([checkedAt])
+  @@map("webhook_ssrf_audit")
+}
+
 /// Delivery log for outbound webhook POSTs — attempt, response code, outcome.
 model WebhookDelivery {
   id             String   @id @default(uuid()) @map("id")
@@ -622,4 +659,21 @@ model WebhookDelivery {
   @@index([eventType])
   @@index([subscriptionId])
   @@map("webhook_deliveries")
+}
+
+/// Dead-letter queue for outbound webhooks whose retries are exhausted (#1635).
+model WebhookDlq {
+  id             String    @id @default(uuid()) @map("id")
+  targetUrl      String    @map("target_url")
+  eventType      String    @map("event_type")
+  idempotencyKey String    @map("idempotency_key")
+  payload        Json
+  attempts       Int
+  lastError      String?   @map("last_error")
+  failedAt       DateTime  @default(now()) @map("failed_at")
+  retriedAt      DateTime? @map("retried_at")
+
+  @@index([failedAt])
+  @@index([retriedAt])
+  @@map("webhook_dlq")
 }

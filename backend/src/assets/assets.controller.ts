@@ -11,6 +11,24 @@ export class AssetsController {
     private readonly cache: AllowedAssetsCacheService,
   ) {}
 
+  @Get()
+  @ApiOperation({
+    summary: 'List allowed assets with metadata',
+    description:
+      'Returns allowlisted SEP-41 asset contracts with symbol, decimals and the ledger they were added at. ' +
+      'Cached in Redis (60s TTL) and invalidated on allowlist update events. No authentication required.',
+  })
+  async listAssets() {
+    const assets = await this.cache.getOrCompute(() =>
+      this.prisma.allowedAsset.findMany({
+        where: { isAllowed: true },
+        orderBy: { contractId: 'asc' },
+        select: { contractId: true, symbol: true, decimals: true, addedAtLedger: true, updatedAt: true },
+      }),
+    );
+    return { assets };
+  }
+
   @Get('allowed')
   @ApiOperation({
     summary: 'Get allowed assets',

@@ -106,9 +106,7 @@ describe('HorizonController', () => {
 
       await expect(
         controller.getTransactions(VALID_ADDRESS, undefined, undefined, mockRes),
-      ).rejects.toThrow(
-        new HttpException(expect.objectContaining({ statusCode: 429 }), HttpStatus.TOO_MANY_REQUESTS),
-      );
+      ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
 
       expect(mockRes.setHeader).toHaveBeenCalledWith('Retry-After', '42');
       expect(service.getTransactions).not.toHaveBeenCalled();

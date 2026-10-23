@@ -184,6 +184,12 @@ export const ERROR_CATALOG = {
     i18nKey: 'errors.policy.batchTooLarge',
     description: 'Batch request exceeds the maximum allowed policy count.',
   },
+  REGION_BLOCKED: {
+    code: 'REGION_BLOCKED',
+    httpStatus: 451,
+    i18nKey: 'errors.policy.regionBlocked',
+    description: 'Policy initiation is not available in the requester\'s region.',
+  },
 
   // ── Claims ────────────────────────────────────────────────────────────────
   CLAIM_NOT_FOUND: {

@@ -243,7 +243,46 @@ pub enum ClaimStatus {
     /// which is never reached) so voting/finalization guards correctly reject
     /// further transitions until the appeal round resolves.
     Appealed = 11,
+    /// Approved claim could not be disbursed: primary treasury balance was
+    /// insufficient AND the reinsurance pool draw also failed (insufficient
+    /// reinsurance balance/allowance). Set by `claim::process_claim`'s
+    /// reinsurance fallback path (see `ReinsuranceDrawdownFailed` event).
+    /// Terminal — requires admin/treasury intervention off-chain (top up
+    /// treasury or reinsurance pool, then retry via a fresh `process_claim`
+    /// call is NOT automatic; this status simply stops the claim from
+    /// silently reverting with an opaque host trap).
+    PayoutFailed = 12,
 }
+
+/// Compile-time guard (Issue #1615): classifies every `ClaimStatus` variant as
+/// "live" (reachable through normal contract execution) or reserved/never
+/// constructed. The match is exhaustive **by variant name**, not behind
+/// `matches!`, so adding a new `ClaimStatus` variant without adding an arm
+/// here is a compile error — forcing whoever adds it to explicitly decide
+/// whether it is live or reserved. `Appealed` is pinned to `false` on purpose;
+/// see the doc comment on the variant for why it must never be constructed.
+const fn is_live_claim_status(status: &ClaimStatus) -> bool {
+    match status {
+        ClaimStatus::Processing
+        | ClaimStatus::Pending
+        | ClaimStatus::Approved
+        | ClaimStatus::PayoutTimeout
+        | ClaimStatus::Paid
+        | ClaimStatus::Rejected
+        | ClaimStatus::UnderAppeal
+        | ClaimStatus::AppealApproved
+        | ClaimStatus::AppealRejected
+        | ClaimStatus::Withdrawn
+        | ClaimStatus::Disputed => true,
+        // RESERVED — never constructed. Do not change this to `true`.
+        ClaimStatus::Appealed => false,
+    }
+}
+
+// Force the guard above to be evaluated at compile time: if `Appealed` is
+// ever accidentally flipped to "live", or if a future variant is added
+// without updating `is_live_claim_status`, this fails to build.
+const _: () = assert!(!is_live_claim_status(&ClaimStatus::Appealed));
 
 impl ClaimStatus {
     pub fn is_terminal(&self) -> bool {
@@ -256,6 +295,7 @@ impl ClaimStatus {
                 | ClaimStatus::AppealApproved
                 | ClaimStatus::AppealRejected
                 | ClaimStatus::Withdrawn
+                | ClaimStatus::PayoutFailed
                 | ClaimStatus::Disputed // NOTE: ClaimStatus::Appealed is intentionally absent — an appeal
                                         // in progress is NOT terminal.  Adding it here would allow
                                         // process_claim / finalize_claim to close an appealed claim without
@@ -550,6 +590,11 @@ pub struct Subscription {
     pub pet_ids: Vec<u64>,
     /// Ledger at which this subscription expires.
     pub expires_at: u32,
+    /// Off-chain callback/notification address for this subscription. Must be
+    /// present on the `AllowedPayoutRecipient` allowlist at registration time
+    /// (see Issue #1617) so subscriptions cannot be used to probe or spam
+    /// arbitrary addresses.
+    pub callback: Address,
 }
 
 // ── Vet specialization ────────────────────────────────────────────────────────
@@ -1133,5 +1178,34 @@ pub struct ReinsuranceDrawdown {
     /// Amount drawn from the reinsurance pool.
     pub reinsurance_amount: i128,
     /// Reinsurance contract address used.
+    pub reinsurance_contract: Address,
+}
+
+/// Emitted as soon as the primary treasury is found insufficient and the
+/// reinsurance fallback path is entered, *before* the draw is attempted
+/// (Issue #1613). Indexers use this to detect treasury-solvency events even
+/// when the subsequent draw itself fails.
+#[contractevent(topics = ["niffyinsure", "reinsurance_triggered"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReinsuranceTriggered {
+    #[topic]
+    pub claim_id: u64,
+    /// Amount still owed after the primary treasury's available balance is used.
+    pub shortfall_amount: i128,
+    pub reinsurance_contract: Address,
+}
+
+/// Emitted when the reinsurance pool draw itself fails (insufficient
+/// reinsurance balance or allowance). The claim is set to
+/// `ClaimStatus::PayoutFailed` in the same call (Issue #1613).
+#[contractevent(topics = ["niffyinsure", "reinsurance_drawdown_failed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReinsuranceDrawdownFailed {
+    #[topic]
+    pub claim_id: u64,
+    /// Amount that was successfully paid from the primary treasury before the fallback failed.
+    pub primary_amount: i128,
+    /// Amount that was required from reinsurance but could not be drawn.
+    pub shortfall_amount: i128,
     pub reinsurance_contract: Address,
 }

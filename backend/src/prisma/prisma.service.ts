@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Optional } from '@ne
 import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
 import { AsyncLocalStorage } from 'async_hooks';
+import { assertTenantScoped } from './tenant-isolation';
 import { MetricsService } from '../metrics/metrics.service';
 
 type SoftDeleteExtensionArgs = {
@@ -76,9 +77,20 @@ export class PrismaService
     // Apply soft-delete extension: auto-filter deleted rows from findMany/findFirst/findUnique
     const softDeleteModels = this.softDeleteModels;
     const softDeleteContext = this.softDeleteContext;
+    const enforceTenantIsolation = config.get<string>('TENANT_ISOLATION_STRICT') === 'true';
     (this as PrismaClient).$extends({
       query: {
         $allModels: {
+          async $allOperations({ model, operation, args, query }: {
+            model: string;
+            operation: string;
+            args: { where?: Record<string, unknown> };
+            query: (args: unknown) => Promise<unknown>;
+          }) {
+            // Issue #1632: reject tenant-scoped queries lacking a tenantId filter.
+            if (enforceTenantIsolation) assertTenantScoped(model, operation, args);
+            return query(args);
+          },
           async findMany({ model, args, query }: SoftDeleteExtensionArgs) {
             if (softDeleteModels.has(model)) {
               const store = softDeleteContext.getStore();
