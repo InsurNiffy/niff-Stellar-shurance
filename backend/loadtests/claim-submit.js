@@ -71,6 +71,7 @@ export default function () {
       amount: '100',
       details: 'k6 load test claim — staging only',
       evidence: [],
+      requiredSpecialization: null,
     },
     JWT,
     'build-tx',

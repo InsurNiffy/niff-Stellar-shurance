@@ -9,6 +9,7 @@ import { TenantContextService } from '../tenant/tenant-context.service';
 import { claimTenantWhere, assertTenantOwnership } from '../tenant/tenant-filter.helper';
 import { ReconciliationService } from '../indexer/reconciliation.service';
 import { ClaimAggregationService } from './services/claim-aggregation.service';
+import { VetSpecializationValidator } from './services/vet-specialization.validator';
 import { ClaimSummaryCacheService } from './services/claim-summary-cache.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { AuditService } from '../admin/audit.service';
@@ -78,9 +79,30 @@ export class ClaimsService {
     private readonly claimSummaryCache: ClaimSummaryCacheService,
     private readonly metrics: MetricsService,
     private readonly appealSimulationCache: AppealSimulationCacheService,
+    private readonly vetSpecializationValidator: VetSpecializationValidator,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
+  }
+
+  /**
+   * Reject a claim filing when it requires a specialization that no registered
+   * vet provides. Mirrors the contract-side `VetNotFound` check.
+   */
+  async assertVetSpecializationAvailable(
+    requiredSpecialization: string | null | undefined,
+  ): Promise<void> {
+    if (!requiredSpecialization) {
+      return;
+    }
+    const found = await this.vetSpecializationValidator.hasVetWithSpecialization(
+      requiredSpecialization,
+    );
+    if (!found) {
+      throw new NotFoundException(
+        `VetNotFound: no registered vet with specialization '${requiredSpecialization}'`,
+      );
+    }
   }
 
   /** Build an unsigned `escalate_claim` transaction for the admin wallet to sign. */
