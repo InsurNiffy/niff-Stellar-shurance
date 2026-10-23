@@ -39,6 +39,16 @@ export class OutboundWebhookService {
     this.logger.log(`[outbound-webhook] enqueued claim.filed for ${urls.length} subscriber(s)`);
   }
 
+  async deliverPolicyExpired(
+    payload: Record<string, unknown>,
+    idempotencyKey: string,
+  ): Promise<void> {
+    const urls = this.getSubscriberUrls('POLICY_EXPIRED_WEBHOOK_URLS');
+    if (urls.length === 0) return;
+    await this.enqueueForEvent('policy.expired', urls, payload, idempotencyKey);
+    this.logger.log(`[outbound-webhook] enqueued policy.expired for ${urls.length} subscriber(s)`);
+  }
+
   async deliverVoteCast(
     payload: Record<string, unknown>,
     idempotencyKey: string,

@@ -19,6 +19,7 @@ import { Observable, map, merge, of } from 'rxjs';
 import { SupportService } from './support.service';
 import { TypingService } from './typing.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
+import { CreateReplyDto } from './dto/create-reply.dto';
 import { CreateFaqItemDto, UpdateFaqItemDto, ReorderFaqItemsDto } from './dto/faq.dto';
 import { SetTypingDto } from './dto/typing.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -57,6 +58,18 @@ export class SupportController {
   @ApiResponse({ status: 200, description: 'Ticket found' })
   async getTicket(@Param('id') id: string) {
     return this.supportService.getTicket(id);
+  }
+
+  /**
+   * POST /api/support/tickets/:id/replies
+   * Add a customer reply to an existing ticket thread.
+   */
+  @Post('tickets/:id/replies')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 10, ttl: 600_000 } })
+  @ApiOperation({ summary: 'Reply to a support ticket' })
+  async addReply(@Param('id') id: string, @Body() dto: CreateReplyDto) {
+    return this.supportService.addCustomerReply(id, dto.message);
   }
 
   /**
