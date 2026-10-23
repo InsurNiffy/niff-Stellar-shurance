@@ -73,7 +73,7 @@ Below are the endpoints currently discovered from repository configuration. Endp
 |----------|------|---------|---------|
 | `TLS_CERT_MONITOR_ENABLED` | `true\|false` | `true` | Enable/disable the TLS certificate monitor |
 | `TLS_CERT_MONITOR_CRON` | Cron expression | `0 2 * * *` | Schedule (02:00 UTC daily) |
-| `TLS_ENDPOINTS_CONFIG_PATH` | File path | `config/tls-endpoints.json` | JSON file listing public endpoints to monitor |
+| `TLS_ENDPOINTS_CONFIG_PATH` | File path | `config/tls-endpoints.example.json` | JSON file listing public endpoints to monitor |
 | `TLS_CERT_ALERT_WEBHOOK_URL` | URL | (unset) | Webhook endpoint for alerts (optional; falls back to logging only) |
 | `TLS_CERT_ALERT_WEBHOOK_SECRET` | String | (unset) | HMAC secret for webhook signature verification |
 | `TLS_CERT_EXPIRY_ALERT_DAYS_TIER_1` | Number | `30` | First alert threshold (days before expiry) |
