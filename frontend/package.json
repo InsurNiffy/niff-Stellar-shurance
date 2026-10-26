@@ -69,7 +69,7 @@
     "@types/node": "^25.6.0",
     "@types/react": "^19",
     "@types/react-dom": "^18.3.0",
-    "autoprefixer": "^10.4.27",
+    "autoprefixer": "^10.6.1",
     "concurrently": "^10.0.4",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
