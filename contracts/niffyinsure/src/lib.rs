@@ -29,6 +29,21 @@ use soroban_sdk::{
     contract, contractevent, contractimpl, panic_with_error, Address, Env, String, Vec,
 };
 
+/// Parses a decimal ASCII digit string (as produced by Cargo's
+/// `CARGO_PKG_VERSION_{MAJOR,MINOR,PATCH}` env vars) into a `u32` at compile time.
+/// Used by `NiffyInsure::get_contract_version` — see `docs/api-versioning-policy.md`.
+const fn parse_u32(s: &str) -> u32 {
+    let bytes = s.as_bytes();
+    let mut value: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i] - b'0';
+        value = value * 10 + digit as u32;
+        i += 1;
+    }
+    value
+}
+
 #[contract]
 pub struct NiffyInsure;
 pub use admin::{AdminAction, AdminError, PendingAdminAction, RoleError};
@@ -54,11 +69,31 @@ pub enum VetError {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[soroban_sdk::contracterror]
 #[repr(u32)]
+pub enum RegionError {
+    /// Region code is empty.
+    EmptyRegionCode = 400,
+    /// Region code exceeds [`types::REGION_CODE_MAX_LEN`] bytes.
+    RegionCodeTooLong = 401,
+    /// `RegionConfig::parent` exceeds [`types::REGION_CODE_MAX_LEN`] bytes.
+    ParentCodeTooLong = 402,
+    /// `RegionConfig::parent` references the region itself.
+    SelfParent = 403,
+    /// `RegionConfig::risk_multiplier` outside `MIN_MULTIPLIER..=MAX_MULTIPLIER`.
+    RiskMultiplierOutOfBounds = 404,
+    /// Region code is not present in the registry.
+    RegionNotFound = 405,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[soroban_sdk::contracterror]
+#[repr(u32)]
 pub enum SubscriptionError {
     /// Address has reached the maximum of 10 active subscriptions.
     TooManySubscriptions = 1,
     /// Subscription not found or already expired.
     NotFound = 2,
+    /// Callback address is not on the `AllowedPayoutRecipient` allowlist.
+    CallbackNotAllowed = 3,
 }
 #[contractevent(topics = ["niffyinsure", "voter_removed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -221,6 +256,17 @@ struct ConfigUpdated {
     pub new: String,
 }
 
+/// Region registry key validation: non-empty and at most `REGION_CODE_MAX_LEN` bytes.
+fn validate_region_code(region: &String) -> Result<(), RegionError> {
+    if region.is_empty() {
+        return Err(RegionError::EmptyRegionCode);
+    }
+    if region.len() > types::REGION_CODE_MAX_LEN {
+        return Err(RegionError::RegionCodeTooLong);
+    }
+    Ok(())
+}
+
 fn encode_u32(env: &Env, value: u32) -> String {
     let mut buf = [0u8; 10];
     let mut n = value;
@@ -337,6 +383,19 @@ impl NiffyInsure {
         soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
     }
 
+    /// Returns the contract's semantic version as `(major, minor, patch)` compile-time
+    /// constants parsed from this crate's `Cargo.toml`. Read-only: no storage access,
+    /// no auth required. Lets backend/frontend verify the connected contract's version
+    /// without parsing the `version()` string. See `docs/api-versioning-policy.md`.
+    pub fn get_contract_version(_env: Env) -> (u32, u32, u32) {
+        // `CARGO_PKG_VERSION_MAJOR/MINOR/PATCH` are provided by Cargo as compile-time
+        // env vars derived straight from this crate's `Cargo.toml` `[package].version`.
+        const MAJOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MAJOR"));
+        const MINOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MINOR"));
+        const PATCH: u32 = parse_u32(env!("CARGO_PKG_VERSION_PATCH"));
+        (MAJOR, MINOR, PATCH)
+    }
+
     /// Returns contract identity used by backend and deploy tooling:
     /// version, admin, token, and the ledger at which `initialize` ran.
     pub fn get_contract_metadata(env: Env) -> types::ContractMetadata {
@@ -356,8 +415,11 @@ impl NiffyInsure {
         soroban_sdk::BytesN::from_array(&env, &[0u8; 32])
     }
 
-    /// Read-only: balance of the default payout token held by this contract (payout reserve).
-    /// Matches funds available for `process_claim` for the configured default asset.
+    /// Read-only: SEP-41 balance of the configured default asset held by the
+    /// `Treasury` address (defaults to this contract's own address until
+    /// `set_treasury` is called). Pairs with `get_min_solvency_ratio_bps()`
+    /// for off-chain solvency monitoring (Issue #1604): the admin dashboard's
+    /// solvency widget and the `treasury.balance_low` webhook both poll this.
     pub fn get_treasury_balance(env: Env) -> i128 {
         let token_addr = storage::get_token(&env);
         crate::token::get_treasury_balance(&env, &token_addr)
@@ -1063,6 +1125,18 @@ impl NiffyInsure {
         governance::get_proposal(&env, proposal_id)
     }
 
+    /// Permissionless keeper (Issue #1600): close out a governance proposal
+    /// whose voting deadline has passed without reaching quorum, removing it
+    /// and emitting `proposal_expired`. Callable by anyone; reverts with
+    /// `ProposalNotExpired` before the deadline and `ProposalAlreadyApplied`
+    /// on a proposal that already passed quorum and took effect.
+    pub fn finalize_governance_proposal(
+        env: Env,
+        proposal_id: u64,
+    ) -> Result<(), GovernanceError> {
+        governance::finalize_governance_proposal(&env, proposal_id)
+    }
+
     /// Admin-only: set the per-proposer cooldown (ledgers between proposals from same address).
     /// 0 = disabled. Bounded by `governance::MAX_PROPOSER_COOLDOWN_LEDGERS`.
     pub fn admin_set_proposer_cooldown(
@@ -1152,24 +1226,73 @@ impl NiffyInsure {
 
     // ── Region registry ───────────────────────────────────────────────────────
 
-    /// Admin-only: upsert a region code in the registry.
-    pub fn admin_set_region(env: Env, code: String, config: types::RegionConfig) {
+    /// Admin-only: create or update a region config in the registry.
+    ///
+    /// Validation (all before any state change):
+    /// - `region` must be non-empty and at most [`types::REGION_CODE_MAX_LEN`] bytes.
+    /// - `config.parent` (empty = no parent) must be at most
+    ///   [`types::REGION_CODE_MAX_LEN`] bytes and must not equal `region`.
+    /// - `config.risk_multiplier` must be within
+    ///   `premium::MIN_MULTIPLIER..=premium::MAX_MULTIPLIER` (basis points).
+    ///
+    /// Emits `region_upserted` with `created = 1` for a new entry, `0` for an update.
+    pub fn upsert_region(
+        env: Env,
+        region: String,
+        config: types::RegionConfig,
+    ) -> Result<(), RegionError> {
         let _admin = admin::require_admin(&env);
+        validate_region_code(&region)?;
+        if config.parent.len() > types::REGION_CODE_MAX_LEN {
+            return Err(RegionError::ParentCodeTooLong);
+        }
+        if config.parent == region {
+            return Err(RegionError::SelfParent);
+        }
+        if !(premium::MIN_MULTIPLIER..=premium::MAX_MULTIPLIER).contains(&config.risk_multiplier) {
+            return Err(RegionError::RiskMultiplierOutOfBounds);
+        }
         admin::check_and_update_gov_cooldown(&env);
         storage::bump_instance(&env);
         let mut registry = storage::get_region_registry(&env);
-        registry.set(code, config);
+        let created = !registry.contains_key(region.clone());
+        registry.set(region.clone(), config.clone());
         storage::set_region_registry(&env, &registry);
+        events::emit_region_upserted(&env, &region, &config, created);
+        Ok(())
     }
 
-    /// Admin-only: remove a region code from the registry.
-    pub fn admin_remove_region(env: Env, code: String) {
+    /// Admin-only: remove a region config from the registry.
+    ///
+    /// Returns [`RegionError::RegionNotFound`] (no state change, no event) when
+    /// `region` is not registered. Emits `region_removed` on success.
+    pub fn remove_region(env: Env, region: String) -> Result<(), RegionError> {
         let _admin = admin::require_admin(&env);
+        validate_region_code(&region)?;
+        let mut registry = storage::get_region_registry(&env);
+        if !registry.contains_key(region.clone()) {
+            return Err(RegionError::RegionNotFound);
+        }
         admin::check_and_update_gov_cooldown(&env);
         storage::bump_instance(&env);
-        let mut registry = storage::get_region_registry(&env);
-        registry.remove(code);
+        registry.remove(region.clone());
         storage::set_region_registry(&env, &registry);
+        events::emit_region_removed(&env, &region);
+        Ok(())
+    }
+
+    /// Deprecated alias of [`Self::upsert_region`]; kept for existing callers.
+    pub fn admin_set_region(
+        env: Env,
+        code: String,
+        config: types::RegionConfig,
+    ) -> Result<(), RegionError> {
+        Self::upsert_region(env, code, config)
+    }
+
+    /// Deprecated alias of [`Self::remove_region`]; kept for existing callers.
+    pub fn admin_remove_region(env: Env, code: String) -> Result<(), RegionError> {
+        Self::remove_region(env, code)
     }
 
     /// Read-only: get a region config by code.
@@ -1241,9 +1364,17 @@ impl NiffyInsure {
         event_types: Vec<types::EventType>,
         pet_ids: Vec<u64>,
         ttl_ledgers: u32,
+        callback: Address,
     ) -> Result<u64, SubscriptionError> {
         owner.require_auth();
         storage::bump_instance(&env);
+
+        // Callback must be on the AllowedPayoutRecipient allowlist so this
+        // entrypoint cannot be used to register arbitrary addresses as
+        // notification targets (Issue #1617).
+        if !storage::is_allowed_payout_recipient(&env, &callback) {
+            return Err(SubscriptionError::CallbackNotAllowed);
+        }
 
         let now = env.ledger().sequence();
         let expires_at = now.saturating_add(ttl_ledgers);
@@ -1274,10 +1405,12 @@ impl NiffyInsure {
             event_types,
             pet_ids,
             expires_at,
+            callback: callback.clone(),
         };
         storage::set_subscription(&env, &sub);
         ids.push_back(sub_id);
         storage::set_owner_subscription_ids(&env, &owner, &ids);
+        events::emit_subscription_created(&env, &owner, sub_id, &callback, expires_at);
 
         Ok(sub_id)
     }
@@ -1310,6 +1443,7 @@ impl NiffyInsure {
             }
         }
         storage::set_owner_subscription_ids(&env, &owner, &updated);
+        events::emit_subscription_cancelled(&env, &owner, sub_id);
         Ok(())
     }
 
@@ -1945,6 +2079,21 @@ impl NiffyInsure {
     /// Read the current cooldown window in ledgers (falls back to 0 when unset).
     pub fn get_cooldown_ledgers(env: Env) -> u32 {
         storage::get_cooldown_ledgers(&env)
+    }
+
+    /// Admin-only: set the maximum number of appeals allowed per claim.
+    /// Must be in `[1, 3]`. Was previously hardcoded to 1.
+    pub fn admin_set_max_appeals_per_claim(
+        env: Env,
+        new_cap: u32,
+    ) -> Result<(), AdminError> {
+        admin::set_max_appeals_per_claim(&env, new_cap)
+    }
+
+    /// Read the current max-appeals-per-claim cap (falls back to
+    /// `ledger::MAX_APPEALS_PER_CLAIM` when unset).
+    pub fn get_max_appeals_per_claim(env: Env) -> u32 {
+        storage::get_max_appeals_per_claim(&env)
     }
 
     /// Admin-only: update the allowlisted IPFS gateway URL prefixes for evidence validation.

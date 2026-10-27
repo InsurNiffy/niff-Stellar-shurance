@@ -21,6 +21,21 @@ export const openapiSpec = {
     { name: "Posts", description: "User-generated posts (CRUD)" },
   ],
   paths: {
+    "/graphql": {
+      post: {
+        summary: "GraphQL endpoint",
+        description:
+          "Includes the admin-only mutation `escalateClaim(claimId: Int!, newDeadlineLedger: Int!): ClaimEscalationTx` " +
+          "(requires an admin staff JWT; complexity weight 10) which returns the unsigned `escalate_claim` transaction XDR.",
+        operationId: "graphql",
+        tags: ["Claims"],
+        responses: {
+          "200": { description: "GraphQL response" },
+          "401": { description: "Authentication required" },
+          "403": { description: "Admin role required" },
+        },
+      },
+    },
     "/claims/{id}/timeline": {
       get: {
         summary: "Get claim status-transition timeline",

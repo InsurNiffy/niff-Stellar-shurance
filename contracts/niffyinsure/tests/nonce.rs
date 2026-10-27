@@ -292,6 +292,41 @@ fn file_claim_wrong_nonce_does_not_mutate_nonzero_nonce() {
     );
 }
 
+// ── Replay attack reproduction (Issue #1607) ──────────────────────────────────
+//
+// Simulates an attacker capturing a previously-submitted, successfully
+// executed `file_claim` invocation (same holder, same expected_nonce) and
+// resubmitting it verbatim to try to file a second, duplicate claim. The
+// per-holder nonce must reject the replay even though every other argument
+// is byte-identical to the original call.
+
+#[test]
+fn file_claim_replay_attack_is_rejected() {
+    let (env, client, _, _token) = setup();
+    let holder = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    client.test_seed_policy(&holder, &1u32, &1_000_000i128, &200u32);
+    client.test_seed_policy(&voter, &1u32, &1_000_000i128, &200u32);
+
+    let details = String::from_str(&env, "replay test claim");
+    let ev = common::empty_evidence(&env);
+
+    // Original call: succeeds, consumes nonce 0.
+    let claim_id =
+        client.file_claim(&holder, &1u32, &100_000i128, &details, &ev, &Some(0u64));
+    assert_eq!(claim_id, 1u64);
+    assert_eq!(client.get_nonce(&holder), 1u64);
+
+    // Attacker replays the exact same call (identical args, same expected_nonce
+    // of 0) to try to file a duplicate claim. Must be rejected since the
+    // on-chain nonce has already advanced to 1.
+    let replay = client.try_file_claim(&holder, &1u32, &100_000i128, &details, &ev, &Some(0u64));
+    assert!(replay.is_err(), "replayed file_claim must revert");
+    // No second claim was created and the nonce did not move.
+    assert_eq!(client.get_nonce(&holder), 1u64);
+}
+
 // ── Nonce increments correctly across interleaved initiate + file_claim ───────
 //
 // Both mutating entrypoints share the same per-holder counter; this test

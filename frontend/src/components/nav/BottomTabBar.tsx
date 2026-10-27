@@ -2,9 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { FileText, Home, Scale, Wallet } from 'lucide-react'
+import { FileText, Home, Megaphone, Scale, Wallet } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { useAnnouncementUnreadCount } from '@/hooks/useAnnouncementUnreadCount'
 
 const TABS = [
   { href: '/', label: 'Home', icon: Home, match: (path: string) => path === '/' },
@@ -13,6 +14,12 @@ const TABS = [
     label: 'Policies',
     icon: FileText,
     match: (path: string) => path.startsWith('/policies'),
+  },
+  {
+    href: '/announcements',
+    label: 'News',
+    icon: Megaphone,
+    match: (path: string) => path.startsWith('/announcements'),
   },
   {
     href: '/claims',
@@ -30,6 +37,7 @@ const TABS = [
 
 export function BottomTabBar() {
   const pathname = usePathname()
+  const unreadCount = useAnnouncementUnreadCount()
 
   return (
     <nav
@@ -51,7 +59,14 @@ export function BottomTabBar() {
                 )}
                 aria-current={active ? 'page' : undefined}
               >
-                <Icon size={20} aria-hidden />
+                <span className="relative">
+                  <Icon size={20} aria-hidden />
+                  {label === 'News' && unreadCount > 0 && (
+                    <span className="absolute -right-3 -top-2 rounded-full bg-primary px-1 text-[9px] leading-4 text-primary-foreground" aria-label={`${unreadCount} unread announcements`}>
+                      {unreadCount}
+                    </span>
+                  )}
+                </span>
                 <span>{label}</span>
               </Link>
             </li>

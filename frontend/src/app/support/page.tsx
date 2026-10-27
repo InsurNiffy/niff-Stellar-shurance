@@ -1,6 +1,7 @@
-import { ExternalLink, MessageCircle, BookOpen } from "lucide-react";
-import { Metadata } from "next";
+'use client';
 
+import { ExternalLink, MessageCircle, BookOpen } from "lucide-react";
+import { useEffect, useState } from "react";
 import { ContactForm } from "@/components/support/contact-form";
 import { FaqAccordion } from "@/components/support/faq-accordion";
 import {
@@ -11,16 +12,54 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { FAQ_ITEMS } from "@/lib/faq-data";
-
-export const metadata: Metadata = {
-  title: "Support — NiffyInsur",
-  description:
-    "Get help with NiffyInsur. Browse FAQs or contact our support team.",
-};
+import { listFaqItems, listMySupportTickets, type SupportTicketView } from "@/lib/api/support";
+import { useAuth } from "@/lib/hooks/useAuth";
 
 export default function SupportPage() {
+  const { jwt, isAuthenticated } = useAuth();
+  const [faqs, setFaqs] = useState(FAQ_ITEMS);
+  const [faqError, setFaqError] = useState<string | null>(null);
+  const [tickets, setTickets] = useState<SupportTicketView[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [ticketRefresh, setTicketRefresh] = useState(0);
+
+  useEffect(() => {
+    listFaqItems()
+      .then((items) => setFaqs(items.map((item) => ({ id: item.id, question: item.question, answer: item.answer }))))
+      .catch((error: unknown) => setFaqError(error instanceof Error ? error.message : "Failed to load FAQs"));
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !jwt) {
+      setTickets([]);
+      setHistoryError(null);
+      setHistoryLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setTickets([]);
+    setHistoryLoading(true);
+    setHistoryError(null);
+    listMySupportTickets(jwt)
+      .then((result) => {
+        if (!cancelled) setTickets(result.tickets);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setHistoryError(error instanceof Error ? error.message : "Failed to load ticket history");
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, jwt, ticketRefresh]);
+
   return (
-    <main className="mx-auto max-w-3xl px-4 py-16 space-y-16">
+    <main data-tour="support" className="mx-auto max-w-3xl px-4 py-16 space-y-16">
       {/* Header */}
       <div className="text-center space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Support Center</h1>
@@ -68,8 +107,34 @@ export default function SupportPage() {
         <h2 id="faq-heading" className="text-xl font-semibold mb-4">
           Frequently Asked Questions
         </h2>
-        <FaqAccordion items={FAQ_ITEMS} />
+        {faqError && <p role="alert" className="mb-3 text-sm text-destructive">{faqError} Showing saved FAQs instead.</p>}
+        <FaqAccordion items={faqs} />
       </section>
+
+      {isAuthenticated && (
+        <section aria-labelledby="ticket-history-heading">
+          <h2 id="ticket-history-heading" className="text-xl font-semibold mb-4">Your tickets</h2>
+          {historyError ? (
+            <p role="alert" className="text-sm text-destructive">{historyError}</p>
+          ) : historyLoading ? (
+            <p role="status" className="text-sm text-muted-foreground">Loading your tickets…</p>
+          ) : tickets.length === 0 ? (
+            <p className="text-sm text-muted-foreground">You have not submitted any tickets.</p>
+          ) : (
+            <ul className="divide-y rounded-lg border">
+              {tickets.map((ticket) => (
+                <li key={ticket.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div>
+                    <a href={`/support/tickets/${ticket.id}`} className="font-medium hover:underline">{ticket.subject}</a>
+                    <p className="text-xs text-muted-foreground">{new Date(ticket.createdAt).toLocaleString()}</p>
+                  </div>
+                  <span className="text-xs uppercase tracking-wide text-muted-foreground">{ticket.status}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {/* Contact form */}
       <section aria-labelledby="contact-heading">
@@ -81,7 +146,7 @@ export default function SupportPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ContactForm />
+            <ContactForm onSubmitted={() => setTicketRefresh((current) => current + 1)} />
           </CardContent>
         </Card>
       </section>

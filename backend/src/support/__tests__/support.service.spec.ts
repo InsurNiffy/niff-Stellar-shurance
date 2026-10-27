@@ -74,6 +74,23 @@ describe('SupportService', () => {
     expect(prisma.supportTicket.create).toHaveBeenCalled();
   });
 
+  it('associates authenticated tickets with the submitting wallet', async () => {
+    const prisma = makePrisma();
+    const svc = new SupportService(prisma, makeCaptcha(true), makeConfig());
+
+    await svc.submitTicket(
+      { email: 'user@example.com', subject: 'Test', message: 'Hello world', captchaToken: 'tok' },
+      '1.2.3.4',
+      'G-WALLET',
+    );
+
+    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ walletAddress: 'G-WALLET' }),
+      }),
+    );
+  });
+
   it('rejects ticket when CAPTCHA fails', async () => {
     const svc = new SupportService(makePrisma(), makeCaptcha(false), makeConfig());
     await expect(
@@ -94,6 +111,35 @@ describe('SupportService', () => {
     const createCall = (prisma.supportTicket.create as jest.Mock).mock.calls[0][0];
     expect(createCall.data.ipHash).toBeDefined();
     expect(createCall.data.ipHash).not.toBe('1.2.3.4');
+  });
+
+  it('lists only tickets for the requested wallet with pagination', async () => {
+    const prisma = makePrisma();
+    const svc = new SupportService(prisma, makeCaptcha(), makeConfig());
+
+    const result = await svc.listTicketsForWallet('G-WALLET', 25, 10);
+
+    expect(prisma.supportTicket.findMany).toHaveBeenCalledWith({
+      where: { walletAddress: 'G-WALLET' },
+      take: 25,
+      skip: 10,
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(prisma.supportTicket.count).toHaveBeenCalledWith({
+      where: { walletAddress: 'G-WALLET' },
+    });
+    expect(result).toEqual({ tickets: [expect.objectContaining({ id: 'uuid-1' })], total: 1 });
+  });
+
+  it.each([
+    [0, 0],
+    [101, 0],
+    [10, -1],
+  ])('rejects invalid ticket pagination (%s, %s)', async (limit, offset) => {
+    const svc = new SupportService(makePrisma(), makeCaptcha(), makeConfig());
+    await expect(svc.listTicketsForWallet('G-WALLET', limit, offset)).rejects.toThrow(
+      BadRequestException,
+    );
   });
 
   it('updateTicketStatus writes audit log', async () => {

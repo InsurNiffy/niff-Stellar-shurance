@@ -30,6 +30,21 @@ breaking change and the [Removals](#removals) and deprecation rules apply:
 - Error shapes on existing surfaces are unchanged (new error *codes* on a new
   surface are fine; see the error catalog).
 
+## Contract version metadata entrypoint
+
+`NiffyInsure::get_contract_version(env) -> (u32, u32, u32)` returns the
+contract's semantic version as `(major, minor, patch)`, parsed at compile
+time from this crate's `Cargo.toml` `[package].version` via Cargo's
+`CARGO_PKG_VERSION_{MAJOR,MINOR,PATCH}` env vars. It is read-only (no storage
+access, no auth required) and safe to call via simulation.
+
+This complements the existing `version()` entrypoint, which returns the same
+version as a `String` (e.g. `"0.1.0"`). `get_contract_version()` gives
+backend/frontend tooling a structured tuple to compare against an expected
+`(major, minor, patch)` without string-parsing, so they can verify the
+connected contract's version programmatically (e.g. gate on a minimum minor
+version). Adding this entrypoint is additive per the rules above.
+
 ## Compliance reviews
 
 Reviews of specific surfaces against this policy are recorded below, so a

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
@@ -34,5 +34,16 @@ export class ProfileController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.profileService.update(walletAddress, dto);
+  }
+
+  /**
+   * DELETE /profile
+   * GDPR right-to-erasure: anonymizes off-chain profile PII and soft-deletes own comments.
+   */
+  @Delete()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Erase own off-chain personal data (GDPR Art. 17)' })
+  async eraseProfile(@WalletAddress() walletAddress: string) {
+    return this.profileService.erase(walletAddress);
   }
 }

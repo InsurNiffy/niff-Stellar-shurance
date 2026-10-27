@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -24,6 +24,34 @@ export interface ClaimFeedItemDto {
   status: string;
   summary: string;
   updatedAt: string;
+}
+
+export interface ActivityFeedItemDto {
+  id: number;
+  txHash: string;
+  eventIndex: number;
+  contractId: string;
+  ledger: number;
+  ledgerClosedAt: string;
+  topics: string[];
+  data: unknown;
+}
+
+export interface ActivityFeedPageDto {
+  items: ActivityFeedItemDto[];
+  nextCursor: string | null;
+}
+
+function encodeActivityCursor(ledger: number, eventIndex: number): string {
+  return Buffer.from(`${ledger}:${eventIndex}`).toString('base64url');
+}
+
+function decodeActivityCursor(cursor: string): { ledger: number; eventIndex: number } {
+  const [ledger, eventIndex] = Buffer.from(cursor, 'base64url').toString().split(':').map(Number);
+  if (!Number.isInteger(ledger) || !Number.isInteger(eventIndex)) {
+    throw new BadRequestException('Invalid cursor');
+  }
+  return { ledger, eventIndex };
 }
 
 @Injectable()
@@ -56,6 +84,50 @@ export class FeedsService {
   async buildClaimsJsonFeed(): Promise<ClaimFeedItemDto[]> {
     const claims = await this.getFinalizedClaims();
     return claims.map((claim) => this.buildJsonItem(claim));
+  }
+
+  /**
+   * Chronological (newest first) activity feed of indexed on-chain events that
+   * reference `address` in any topic. Cursor is keyed on (ledger, eventIndex).
+   */
+  async getActivityFeed(address: string, cursor?: string, limit = 20): Promise<ActivityFeedPageDto> {
+    const take = Math.min(Math.max(limit, 1), 100);
+    const after = cursor ? decodeActivityCursor(cursor) : null;
+    const rows = await this.prisma.rawEvent.findMany({
+      where: {
+        AND: [
+          { OR: [{ topic1: address }, { topic2: address }, { topic3: address }, { topic4: address }] },
+          ...(after
+            ? [
+                {
+                  OR: [
+                    { ledger: { lt: after.ledger } },
+                    { ledger: after.ledger, eventIndex: { lt: after.eventIndex } },
+                  ],
+                },
+              ]
+            : []),
+        ],
+      },
+      orderBy: [{ ledger: 'desc' }, { eventIndex: 'desc' }],
+      take: take + 1,
+    });
+
+    const page = rows.slice(0, take);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((e) => ({
+        id: e.id,
+        txHash: e.txHash,
+        eventIndex: e.eventIndex,
+        contractId: e.contractId,
+        ledger: e.ledger,
+        ledgerClosedAt: e.ledgerClosedAt.toISOString(),
+        topics: [e.topic1, e.topic2, e.topic3, e.topic4].filter((t): t is string => t !== null),
+        data: e.data,
+      })),
+      nextCursor: rows.length > take && last ? encodeActivityCursor(last.ledger, last.eventIndex) : null,
+    };
   }
 
   private async getFinalizedClaims(): Promise<FinalizedClaim[]> {

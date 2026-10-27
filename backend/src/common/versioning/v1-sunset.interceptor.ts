@@ -2,6 +2,9 @@
  * Adds Sunset and Deprecation headers to every response served under the v1
  * API path (i.e. URLs containing "/v1/"). This lets API clients detect the
  * upcoming removal and migrate before the sunset date — issue #890.
+ *
+ * Registered globally via APP_INTERCEPTOR in AppModule, so it covers every
+ * @Controller route under /api/v1/ (issue #1634 audit).
  */
 
 import {
@@ -12,7 +15,6 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Observable } from 'rxjs';
-import { tap } from 'rxjs/operators';
 import {
   DEPRECATION_HEADER,
   DEPRECATED_API_SUNSET_HTTP_DATE,
@@ -28,11 +30,9 @@ export class V1SunsetInterceptor implements NestInterceptor {
     }
 
     const res = context.switchToHttp().getResponse<Response>();
-    return next.handle().pipe(
-      tap(() => {
-        res.setHeader(DEPRECATION_HEADER, 'true');
-        res.setHeader(SUNSET_HEADER, DEPRECATED_API_SUNSET_HTTP_DATE);
-      }),
-    );
+    // Set before the handler runs so error responses carry the headers too.
+    res.setHeader(DEPRECATION_HEADER, 'true');
+    res.setHeader(SUNSET_HEADER, DEPRECATED_API_SUNSET_HTTP_DATE);
+    return next.handle();
   }
 }

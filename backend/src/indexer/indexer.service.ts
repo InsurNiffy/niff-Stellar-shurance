@@ -408,6 +408,8 @@ export class IndexerService {
         await this.handleAssetAdded(tx, dataNative, event);
       } else if (mainTopic === 'asset' && subTopic === 'removed') {
         await this.handleAssetRemoved(tx, dataNative, event);
+      } else if (mainTopic === 'niffyinsure' && subTopic === 'allowed_asset_updated') {
+        await this.allowedAssetsCache?.invalidateAll();
       } else if (
         (mainTopic === 'appeal' && subTopic === 'filed') ||
         (mainTopic === 'niffyinsure' && subTopic === 'appeal_filed') ||

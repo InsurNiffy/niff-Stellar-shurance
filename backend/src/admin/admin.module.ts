@@ -21,11 +21,13 @@ import { CacheModule } from '../cache/cache.module';
 import { RpcModule } from '../rpc/rpc.module';
 import { SupportModule } from '../support/support.module';
 import { CommentRepository } from '../claims/comments/comment.repository';
+import { CommentsModule } from '../claims/comments/comments.module';
 import { TenantModule } from '../tenant/tenant.module';
 
 @Module({
   imports: [
     PrismaModule,
+    CommentsModule,
     AuthModule,
     MaintenanceModule,
     RateLimitModule,

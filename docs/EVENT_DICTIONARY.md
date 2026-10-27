@@ -300,53 +300,56 @@ deadline finalization, payout, and withdrawal.
 
 ## Region events  (`namespace = "niffyinsure"`)
 
-### `region_upserted` — region risk tier created or updated
+### `region_upserted` — region config created or updated
 
-Emitted when an admin creates or updates a region risk configuration.
+Emitted when an admin creates or updates an entry in the region registry.
 
 **Topics:** `("niffyinsure", "region_upserted", region: String)`
 
 ```json
 {
   "version": 1,
-  "region": "Medium",
-  "risk_tier": 2,
-  "premium_multiplier_bps": 12000,
+  "parent": "US",
+  "risk_multiplier": 12000,
+  "active": 1,
+  "created": 1,
   "at_ledger": 1234567
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `region` | string | Region identifier (`"Low"` \| `"Medium"` \| `"High"`) |
-| `risk_tier` | u32 | Numeric risk tier assigned to the region |
-| `premium_multiplier_bps` | u32 (bps) | Premium multiplier applied to the region |
+| `region` (topic) | string | Region code (1..=32 bytes, `REGION_CODE_MAX_LEN`) |
+| `parent` | string | Parent region code (empty = no parent) |
+| `risk_multiplier` | i128 (bps) | Risk multiplier, 10_000 = 1x; bounded by `MIN_MULTIPLIER..=MAX_MULTIPLIER` |
+| `active` | u32 | 1 = accepts new policies, 0 = deactivated |
+| `created` | u32 | 1 = new entry, 0 = existing entry overwritten |
 | `at_ledger` | u32 (ledger) | Ledger of the upsert |
 
-**Emitting entrypoint:** `admin_upsert_region`
+**Emitting entrypoint:** `upsert_region` (legacy alias: `admin_set_region`)
 
 ---
 
-### `region_removed` — region risk tier removed
+### `region_removed` — region config removed
 
-Emitted when an admin removes a region risk configuration.
+Emitted when an admin removes an entry from the region registry. Not emitted
+when the region is unknown (the call fails with `RegionError::RegionNotFound`).
 
 **Topics:** `("niffyinsure", "region_removed", region: String)`
 
 ```json
 {
   "version": 1,
-  "region": "High",
   "at_ledger": 1234567
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `region` | string | Region identifier that was removed |
+| `region` (topic) | string | Region code that was removed |
 | `at_ledger` | u32 (ledger) | Ledger of the removal |
 
-**Emitting entrypoint:** `admin_remove_region`
+**Emitting entrypoint:** `remove_region` (legacy alias: `admin_remove_region`)
 
 ---
 

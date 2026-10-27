@@ -41,9 +41,11 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
 import { DeprecationHeadersInterceptor } from './common/versioning/deprecation-headers.interceptor';
 import { V1SunsetInterceptor } from './common/versioning/v1-sunset.interceptor';
 import { RejectUnversionedApiMiddleware } from './common/versioning/reject-unversioned-api.middleware';
+import { AddressNormalizeInterceptor } from './common/interceptors/address-normalize.interceptor';
 import { LastSeenInterceptor } from './common/interceptors/last-seen.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { PostsModule } from './posts/posts.module';
+import { GovernanceModule } from './governance/governance.module';
 import { HorizonModule } from './horizon/horizon.module';
 
 /** Mutation routes that require idempotency key support (issue #363). */
@@ -51,6 +53,7 @@ const IDEMPOTENCY_ROUTES = [
   { path: 'claims', method: RequestMethod.POST },
   { path: 'policies', method: RequestMethod.POST },
   { path: 'tx/submit', method: RequestMethod.POST },
+  { path: 'policies/:id/renew', method: RequestMethod.PATCH },
 ];
 
 @Module({
@@ -101,6 +104,7 @@ const IDEMPOTENCY_ROUTES = [
     FeedsModule,
     AssetsModule,
     PostsModule,
+    GovernanceModule,
     HorizonModule,
   ],
   controllers: [OracleHooksController, BetaCalculatorsController, XdrDecodeController, PingController],
@@ -122,6 +126,10 @@ const IDEMPOTENCY_ROUTES = [
     {
       provide: APP_INTERCEPTOR,
       useClass: LastSeenInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AddressNormalizeInterceptor,
     },
   ],
 })

@@ -6,6 +6,9 @@ import {
   HttpCode,
   HttpStatus,
   Ip,
+  DefaultValuePipe,
+  ParseIntPipe,
+  Query,
   MessageEvent,
   Param,
   Patch,
@@ -19,10 +22,13 @@ import { Observable, map, merge, of } from 'rxjs';
 import { SupportService } from './support.service';
 import { TypingService } from './typing.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
+import { CreateReplyDto } from './dto/create-reply.dto';
 import { CreateFaqItemDto, UpdateFaqItemDto, ReorderFaqItemsDto } from './dto/faq.dto';
 import { SetTypingDto } from './dto/typing.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminRoleGuard } from '../admin/guards/admin-role.guard';
+import { WalletAddress } from '../auth/decorators/wallet-address.decorator';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 
 @ApiTags('Support')
 @Controller('support')
@@ -39,13 +45,25 @@ export class SupportController {
    */
   @Post('tickets')
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(OptionalJwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 600_000 } })
   @ApiOperation({ summary: 'Submit a support ticket (CAPTCHA protected)' })
   @ApiResponse({ status: 201, description: 'Ticket received' })
   @ApiResponse({ status: 400, description: 'CAPTCHA failed or validation error' })
   @ApiResponse({ status: 429, description: 'Rate limit exceeded' })
-  async submitTicket(@Body() dto: CreateTicketDto, @Ip() ip: string) {
-    return this.supportService.submitTicket(dto, ip);
+  async submitTicket(@Body() dto: CreateTicketDto, @Ip() ip: string, @WalletAddress() walletAddress?: string) {
+    return this.supportService.submitTicket(dto, ip, walletAddress);
+  }
+
+  @Get('tickets')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async listMyTickets(
+    @WalletAddress() walletAddress: string,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+  ) {
+    return this.supportService.listTicketsForWallet(walletAddress, limit, offset);
   }
 
   /**
@@ -57,6 +75,18 @@ export class SupportController {
   @ApiResponse({ status: 200, description: 'Ticket found' })
   async getTicket(@Param('id') id: string) {
     return this.supportService.getTicket(id);
+  }
+
+  /**
+   * POST /api/support/tickets/:id/replies
+   * Add a customer reply to an existing ticket thread.
+   */
+  @Post('tickets/:id/replies')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 10, ttl: 600_000 } })
+  @ApiOperation({ summary: 'Reply to a support ticket' })
+  async addReply(@Param('id') id: string, @Body() dto: CreateReplyDto) {
+    return this.supportService.addCustomerReply(id, dto.message);
   }
 
   /**

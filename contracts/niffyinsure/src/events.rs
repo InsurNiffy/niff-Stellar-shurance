@@ -408,6 +408,54 @@ pub fn emit_asset_allowlisted(
     .publish(env);
 }
 
+// ── Event subscriptions (Issue #1617) ──────────────────────────────────────
+
+#[contractevent(topics = ["niffyins", "sub_created"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubscriptionCreatedData {
+    #[topic]
+    pub owner: Address,
+    pub version: u32,
+    pub sub_id: u64,
+    pub callback: Address,
+    pub expires_at: u32,
+}
+
+pub fn emit_subscription_created(
+    env: &Env,
+    owner: &Address,
+    sub_id: u64,
+    callback: &Address,
+    expires_at: u32,
+) {
+    SubscriptionCreatedData {
+        owner: owner.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        sub_id,
+        callback: callback.clone(),
+        expires_at,
+    }
+    .publish(env);
+}
+
+#[contractevent(topics = ["niffyins", "sub_cancelled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubscriptionCancelledData {
+    #[topic]
+    pub owner: Address,
+    pub version: u32,
+    pub sub_id: u64,
+}
+
+pub fn emit_subscription_cancelled(env: &Env, owner: &Address, sub_id: u64) {
+    SubscriptionCancelledData {
+        owner: owner.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        sub_id,
+    }
+    .publish(env);
+}
+
 // ── Admin rotation / config events ───────────────────────────────────────────
 
 /// Emitted by `propose_admin`.
@@ -847,6 +895,66 @@ pub fn emit_voter_added(env: &Env, voter: &Address, added_by: &Address) {
         voter: voter.clone(),
         version: EVENT_SCHEMA_VERSION,
         added_by: added_by.clone(),
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+}
+
+// ── Region registry events (Issue #1608) ─────────────────────────────────────
+
+/// Emitted by `upsert_region` when a region config is created or updated.
+/// topics: ("niffyinsure", "region_upserted", region: String)
+/// payload: { version, parent, risk_multiplier, active, created, at_ledger }
+/// - `risk_multiplier`: basis points (10_000 = 1x)
+/// - `active` / `created`: u32 flags (1 = true, 0 = false); `created = 0` means
+///   an existing entry was overwritten.
+#[contractevent(topics = ["niffyinsure", "region_upserted"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionUpsertedData {
+    #[topic]
+    pub region: String,
+    pub version: u32,
+    pub parent: String,
+    pub risk_multiplier: i128,
+    pub active: u32,
+    pub created: u32,
+    pub at_ledger: u32,
+}
+
+pub fn emit_region_upserted(
+    env: &Env,
+    region: &String,
+    config: &crate::types::RegionConfig,
+    created: bool,
+) {
+    RegionUpsertedData {
+        region: region.clone(),
+        version: EVENT_SCHEMA_VERSION,
+        parent: config.parent.clone(),
+        risk_multiplier: config.risk_multiplier,
+        active: config.active as u32,
+        created: created as u32,
+        at_ledger: env.ledger().sequence(),
+    }
+    .publish(env);
+}
+
+/// Emitted by `remove_region` when a region config is deleted.
+/// topics: ("niffyinsure", "region_removed", region: String)
+/// payload: { version, at_ledger }
+#[contractevent(topics = ["niffyinsure", "region_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionRemovedData {
+    #[topic]
+    pub region: String,
+    pub version: u32,
+    pub at_ledger: u32,
+}
+
+pub fn emit_region_removed(env: &Env, region: &String) {
+    RegionRemovedData {
+        region: region.clone(),
+        version: EVENT_SCHEMA_VERSION,
         at_ledger: env.ledger().sequence(),
     }
     .publish(env);

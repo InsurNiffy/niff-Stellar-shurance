@@ -3,11 +3,12 @@ import { MetricsController } from './metrics.controller';
 import { MetricsService } from './metrics.service';
 import { MetricsAuthMiddleware } from './metrics-auth.middleware';
 import { MetricsCardinalityGuard } from './cardinality-guard.service';
+import { BusinessMetricsCollector } from './business-metrics.collector';
 
 @Global()
 @Module({
   controllers: [MetricsController],
-  providers: [MetricsService, MetricsAuthMiddleware, MetricsCardinalityGuard],
+  providers: [MetricsService, MetricsAuthMiddleware, MetricsCardinalityGuard, BusinessMetricsCollector],
   exports: [MetricsService, MetricsCardinalityGuard],
 })
 export class MetricsModule implements NestModule {

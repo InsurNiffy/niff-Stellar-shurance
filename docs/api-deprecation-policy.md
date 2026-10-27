@@ -53,3 +53,11 @@ This policy is referenced from, and should be read together with, the
 [API versioning policy](./api-versioning-policy.md), which defines how
 version numbers themselves are incremented when a deprecation results in a
 breaking change.
+
+## v1 API sunset date
+
+All `/api/v1/` endpoints are sunset on **2026-11-01** (`Sat, 01 Nov 2026 00:00:00 GMT`).
+`V1SunsetInterceptor` is registered globally (`APP_INTERCEPTOR` in `AppModule`), so every
+controller route served under `/api/v1/` returns `Deprecation: true` and `Sunset: <date>`,
+including error responses. The date is defined in
+`backend/src/common/versioning/api-versioning.constants.ts`.
