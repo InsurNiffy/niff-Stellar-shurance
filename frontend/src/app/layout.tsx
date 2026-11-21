@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { NextIntlClientProvider } from "next-intl";
 import { headers } from "next/headers";
 
 import "./globals.css";
@@ -118,6 +119,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         >
           Skip to main content
         </a>
+        <NextIntlClientProvider locale="en" messages={{}}>
         <ThemeProvider defaultTheme="system" storageKey="niffyinsur-theme">
           <QueryProvider>
             <WalletProvider>
@@ -135,6 +137,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </WalletProvider>
           </QueryProvider>
         </ThemeProvider>
+        </NextIntlClientProvider>
         <AnalyticsScript nonce={nonce} />
       </body>
     </html>
