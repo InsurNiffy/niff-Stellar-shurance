@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Shield, Megaphone } from 'lucide-react'
 import { useAnnouncementUnreadCount } from '@/hooks/useAnnouncementUnreadCount'
 
+import { LocaleSwitcher } from '@/components/LocaleSwitcher'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { cn } from '@/lib/utils'
 
@@ -75,6 +76,7 @@ export function SiteHeader({ className }: SiteHeaderProps) {
 
         {/* Actions */}
         <div className="flex items-center gap-2">
+          <LocaleSwitcher />
           <ThemeToggle />
         </div>
       </div>
