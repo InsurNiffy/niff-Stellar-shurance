@@ -5,6 +5,7 @@ import { Shield, Megaphone } from 'lucide-react'
 import { useAnnouncementUnreadCount } from '@/hooks/useAnnouncementUnreadCount'
 
 import { ThemeToggle } from '@/components/theme-toggle'
+import { GlobalSearchBar } from '@/components/ui/GlobalSearchBar'
 import { cn } from '@/lib/utils'
 
 interface SiteHeaderProps {
@@ -14,7 +15,7 @@ interface SiteHeaderProps {
 /**
  * SiteHeader — top navigation bar shown on desktop (hidden on mobile where
  * the BottomTabBar takes over). Contains the brand logo, primary nav links,
- * and the theme toggle button.
+ * global search bar, and the theme toggle button.
  */
 export function SiteHeader({ className }: SiteHeaderProps) {
   const unreadCount = useAnnouncementUnreadCount()
@@ -75,6 +76,7 @@ export function SiteHeader({ className }: SiteHeaderProps) {
 
         {/* Actions */}
         <div className="flex items-center gap-2">
+          <GlobalSearchBar />
           <ThemeToggle />
         </div>
       </div>
