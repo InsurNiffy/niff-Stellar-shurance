@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { useWallet } from '@/hooks/use-wallet'
+import { NotificationPermissionBanner } from '@/components/notifications/notification-permission-banner'
 import {
   getNotificationPreferences,
   patchNotificationPreferences,
@@ -228,9 +229,30 @@ export default function NotificationsPage() {
       .finally(() => setLoading(false))
   }, [address, jwt])
 
+  // Optimistic persistence: render the new value immediately, roll back to
+  // the previous preferences if the profile PATCH fails.
+  function applyOptimistic(next: NotificationPreferences) {
+    const previous = draft
+    if (!previous || !address || !jwt) return
+    setDraft(next)
+    setSaveStatus('saving')
+    setSaveError(null)
+    patchNotificationPreferences(address, next, jwt)
+      .then(() => {
+        setPrefs(next)
+        setSaveStatus('saved')
+      })
+      .catch((err: unknown) => {
+        setDraft(previous)
+        setPrefs(previous)
+        setSaveError(err instanceof Error ? err.message : 'Failed to save preferences')
+        setSaveStatus('error')
+      })
+  }
+
   function handleToggle(key: EnabledKey, value: boolean) {
-    setDraft((prev) => prev ? { ...prev, [key]: value } : prev)
-    if (saveStatus === 'saved') setSaveStatus('idle')
+    if (!draft) return
+    applyOptimistic({ ...draft, [key]: value })
   }
 
   function handleChannelToggle(
@@ -239,24 +261,14 @@ export default function NotificationsPage() {
     channel: keyof ChannelPreferences,
     value: boolean,
   ) {
-    setDraft((prev) => {
-      if (!prev) return prev
-      const updatedChannels = {
-        ...prev.channels[channelKey],
-        [channel]: value,
-      }
-      // If all channels are off, turn off the parent type toggle
-      const allOff = !updatedChannels.email && !updatedChannels.push && !updatedChannels.inApp
-      return {
-        ...prev,
-        [enabledKey]: allOff ? false : prev[enabledKey],
-        channels: {
-          ...prev.channels,
-          [channelKey]: updatedChannels,
-        },
-      }
+    if (!draft) return
+    const updatedChannels = { ...draft.channels[channelKey], [channel]: value }
+    const allOff = !updatedChannels.email && !updatedChannels.push && !updatedChannels.inApp
+    applyOptimistic({
+      ...draft,
+      [enabledKey]: allOff ? false : draft[enabledKey],
+      channels: { ...draft.channels, [channelKey]: updatedChannels },
     })
-    if (saveStatus === 'saved') setSaveStatus('idle')
   }
 
   async function handleSave() {
@@ -286,9 +298,17 @@ export default function NotificationsPage() {
     )
   }
 
+  const pushOptedIn = Boolean(
+    draft && NOTIFICATION_TYPES.some(
+      ({ channelKey, enabledKey }) => draft[enabledKey] && draft.channels[channelKey]?.push,
+    ),
+  )
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
       <h1 className="mb-6 text-2xl font-semibold">Notification Preferences</h1>
+
+      {pushOptedIn && <NotificationPermissionBanner />}
 
       <Card>
         <CardHeader>
