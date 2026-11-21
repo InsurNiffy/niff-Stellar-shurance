@@ -44,7 +44,7 @@ const ResponsiveTable = React.forwardRef<HTMLDivElement, ResponsiveTableProps>(
         <div
           ref={scrollRef}
           className={cn(
-            'overflow-x-auto overflow-y-visible',
+            'responsive-table-scroll overflow-x-auto overflow-y-visible max-w-full',
             // Visible scrollbar on touch devices
             '[&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-muted [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-thumb]:rounded-full',
             // Focus styles for keyboard navigation
@@ -118,9 +118,10 @@ ResponsiveTableRow.displayName = 'ResponsiveTableRow'
 const ResponsiveTableHead = React.forwardRef<
   HTMLTableCellElement,
   React.ThHTMLAttributes<HTMLTableCellElement> & { sticky?: boolean }
->(({ className, sticky, ...props }, ref) => (
+>(({ className, sticky, scope = 'col', ...props }, ref) => (
   <th
     ref={ref}
+    scope={scope}
     className={cn(
       'h-12 px-4 text-left align-middle font-medium text-muted-foreground whitespace-nowrap',
       sticky && 'sticky-cell',

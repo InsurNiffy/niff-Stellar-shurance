@@ -79,6 +79,27 @@ describe('ResponsiveTable', () => {
     expect(scrollContainer).toHaveAttribute('tabIndex', '0');
   });
 
+  it('announces headers with explicit scope attributes', () => {
+    const { container } = renderTable();
+
+    const headers = container.querySelectorAll('th');
+    expect(headers).toHaveLength(4);
+    headers.forEach((header) => expect(header).toHaveAttribute('scope', 'col'));
+
+    const rowHeader = render(
+      <ResponsiveTable>
+        <ResponsiveTableTable>
+          <ResponsiveTableBody>
+            <ResponsiveTableRow>
+              <ResponsiveTableHead scope="row" sticky>POL-001</ResponsiveTableHead>
+            </ResponsiveTableRow>
+          </ResponsiveTableBody>
+        </ResponsiveTableTable>
+      </ResponsiveTable>,
+    );
+    expect(rowHeader.container.querySelector('th')).toHaveAttribute('scope', 'row');
+  });
+
   it('maintains table semantics with thead and tbody', () => {
     const { container } = renderTable();
 

@@ -89,6 +89,12 @@
   * {
     @apply border-border outline-ring/30;
   }
+  html,
+  body {
+    /* Wide tables scroll inside their own container, never the page. */
+    max-width: 100%;
+    overflow-x: clip;
+  }
   body {
     @apply bg-background text-foreground antialiased;
   }
@@ -123,6 +129,15 @@
     bottom: 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
     z-index: 40;
+  }
+
+  /* Responsive table: keep the scrollbar visible on touch devices and trap
+     overscroll so the page never scrolls sideways with the table. */
+  .responsive-table-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.3) hsl(var(--muted));
   }
 
   /* Responsive table with sticky first column */
