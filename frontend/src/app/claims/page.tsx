@@ -19,7 +19,7 @@ export const metadata: Metadata = {
  */
 export default function ClaimsPage() {
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
+    <main className="mx-auto max-w-5xl px-4 py-8" data-tour="claims-board">
       <h1 className="mb-6 text-2xl font-semibold text-gray-900">
         Claims Board
       </h1>

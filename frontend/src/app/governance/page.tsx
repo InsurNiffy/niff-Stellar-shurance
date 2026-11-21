@@ -42,7 +42,7 @@ export default function GovernancePage() {
   useEffect(() => { load() }, [load])
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+    <main className="mx-auto max-w-5xl space-y-6 px-4 py-8" data-tour="governance">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Governance</h1>
