@@ -95,6 +95,25 @@ describe('useDraftPersistence', () => {
     expect(stored.data.deepIpfs).toBeUndefined();
   });
 
+  it('strips file objects and IPFS URLs nested inside objects and arrays', () => {
+    const { result } = renderHook(() => useDraftPersistence(formKey, schemaVersion));
+    const fakeFile = { constructor: { name: 'File' }, name: 'proof.png' };
+
+    act(() => {
+      result.current.saveDraft({
+        title: 'Claim text',
+        nested: { note: 'safe text', attachment: fakeFile, link: 'ipfs://QmABC' },
+        uploads: [fakeFile],
+      } as any);
+    });
+
+    const stored = JSON.parse(localStorage.getItem(storageKey)!);
+    expect(stored.data.title).toBe('Claim text');
+    expect(stored.data.nested).toEqual({ note: 'safe text' });
+    expect(stored.data.uploads).toBeUndefined();
+    expect(JSON.stringify(stored.data)).not.toMatch(/ipfs/i);
+  });
+
   it('clears draft explicitly', () => {
     const { result } = renderHook(() => useDraftPersistence(formKey, schemaVersion));
     
