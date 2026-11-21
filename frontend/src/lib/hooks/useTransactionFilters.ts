@@ -7,10 +7,12 @@ import {
   DEFAULT_TRANSACTION_FILTERS,
   TRANSACTION_FILTER_QUERY_PARAMS,
   TRANSACTION_STATUS_OPTIONS,
+  TRANSACTION_TYPE_OPTIONS,
   type TransactionFilters,
 } from '@/components/transactions/types'
 
 const VALID_STATUSES = new Set(TRANSACTION_STATUS_OPTIONS.map((opt) => opt.value))
+const VALID_TYPES = new Set(TRANSACTION_TYPE_OPTIONS.map((opt) => opt.value))
 
 /**
  * Reads TransactionFilters from the URL on mount and writes changes back via
@@ -29,6 +31,12 @@ export function useTransactionFilters(): [
   const setFilters = useCallback(
     (next: TransactionFilters) => {
       const params = new URLSearchParams(searchParams.toString())
+
+      if (next.type !== DEFAULT_TRANSACTION_FILTERS.type) {
+        params.set(TRANSACTION_FILTER_QUERY_PARAMS.type, next.type)
+      } else {
+        params.delete(TRANSACTION_FILTER_QUERY_PARAMS.type)
+      }
 
       if (next.asset !== DEFAULT_TRANSACTION_FILTERS.asset) {
         params.set(TRANSACTION_FILTER_QUERY_PARAMS.asset, next.asset)
@@ -66,12 +74,16 @@ export function useTransactionFilters(): [
 function parseFiltersFromParams(
   searchParams: ReturnType<typeof useSearchParams>,
 ): TransactionFilters {
+  const type = searchParams.get(TRANSACTION_FILTER_QUERY_PARAMS.type)
   const asset = searchParams.get(TRANSACTION_FILTER_QUERY_PARAMS.asset)
   const status = searchParams.get(TRANSACTION_FILTER_QUERY_PARAMS.status)
   const startDate = searchParams.get(TRANSACTION_FILTER_QUERY_PARAMS.startDate)
   const endDate = searchParams.get(TRANSACTION_FILTER_QUERY_PARAMS.endDate)
 
   return {
+    type: type && VALID_TYPES.has(type as TransactionFilters['type'])
+      ? (type as TransactionFilters['type'])
+      : DEFAULT_TRANSACTION_FILTERS.type,
     asset: asset || DEFAULT_TRANSACTION_FILTERS.asset,
     status: status && VALID_STATUSES.has(status as TransactionFilters['status'])
       ? (status as TransactionFilters['status'])
