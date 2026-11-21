@@ -418,7 +418,7 @@ impl NiffyInsure {
     /// Read-only: SEP-41 balance of the configured default asset held by the
     /// `Treasury` address (defaults to this contract's own address until
     /// `set_treasury` is called). Pairs with `get_min_solvency_ratio_bps()`
-    /// for off-chain solvency monitoring (Issue #1604): the admin dashboard's
+    /// for off-chain solvency monitoring (Issue #1598): the admin dashboard's
     /// solvency widget and the `treasury.balance_low` webhook both poll this.
     pub fn get_treasury_balance(env: Env) -> i128 {
         let token_addr = storage::get_token(&env);
@@ -433,6 +433,9 @@ impl NiffyInsure {
         storage::get_fee_recipient(&env)
     }
 
+    /// Read-only: minimum solvency ratio in basis points (0..=10_000,
+    /// default 0). Read alongside `get_treasury_balance()` by the admin
+    /// dashboard solvency widget and the `treasury.balance_low` webhook.
     pub fn get_min_solvency_ratio_bps(env: Env) -> u32 {
         storage::get_min_solvency_ratio_bps(&env)
     }
