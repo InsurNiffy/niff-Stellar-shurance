@@ -12,6 +12,18 @@ Premiums collected by the contract are held in the contract's token account. Pay
 - If the treasury balance is insufficient to cover an approved payout, the payout transaction will fail. The claim remains `Approved` on-chain but unpaid until the treasury is replenished.
 - Admin cannot unilaterally withdraw treasury funds — only approved claim payouts trigger outflows.
 
+## Solvency
+
+The protocol is solvent only while the on-chain treasury balance can cover every `Approved` but unpaid claim plus the active coverage obligations. Anyone can verify the balance from the treasury token account on Stellar Expert; the UI never substitutes an indexer estimate for this on-chain read.
+
+## Sweep limits
+
+Excess funds may be swept only under the admin-configured limits: a sweep can never reduce the reserve below the outstanding approved-payout requirement, and per-sweep and rolling-window caps are enforced by the contract. Every sweep emits an event so it can be reconciled against the registry and treasury dashboard.
+
+## Reinsurance
+
+Reinsurance cover backs claims that exceed the treasury's retained layer. The reinsurance contract and its limits are recorded in the deployment registry; payouts above the retention threshold require the reinsurer to honor the cover before the remaining balance is drawn from the treasury. A lapsed reinsurance agreement must be reflected in the registry before the affected coverage tier is offered.
+
 ## Pause Mechanism
 
 The contract supports a global pause controlled by the admin account.

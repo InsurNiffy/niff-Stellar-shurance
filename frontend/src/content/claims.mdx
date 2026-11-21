@@ -1,6 +1,13 @@
 # Claim Timelines
 
-## Filing a Claim
+## Filing process
+
+1. Prepare the evidence files and compute a SHA-256 digest for each one.
+2. Connect the policyholder wallet and submit the claim with evidence URLs and hashes.
+3. The contract snapshots eligible voters, stores the claim on-chain, and opens the voting window.
+4. Follow the vote tally until the deadline; an approved claim triggers a payout.
+
+## How filing works
 
 A policyholder calls `file_claim` on the contract. The contract checks:
 
@@ -34,6 +41,10 @@ T+72h  Payout transaction submitted (Approve) OR claim marked Rejected
 ## Withdrawing a claim (pre-vote)
 
 The claimant may call `withdraw_claim` while the claim is `Processing` and **no approve or reject votes have been cast**. After the first ballot, withdrawal is blocked so governance rounds cannot be manipulated. Withdrawn claims stay readable on-chain and in the indexer; surface them distinctly from `Rejected` on the claims board.
+
+## Evidence requirements
+
+Every filing must include content-addressed evidence with a verifiable digest.
 
 ## Evidence Hash Commitment
 
