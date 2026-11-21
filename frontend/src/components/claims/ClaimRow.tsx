@@ -5,6 +5,8 @@
 import Link from "next/link";
 
 import type { ClaimBoard } from "@/lib/schemas/claims-board";
+import type { OptimisticStatus } from "@/lib/optimistic";
+import { PendingBadge } from "@/components/ui/PendingBadge";
 
 import { DeadlineDisplay } from "./DeadlineDisplay";
 import { QuorumIndicator } from "./QuorumIndicator";
@@ -18,6 +20,7 @@ export interface ClaimRowProps {
   isAuthenticated: boolean;
   onVote?: (claimId: string, vote: "approve" | "reject" | "abstain") => void;
   currentLedger?: number | null;
+  optimisticStatus?: { status: OptimisticStatus; error?: string };
 }
 
 /** Maps ClaimStatus to a human-readable label and a shape indicator (non-color-only, Req 9.3) */
@@ -89,6 +92,7 @@ export function ClaimRow({
   isAuthenticated,
   onVote,
   currentLedger = null,
+  optimisticStatus,
 }: ClaimRowProps) {
   const statusCfg = STATUS_CONFIG[claim.status] ?? DEFAULT_STATUS_CONFIG;
   const claimOpen = isClaimOpen(claim);
@@ -125,6 +129,9 @@ export function ClaimRow({
             <span aria-hidden="true">{statusCfg.shape}</span>
             {statusCfg.label}
           </span>
+          {optimisticStatus && (
+            <PendingBadge status={optimisticStatus.status} error={optimisticStatus.error} />
+          )}
         </div>
 
         {/* Policy reference */}

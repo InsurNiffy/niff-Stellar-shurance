@@ -14,8 +14,12 @@
  * Optimistic state is session-only (React state) — never persisted to storage.
  */
 
-import { useCallback } from 'react';
-import { useOptimisticState, useConfirmationPoller } from '@/lib/optimistic';
+import { useCallback, useEffect } from 'react';
+import {
+  useOptimisticState,
+  useConfirmationPoller,
+  subscribeOptimisticMutations,
+} from '@/lib/optimistic';
 import { toast } from '@/components/ui/use-toast';
 import type { ClaimBoard } from '@/lib/schemas/claims-board';
 
@@ -60,10 +64,48 @@ export interface UseOptimisticClaimsReturn {
    * are notified when a mutation is reverted.
    */
   rollbackWithToast: (key: string, error: string) => void;
+  /** Pending/confirmed/failed entries, for rendering pollers and badges. */
+  entries: ReturnType<typeof useOptimisticState<ClaimBoard>>['entries'];
+  confirm: (key: string) => void;
+}
+
+/** Minimal row used when a just-filed claim is not in the server list yet. */
+function placeholderClaim(claimId: string): ClaimBoard {
+  return {
+    claim_id: claimId,
+    policy_id: '',
+    claimant: '',
+    amount: '',
+    details: '',
+    evidence: [],
+    status: 'Processing',
+    voting_deadline_ledger: 0,
+    approve_votes: 0,
+    reject_votes: 0,
+    filed_at: Math.floor(Date.now() / 1000),
+    total_voters: 0,
+  };
 }
 
 export function useOptimisticClaims(): UseOptimisticClaimsReturn {
   const optimistic = useOptimisticState<ClaimBoard>();
+
+  // Subscribe to submissions from the claim wizard and vote panel. The bus is
+  // in-memory only, so nothing survives a page reload.
+  useEffect(() => subscribeOptimisticMutations((mutation) => {
+    const claim = placeholderClaim(mutation.claimId);
+    if (mutation.type === 'claim_filing') {
+      optimistic.apply(mutation.claimId, 'claim_filing', claim, claim, mutation.txHash);
+    } else {
+      const voted: ClaimBoard = {
+        ...claim,
+        approve_votes: mutation.vote === 'Approve' ? 1 : 0,
+        reject_votes: mutation.vote === 'Reject' ? 1 : 0,
+      };
+      optimistic.apply(mutation.claimId, 'vote_submission', voted, claim, mutation.txHash);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
 
   // Confirm entries whose expected status is now reflected by the server.
   // Called by mergeWithOptimistic so the effect runs on every server refresh.
@@ -109,11 +151,19 @@ export function useOptimisticClaims(): UseOptimisticClaimsReturn {
   const mergeWithOptimistic = useCallback(
     (serverClaims: ClaimBoard[]): ClaimBoard[] => {
       syncWithServer(serverClaims);
-      return serverClaims.map((c) => {
+      const merged = serverClaims.map((c) => {
         const entry = optimistic.get(c.claim_id);
         if (!entry || entry.status === 'confirmed') return c;
         return entry.status === 'failed' ? entry.previousData : entry.optimisticData;
       });
+      // A newly filed claim is not in the server list yet — show it immediately.
+      optimistic.entries.forEach((entry, key) => {
+        if (entry.operation !== 'claim_filing' || entry.status === 'confirmed') return;
+        if (!merged.some((c) => c.claim_id === key)) {
+          merged.unshift(entry.status === 'failed' ? entry.previousData : entry.optimisticData);
+        }
+      });
+      return merged;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [optimistic.entries],
@@ -140,7 +190,15 @@ export function useOptimisticClaims(): UseOptimisticClaimsReturn {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { applyOptimisticClaim, applyOptimisticVote, mergeWithOptimistic, getOptimisticStatus, rollbackWithToast };
+  return {
+    applyOptimisticClaim,
+    applyOptimisticVote,
+    mergeWithOptimistic,
+    getOptimisticStatus,
+    rollbackWithToast,
+    entries: optimistic.entries,
+    confirm: optimistic.confirm,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import { useWallet } from '@/hooks/use-wallet';
 import { useDraftPersistence } from '@/hooks/use-draft-persistence';
 import { ClaimAPI } from '@/lib/api/claim';
 import { trackClaimFiled } from '@/lib/analytics';
+import { emitOptimisticMutation } from '@/lib/optimistic';
 
 import { EvidenceStep, type EvidenceAttachment } from './steps/EvidenceStep';
 import { DetailsStep } from './steps/DetailsStep';
@@ -160,6 +161,8 @@ export function ClaimWizard({ policyId, maxCoverage, policyCoverage }: ClaimWiza
 
       setTxStatus('Claim submitted successfully.');
       setClaimId(result.claimId);
+      // Show the new claim as pending immediately, before the indexer catches up.
+      emitOptimisticMutation({ type: 'claim_filing', claimId: String(result.claimId) });
 
       trackClaimFiled();
       clearDraft();

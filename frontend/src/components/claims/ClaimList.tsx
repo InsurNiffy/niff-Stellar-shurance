@@ -6,6 +6,7 @@
 import { useState, useRef, useCallback } from "react";
 
 import type { ClaimBoard } from "@/lib/schemas/claims-board";
+import type { OptimisticStatus } from "@/lib/optimistic";
 
 import { ClaimRow } from "./ClaimRow";
 
@@ -21,6 +22,8 @@ interface ClaimListProps {
   currentLedger?: number | null;
   /** Enable windowed rendering to keep DOM node count bounded (Req 7.2) */
   virtualize?: boolean;
+  /** Optimistic submission state per claim, for immediate "Pending" feedback. */
+  optimisticStatuses?: Record<string, { status: OptimisticStatus; error?: string }>;
 }
 
 /**
@@ -38,6 +41,7 @@ export function ClaimList({
   onVote,
   currentLedger = null,
   virtualize = false,
+  optimisticStatuses = {},
 }: ClaimListProps) {
   const [scrollTop, setScrollTop] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -59,6 +63,7 @@ export function ClaimList({
             isAuthenticated={isAuthenticated}
             onVote={onVote}
             currentLedger={currentLedger}
+            optimisticStatus={optimisticStatuses[claim.claim_id]}
           />
         ))}
       </div>
@@ -97,6 +102,7 @@ export function ClaimList({
                 isAuthenticated={isAuthenticated}
                 onVote={onVote}
                 currentLedger={currentLedger}
+                optimisticStatus={optimisticStatuses[claim.claim_id]}
               />
             </div>
           ))}
