@@ -46,12 +46,17 @@ appeal/dispute pair.
   only to avoid renumbering XDR discriminants. The live "appeal in progress"
   status is `UnderAppeal`. See `contracts/niffyinsure/src/types.rs`.
 - **Withdrawal** (`withdraw_claim`) — the claimant retracting a claim *before*
-  voting begins. Unrelated to appeals: there is no adverse decision to contest.
+  voting begins. It requires `claim.status == Processing` and no votes cast yet
+  (the contract has no `voting_start_ledger`; zero ballots is the on-chain
+  pre-voting guard). Withdrawal sets the terminal `ClaimStatus::Withdrawn`,
+  refunds any claim filing fee deposit, restores the rate-limit snapshot, and
+  emits `claim_withdrawn`. Unrelated to appeals: there is no adverse decision
+  to contest.
 
 ### Where these are implemented
 
 - `contracts/niffyinsure/src/claim.rs` — `open_appeal`, `dispute_claim`,
-  `escalate_claim`, `vote_on_appeal`, `finalize_appeal`
+  `escalate_claim`, `withdraw_claim`, `vote_on_appeal`, `finalize_appeal`
 - `contracts/niffyinsure/src/lib.rs` — the corresponding contract entrypoints
   and their auth checks
 - `contracts/niffyinsure/src/types.rs` — `ClaimStatus` discriminants
