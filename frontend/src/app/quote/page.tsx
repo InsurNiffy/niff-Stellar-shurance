@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
+import { Suspense } from 'react'
 import { Calculator } from 'lucide-react'
-import { QuoteExperience } from '@/components/quote/quote-form'
+
+import { QuotePageClient } from './quote-page-client'
 
 export const metadata: Metadata = {
   title: 'Get an Insurance Quote',
@@ -19,7 +21,9 @@ export default function QuotePage() {
           Fill in your coverage details and your estimated premium updates automatically — no submit button needed.
         </p>
       </div>
-      <QuoteExperience />
+      <Suspense fallback={<p className="text-sm text-muted-foreground">Loading quote form…</p>}>
+        <QuotePageClient />
+      </Suspense>
     </div>
   )
 }

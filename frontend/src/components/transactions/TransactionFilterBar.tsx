@@ -2,6 +2,7 @@
 
 import {
   TRANSACTION_STATUS_OPTIONS,
+  TRANSACTION_TYPE_OPTIONS,
   type TransactionFilters,
 } from './types'
 
@@ -34,6 +35,20 @@ export function TransactionFilterBar({ filters, onChange, assetOptions }: Transa
       aria-label="Filter transactions"
       className="flex flex-wrap gap-3 items-end p-3 bg-white border rounded-md mb-4"
     >
+      <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
+        Type
+        <select
+          value={filters.type}
+          onChange={(e) => onChange({ ...filters, type: e.target.value as TransactionFilters['type'] })}
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
+          aria-label="Filter by transaction type"
+        >
+          {TRANSACTION_TYPE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </label>
+
       <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
         Asset
         <select

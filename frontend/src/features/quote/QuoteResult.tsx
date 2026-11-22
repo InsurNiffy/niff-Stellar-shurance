@@ -2,6 +2,9 @@
 
 import { AlertCircle } from 'lucide-react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+
+import { PENDING_QUOTE_KEY } from '@/app/quote/deep-link'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +35,8 @@ function buildPurchaseHref(inputs: Partial<QuoteFormData>, quote: QuoteResponse)
 }
 
 export function QuoteResult({ status, quote, error, inputs }: Props) {
+  const router = useRouter()
+
   if (status === 'idle') {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground" aria-live="polite">
@@ -68,6 +73,19 @@ export function QuoteResult({ status, quote, error, inputs }: Props) {
   if (!quote) return null
 
   const href = buildPurchaseHref(inputs, quote)
+
+  // Carry the calculated quote to the purchase flow in client state so the
+  // shopper never has to re-enter or recompute it.
+  const purchase = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    try {
+      sessionStorage.setItem(PENDING_QUOTE_KEY, JSON.stringify({ quote, inputs }))
+    } catch {
+      // Storage may be unavailable (private mode); the href still carries the quote.
+    }
+    router.push(href)
+  }
+
   const symbol = quote.tokenSymbol ?? 'XLM'
   const decimals = quote.tokenDecimals ?? 7
   const protocolFeeBps = quote.protocolFeeBps ?? 500
@@ -126,7 +144,7 @@ export function QuoteResult({ status, quote, error, inputs }: Props) {
       </Badge>
 
       <Button asChild className="w-full" size="lg">
-        <Link href={href}>Get This Policy →</Link>
+        <Link href={href} onClick={purchase}>Purchase Policy →</Link>
       </Button>
     </div>
   )
