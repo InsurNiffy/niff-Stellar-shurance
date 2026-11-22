@@ -71,6 +71,6 @@ describe('BottomTabBar', () => {
     expect(screen.getByRole('link', { name: /home/i })).toHaveAttribute('href', '/')
     expect(screen.getByRole('link', { name: /policies/i })).toHaveAttribute('href', '/policies')
     expect(screen.getByRole('link', { name: /claims/i })).toHaveAttribute('href', '/claims')
-    expect(screen.getByRole('link', { name: /wallet/i })).toHaveAttribute('href', '/settings')
+    expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/settings')
   })
 })

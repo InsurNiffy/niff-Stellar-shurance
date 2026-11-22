@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { FileText, Home, Megaphone, Scale, Wallet } from 'lucide-react'
+import { FileText, Home, Scale, Settings } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import { useAnnouncementUnreadCount } from '@/hooks/useAnnouncementUnreadCount'
@@ -16,12 +16,6 @@ const TABS = [
     match: (path: string) => path.startsWith('/policies'),
   },
   {
-    href: '/announcements',
-    label: 'News',
-    icon: Megaphone,
-    match: (path: string) => path.startsWith('/announcements'),
-  },
-  {
     href: '/claims',
     label: 'Claims',
     icon: Scale,
@@ -29,8 +23,8 @@ const TABS = [
   },
   {
     href: '/settings',
-    label: 'Wallet',
-    icon: Wallet,
+    label: 'Settings',
+    icon: Settings,
     match: (path: string) => path.startsWith('/settings'),
   },
 ] as const

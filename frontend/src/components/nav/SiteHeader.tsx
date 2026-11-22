@@ -1,11 +1,14 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { Shield, Megaphone } from 'lucide-react'
 import { useAnnouncementUnreadCount } from '@/hooks/useAnnouncementUnreadCount'
 
 import { LocaleSwitcher } from '@/components/LocaleSwitcher'
 import { ThemeToggle } from '@/components/theme-toggle'
+import { LocaleSwitcher } from '@/components/LocaleSwitcher'
+import { ConnectWalletButton } from '@/features/wallet/ConnectWalletButton'
 import { GlobalSearchBar } from '@/components/ui/GlobalSearchBar'
 import { cn } from '@/lib/utils'
 
@@ -16,10 +19,14 @@ interface SiteHeaderProps {
 /**
  * SiteHeader — top navigation bar shown on desktop (hidden on mobile where
  * the BottomTabBar takes over). Contains the brand logo, primary nav links,
- * global search bar, and the theme toggle button.
+import { LocaleSwitcher } from '@/components/LocaleSwitcher'
+import { ConnectWalletButton } from '@/features/wallet/ConnectWalletButton'
+import { GlobalSearchBar } from '@/components/ui/GlobalSearchBar'
  */
 export function SiteHeader({ className }: SiteHeaderProps) {
   const unreadCount = useAnnouncementUnreadCount()
+  const pathname = usePathname()
+  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
 
   return (
     <header
@@ -41,24 +48,22 @@ export function SiteHeader({ className }: SiteHeaderProps) {
 
         {/* Primary nav */}
         <nav aria-label="Primary navigation" className="flex items-center gap-1">
-          <Link
-            href="/quote"
-            className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            Get Quote
-          </Link>
-          <Link
-            href="/policies"
-            className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            My Policy
-          </Link>
-          <Link
-            href="/claims"
-            className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            Claims
-          </Link>
+          {[
+            { href: '/policies', label: 'Policies' },
+            { href: '/claims', label: 'Claims' },
+            { href: '/docs', label: 'Docs' },
+          ].map(({ href, label }) => (
+            <Link
+              key={href}
+              href={href}
+              aria-current={isActive(href) ? 'page' : undefined}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors hover:text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                isActive(href) ? 'bg-accent font-semibold text-foreground' : 'text-muted-foreground'
+              }`}
+            >
+              {label}
+            </Link>
+          ))}
           <Link
             href="/announcements"
             className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
@@ -67,18 +72,13 @@ export function SiteHeader({ className }: SiteHeaderProps) {
             Announcements
             {unreadCount > 0 && <span className="ml-1 rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground" aria-label={`${unreadCount} unread announcements`}>{unreadCount}</span>}
           </Link>
-          <Link
-            href="/docs"
-            className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            Docs
-          </Link>
         </nav>
 
         {/* Actions */}
         <div className="flex items-center gap-2">
           <GlobalSearchBar />
           <LocaleSwitcher />
+          <ConnectWalletButton />
           <ThemeToggle />
         </div>
       </div>

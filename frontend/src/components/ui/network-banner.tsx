@@ -22,7 +22,10 @@ export function NetworkBanner() {
       style={{ paddingTop: `calc(0.5rem + env(safe-area-inset-top, 0px))` }}
     >
       <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>You&apos;re offline. Some features may be unavailable.</span>
+      <span>
+        You&apos;re offline. Reads may be stale and writes are not queued — reconnect to
+        retry any failed action.
+      </span>
     </div>
   )
 }

@@ -34,6 +34,14 @@ R = ceil(E × Q ÷ 10_000)
 
 Default **Q** after `initialize` is **5000** (50% participation), unless the admin sets another value.
 
+## Tie-breaking
+
+When participation quorum is met, the outcome is decided by **plurality** of the ballots actually cast: `Approved` only when `approve_votes > reject_votes`. A **tie awards the claim to the reject side** (`reject_votes >= approve_votes`), so an unresolved claim never results in a payout. If quorum is not reached by the deadline, the claim is also `Rejected`.
+
+## Appeal mechanism
+
+A rejected claimant may file an appeal when the `claims_appeal_enabled` feature flag is on for the deployment. Filing an appeal creates a new on-chain appeal round with its own deadline; the original vote tally stays in storage for audit. A fresh voter snapshot is taken and the same quorum and tie-breaking rules apply. Only one appeal per claim is permitted, and the appeal window closes at `appeal_deadline_ledger`. Vote and appeal outcomes are final once recorded.
+
 ## Vote Flow
 
 ```

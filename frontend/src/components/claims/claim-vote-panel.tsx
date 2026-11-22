@@ -100,7 +100,7 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   // Appeal state
   // #1355: the whole appeal flow (button, status check, modal) is gated behind
   // the `claims_appeal_enabled` flag so it can be released per environment.
-  const { enabled: appealFeatureEnabled } = useFeatureFlag(APPEAL_FEATURE_FLAG)
+  const appealFeatureEnabled = useFeatureFlag(APPEAL_FEATURE_FLAG)
   const [appealState, setAppealState] = useState<AppealState>('idle')
   const [appealTxHash, setAppealTxHash] = useState<string | null>(null)
   const [appealError, setAppealError] = useState<string | null>(null)
