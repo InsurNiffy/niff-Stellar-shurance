@@ -37,7 +37,7 @@ fn get_treasury_balance_tracks_configured_treasury() {
     assert_eq!(client.get_treasury_balance(), 222_333i128);
 }
 
-// ── Solvency visibility pair (Issue #1604) ─────────────────────────────────
+// ── Solvency visibility pair (Issue #1598) ─────────────────────────────────
 //
 // `get_treasury_balance()` and `get_min_solvency_ratio_bps()` together are
 // the public read surface the admin dashboard's solvency widget and the

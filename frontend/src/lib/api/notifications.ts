@@ -22,30 +22,35 @@ export interface NotificationPreferences {
   }
 }
 
+interface ProfileResponse {
+  notificationPreferences?: NotificationPreferences | null
+}
+
+/** Preferences are stored on the authenticated wallet's profile (GET /profile). */
 export async function getNotificationPreferences(
   walletAddress: string,
   jwt: string,
 ): Promise<NotificationPreferences> {
   const { apiUrl } = getConfig()
-  return apiFetch<NotificationPreferences>(`${apiUrl}/notifications/preferences/${walletAddress}`, {
-    headers: {
-      Authorization: `Bearer ${jwt}`,
-    },
+  const profile = await apiFetch<ProfileResponse>(`${apiUrl}/api/profile`, {
+    headers: { Authorization: `Bearer ${jwt}` },
   })
+  return (profile.notificationPreferences ?? {}) as NotificationPreferences
 }
 
+/** Persist preferences via PATCH /profile. */
 export async function patchNotificationPreferences(
   walletAddress: string,
   prefs: Partial<NotificationPreferences>,
   jwt: string,
 ): Promise<void> {
   const { apiUrl } = getConfig()
-  await apiFetch<void>(`${apiUrl}/notifications/preferences/${walletAddress}`, {
+  await apiFetch<void>(`${apiUrl}/api/profile`, {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${jwt}`,
     },
-    body: JSON.stringify(prefs),
+    body: JSON.stringify({ notificationPreferences: prefs }),
   })
 }

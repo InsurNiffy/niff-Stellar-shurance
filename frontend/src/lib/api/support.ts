@@ -34,6 +34,21 @@ export interface SupportTicketView {
   updatedAt: string
 }
 
+export interface SupportTicketReply {
+  id: string
+  message: string
+  author?: string
+  createdAt: string
+}
+
+/** Replies on a ticket thread, returned oldest-first by the API. */
+export async function listSupportTicketReplies(ticketId: string): Promise<SupportTicketReply[]> {
+  const res = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/replies`)
+  if (!res.ok) return []
+  const data = await res.json().catch(() => ({})) as { replies?: SupportTicketReply[] }
+  return data.replies ?? []
+}
+
 export interface TicketTypingState {
   ticketId: string
   isTyping: boolean
