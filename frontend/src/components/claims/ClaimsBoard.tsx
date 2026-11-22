@@ -16,6 +16,11 @@ import { useQueryParamFilters } from "@/lib/hooks/useQueryParamFilters";
 import { useRealtimeTallies } from "@/lib/hooks/useRealtimeTallies";
 import { useLatestLedger } from "@/hooks/use-latest-ledger";
 import type { ClaimBoard } from "@/lib/schemas/claims-board";
+import {
+  useOptimisticClaims,
+  ClaimConfirmationPoller,
+} from "@/features/claims/hooks/useOptimisticClaims";
+import type { OptimisticStatus } from "@/lib/optimistic";
 
 import { ClaimList } from "./ClaimList";
 import { FilterBar } from "./FilterBar";
@@ -90,11 +95,22 @@ export function ClaimsBoard() {
     }
   }, [filters, page]);
 
+  // Optimistic updates from claim filing / vote submission are merged before
+  // render so affected rows show "Pending" immediately.
+  const optimistic = useOptimisticClaims();
+
   // Merge fetched claims with any tally patches.
-  const localClaims = fetchedClaims.map((claim) => {
+  const patchedClaims = fetchedClaims.map((claim) => {
     const patch = tallyPatches.get(claim.claim_id);
     return patch ? { ...claim, ...patch } : claim;
   });
+  const localClaims = optimistic.mergeWithOptimistic(patchedClaims);
+  const optimisticStatuses = Object.fromEntries(
+    Array.from(optimistic.entries.entries()).map(([id, entry]) => [
+      id,
+      { status: entry.status as OptimisticStatus, error: entry.error },
+    ]),
+  );
 
   // ── Notifications (Req 10.1, 10.2, 10.3) ─────────────────────────────────
   useNotifications(localClaims, filters);
@@ -218,9 +234,25 @@ export function ClaimsBoard() {
             claims={localClaims}
             isAuthenticated={isAuthenticated}
             currentLedger={latestLedger}
+            optimisticStatuses={optimisticStatuses}
           />
         )}
       </section>
+
+      {/* Confirm each optimistic mutation; roll back on failure or timeout. */}
+      {Array.from(optimistic.entries.entries())
+        .filter(([, entry]) => entry.status === "pending")
+        .map(([id, entry]) => (
+          <ClaimConfirmationPoller
+            key={id}
+            claimId={id}
+            expectedStatus={entry.optimisticData.status}
+            createdAt={entry.createdAt}
+            enabled
+            onConfirmed={optimistic.confirm}
+            onRollback={optimistic.rollbackWithToast}
+          />
+        ))}
 
       {/* Pagination */}
       {!loading && !error && totalPages > 1 && (

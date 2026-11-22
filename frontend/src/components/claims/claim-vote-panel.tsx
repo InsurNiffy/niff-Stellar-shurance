@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/use-toast'
+import { emitOptimisticMutation } from '@/lib/optimistic'
 import { ClaimsDetailSkeleton } from '@/features/claims/components/ClaimsSkeleton'
 import {
   AlertDialog,
@@ -231,6 +232,14 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
       setSubmitState('submitting')
       const result = await submitVote(claimId, walletAddress, pendingVote, signedXdr)
 
+      // Mark the claim row pending immediately; the confirmation poller
+      // confirms or rolls this back once the indexer reflects the vote.
+      emitOptimisticMutation({
+        type: 'vote_submission',
+        claimId,
+        vote: pendingVote as 'Approve' | 'Reject',
+        txHash: result.transactionHash,
+      })
       setTxHash(result.transactionHash)
       setClaim((prev) =>
         prev
