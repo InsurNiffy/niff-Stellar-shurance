@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function QuotePage() {
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
+    <div className="container mx-auto px-4 py-8 max-w-5xl" data-tour="get-quote">
       <div className="mb-8 text-center">
         <div className="mb-3 flex items-center justify-center gap-2">
           <Calculator className="h-7 w-7 text-primary" aria-hidden="true" />
