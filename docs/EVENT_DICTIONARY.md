@@ -58,7 +58,7 @@ Emitted after every successful admin-authenticated entrypoint. Failed or unautho
 
 Stable `action_type` values:
 
-`initialize`, `update_multiplier_table`, `admin_set_premium_multiplier`, `set_allowed_asset`, `admin_set_vote_duration_ledgers`, `admin_set_quorum_bps`, `set_grace_period_ledgers`, `process_claim`, `set_calculator`, `clear_calculator`, `admin_terminate_policy`, `propose_admin`, `accept_admin`, `cancel_admin`, `propose_admin_action`, `confirm_admin_action`, `cancel_admin_action`, `set_token`, `set_treasury`, `drain`, `sweep_token`, `set_sweep_cap`, `set_sweep_notice_period`, `admin_set_max_evidence_count`, `admin_set_gateway_allowlist`, `admin_set_asset_premium_table`, `pause`, `unpause`, `pause_bind`, `pause_claims`, `set_rolling_claim_cap`, `set_rolling_claim_window_ledgers`, `set_ttl_alert_threshold`, `gov_set_token_runtime_enabled`, `gov_set_token_address_stub`, `admin_set_open_claim_count`.
+`initialize`, `update_multiplier_table`, `admin_set_premium_multiplier`, `set_allowed_asset`, `admin_set_vote_duration_ledgers`, `admin_set_quorum_bps`, `set_grace_period_ledgers`, `process_claim`, `set_calculator`, `clear_calculator`, `admin_terminate_policy`, `propose_admin`, `accept_admin`, `cancel_admin`, `propose_admin_action`, `confirm_admin_action`, `cancel_admin_action`, `set_token`, `set_treasury`, `drain`, `sweep_token`, `set_sweep_cap`, `set_sweep_notice_period`, `admin_set_max_evidence_count`, `admin_set_gateway_allowlist`, `admin_set_asset_premium_table`, `admin_set_max_appeals_per_claim`, `pause`, `unpause`, `pause_bind`, `pause_claims`, `set_rolling_claim_cap`, `set_rolling_claim_window_ledgers`, `set_ttl_alert_threshold`, `gov_set_token_runtime_enabled`, `gov_set_token_address_stub`, `admin_set_open_claim_count`.
 
 ---
 
@@ -111,6 +111,29 @@ Emitted when the admin updates the post-expiry grace period for policies.
 | `at_ledger` | u32 (ledger) | Ledger of the update |
 
 **Emitting entrypoint:** `set_grace_period_ledgers`
+
+---
+
+### `appeals_cap_updated` — max appeals per claim changed
+
+Emitted when the admin updates the instance-storage `MaxAppealsPerClaim` cap.
+The new value must be between 1 and 3.
+
+**Topics:** `("niffyinsure", "appeals_cap_updated")`
+
+```json
+{
+  "old_cap": 1,
+  "new_cap": 3
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_cap` | u32 | Previous maximum appeals per claim |
+| `new_cap` | u32 | New maximum appeals per claim (1–3) |
+
+**Emitting entrypoint:** `admin_set_max_appeals_per_claim`
 
 ---
 

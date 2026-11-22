@@ -1,4 +1,4 @@
-//! Configurable max appeals per claim (Issue #1605).
+//! Configurable max appeals per claim (Issue #1599).
 //!
 //! `MAX_APPEALS_PER_CLAIM` was a compile-time constant (hardcoded to 1).
 //! This moves it to instance storage, settable by the admin in `[1, 3]`,

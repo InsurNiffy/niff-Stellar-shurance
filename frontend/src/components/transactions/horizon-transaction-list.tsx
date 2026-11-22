@@ -11,6 +11,7 @@ import {
   type HorizonOperationRecord,
 } from '@/lib/api/horizon-transactions'
 import { buildTransactionsCsv } from '@/lib/export-transactions-csv'
+import { StellarExplorerLink } from '@/components/ui/StellarExplorerLink'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
@@ -21,7 +22,18 @@ function assetCodeOf(op: HorizonOperationRecord): string {
   return op.asset_code ?? 'XLM'
 }
 
+const TRANSACTION_TYPES = ['premium', 'payout', 'vote', 'appeal'] as const
+
+/** Derive the insurance transaction type from the operation and event descriptions. */
+function transactionTypeOf(op: HorizonOperationRecord): string | null {
+  const text = [op.type, ...(op.contractEvents ?? []).map((ev) => ev.description)]
+    .join(' ')
+    .toLowerCase()
+  return TRANSACTION_TYPES.find((type) => text.includes(type)) ?? null
+}
+
 function matchesFilters(op: HorizonOperationRecord, filters: TransactionFilters): boolean {
+  if (filters.type !== 'all' && transactionTypeOf(op) !== filters.type) return false
   if (filters.asset !== 'all' && assetCodeOf(op) !== filters.asset) return false
 
   if (filters.status === 'success' && !op.transaction_successful) return false
@@ -82,6 +94,12 @@ function TransactionRow({ op }: { op: HorizonOperationRecord }) {
         <div className="flex gap-2">
           <dt className="shrink-0">Status</dt>
           <dd>{op.transaction_successful ? 'success' : 'failed'}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="shrink-0">Explorer</dt>
+          <dd>
+            <StellarExplorerLink type="tx" value={op.transaction_hash} label="Stellar Expert" />
+          </dd>
         </div>
       </dl>
     </article>

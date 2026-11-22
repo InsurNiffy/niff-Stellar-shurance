@@ -5,6 +5,11 @@ import { useCallback, useEffect, useRef } from 'react'
 const TOUR_COMPLETED_KEY = 'niffyinsur-tour-completed'
 const TOUR_PROGRESS_KEY = 'niffyinsur-tour-progress'
 
+/** Per-wallet key so the tour is shown once for each newly connected wallet. */
+function walletTourKey(address: string): string {
+  return `${TOUR_COMPLETED_KEY}:${address}`
+}
+
 export interface TourStep {
   element: string
   popover: { title: string; description: string; side?: 'top' | 'bottom' | 'left' | 'right' }
@@ -12,60 +17,70 @@ export interface TourStep {
 
 const TOUR_STEPS: TourStep[] = [
   {
-    element: '[data-tour="connect-wallet"]',
+    element: '[data-tour="policy-dashboard"]',
     popover: {
-      title: 'Connect your wallet',
-      description: 'Start by connecting your Stellar wallet (Freighter or xBull) to access all features.',
+      title: 'Policy dashboard',
+      description: 'Review your active policies, claims, pending votes and wallet balance in one place.',
       side: 'bottom',
     },
   },
   {
-    element: '[data-tour="view-policies"]',
+    element: '[data-tour="get-quote"]',
     popover: {
-      title: 'View your policies',
-      description: 'See all your active insurance policies, coverage details, and expiry countdowns.',
+      title: 'Get a quote',
+      description: 'Estimate your premium instantly by adjusting your coverage details.',
       side: 'bottom',
     },
   },
   {
-    element: '[data-tour="file-claim"]',
+    element: '[data-tour="claims-board"]',
     popover: {
-      title: 'File a claim',
-      description: 'Submit a claim with evidence when a covered event occurs. The DAO will vote on it.',
+      title: 'Claims board',
+      description: 'Browse open claims and see how the community votes on them on-chain.',
       side: 'bottom',
     },
   },
   {
-    element: '[data-tour="cast-vote"]',
+    element: '[data-tour="governance"]',
     popover: {
-      title: 'Cast a vote',
-      description: 'Governance token holders vote to approve or reject claims transparently on-chain.',
-      side: 'bottom',
-    },
-  },
-  {
-    element: '[data-tour="support"]',
-    popover: {
-      title: 'Get support',
-      description: 'Search FAQs, submit a support ticket, and review your ticket history here.',
+      title: 'Governance',
+      description: 'Track parameter-change proposals and join the discussion before voting.',
       side: 'bottom',
     },
   },
 ]
 
-export function isTourCompleted(): boolean {
+export function isTourCompleted(address?: string | null): boolean {
   if (typeof window === 'undefined') return true
+  if (address) return localStorage.getItem(walletTourKey(address)) === 'true'
   return localStorage.getItem(TOUR_COMPLETED_KEY) === 'true'
 }
 
-export function resetTour(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(TOUR_COMPLETED_KEY)
-    localStorage.removeItem(TOUR_PROGRESS_KEY)
-  }
+export function markTourCompleted(address?: string | null): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(TOUR_COMPLETED_KEY, 'true')
+  if (address) localStorage.setItem(walletTourKey(address), 'true')
 }
 
-export function useOnboardingTour({ autoStart = true }: { autoStart?: boolean } = {}) {
+export function resetTour(address?: string | null): void {
+  if (typeof window === 'undefined') return
+  localStorage.removeItem(TOUR_COMPLETED_KEY)
+  localStorage.removeItem(TOUR_PROGRESS_KEY)
+  if (address) {
+    localStorage.removeItem(walletTourKey(address))
+    return
+  }
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith(`${TOUR_COMPLETED_KEY}:`))
+    .forEach((key) => localStorage.removeItem(key))
+}
+
+interface UseOnboardingTourOptions {
+  autoStart?: boolean
+  address?: string | null
+}
+
+export function useOnboardingTour({ autoStart = true, address = null }: UseOnboardingTourOptions = {}) {
   const driverRef = useRef<{ drive: () => void; destroy: () => void } | null>(null)
 
   const startTour = useCallback(async () => {
@@ -74,21 +89,25 @@ export function useOnboardingTour({ autoStart = true }: { autoStart?: boolean } 
     await import('driver.js/dist/driver.css')
 
     const availableSteps = TOUR_STEPS.filter((step) => document.querySelector(step.element))
+    if (availableSteps.length === 0) return
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const d = driver({
-      animate: true,
+      animate: !reduceMotion,
       showProgress: true,
       progressText: '{{current}} of {{total}}',
       steps: availableSteps,
       keyboardControl: true,
       allowClose: true,
       onNext: () => {
-        localStorage.setItem(TOUR_PROGRESS_KEY, String(Math.min(5, (Number(localStorage.getItem(TOUR_PROGRESS_KEY) ?? '0')) + 1)))
+        localStorage.setItem(TOUR_PROGRESS_KEY, String(Number(localStorage.getItem(TOUR_PROGRESS_KEY) ?? '0') + 1))
       },
       onPrev: () => {
         localStorage.setItem(TOUR_PROGRESS_KEY, String(Math.max(0, Number(localStorage.getItem(TOUR_PROGRESS_KEY) ?? '0') - 1)))
       },
       onDestroyed: () => {
-        localStorage.setItem(TOUR_COMPLETED_KEY, 'true')
+        // Skipping and completing both persist dismissal.
+        markTourCompleted(address)
         localStorage.removeItem(TOUR_PROGRESS_KEY)
       },
       onDestroyStarted: () => {
@@ -98,16 +117,16 @@ export function useOnboardingTour({ autoStart = true }: { autoStart?: boolean } 
 
     driverRef.current = d
     d.drive()
-  }, [])
+  }, [address])
 
-  // Auto-start on first visit
+  // Start only on the first connection of a wallet, never on an anonymous visit.
   useEffect(() => {
-    if (autoStart && !isTourCompleted()) {
-      // Small delay so the page has rendered its tour targets
-      const t = setTimeout(() => startTour(), 800)
-      return () => clearTimeout(t)
-    }
-  }, [autoStart, startTour])
+    if (!autoStart || !address || isTourCompleted(address)) return
+    const t = setTimeout(() => { void startTour() }, 800)
+    return () => clearTimeout(t)
+  }, [autoStart, address, startTour])
+
+  useEffect(() => () => driverRef.current?.destroy(), [])
 
   return { startTour }
 }

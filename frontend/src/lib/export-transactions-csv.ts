@@ -1,4 +1,6 @@
 import type { HorizonOperationRecord } from '@/lib/api/horizon-transactions'
+import { getConfig } from '@/config/env'
+import { stellarExpertUrl } from '@/features/wallet/utils/stellarExpert'
 
 const CSV_HEADERS = [
   'Date',
@@ -7,6 +9,7 @@ const CSV_HEADERS = [
   'Asset',
   'Tx Hash',
   'Status',
+  'Explorer URL',
   'Contract Events',
   'Raw Timestamp',
 ] as const
@@ -44,6 +47,7 @@ export function buildTransactionsCsv(
     const asset = op.amount ? (op.asset_code ?? 'XLM') : ''
     const txHash = op.transaction_hash
     const status = op.transaction_successful ? 'success' : 'failed'
+    const explorerUrl = stellarExpertUrl('tx', txHash, getConfig().network)
     const contractEvents =
       op.contractEvents && op.contractEvents.length > 0
         ? op.contractEvents.map((ev) => ev.description).join('; ')
@@ -51,7 +55,7 @@ export function buildTransactionsCsv(
     const rawTimestamp = op.created_at
 
     lines.push(
-      rowToCsv([date, type, amount, asset, txHash, status, contractEvents, rawTimestamp]),
+      rowToCsv([date, type, amount, asset, txHash, status, explorerUrl, contractEvents, rawTimestamp]),
     )
   }
 

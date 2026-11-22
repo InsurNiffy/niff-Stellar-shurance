@@ -12,6 +12,8 @@ import { PolicyTypeSelector } from '@/components/policy/PolicyTypeSelector'
 
 interface Props {
   onChange: (data: Partial<QuoteFormData>, isValid: boolean) => void
+  /** Prefilled values from a validated deep link. */
+  initialValues?: Partial<QuoteFormData>
 }
 
 function FieldError({ message }: { message?: string }) {
@@ -27,7 +29,7 @@ function FieldError({ message }: { message?: string }) {
 const selectClass = (err?: string) =>
   `w-full h-11 rounded-md border bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${err ? 'border-destructive' : 'border-input'}`
 
-export function QuoteForm({ onChange }: Props) {
+export function QuoteForm({ onChange, initialValues }: Props) {
   const { address } = useWallet()
 
   const {
@@ -38,7 +40,7 @@ export function QuoteForm({ onChange }: Props) {
   } = useForm<QuoteFormData>({
     resolver: zodResolver(QuoteFormSchema),
     mode: 'onChange',
-    defaultValues: { risk_score: 5, source_account: '' },
+    defaultValues: { risk_score: 5, source_account: '', ...initialValues },
   })
 
   useEffect(() => {

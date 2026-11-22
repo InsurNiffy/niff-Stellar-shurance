@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
+import { Suspense } from 'react'
 import { Calculator } from 'lucide-react'
-import { QuoteExperience } from '@/components/quote/quote-form'
+
+import { QuotePageClient } from './quote-page-client'
 
 export const metadata: Metadata = {
   title: 'Get an Insurance Quote',
@@ -9,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function QuotePage() {
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
+    <div className="container mx-auto px-4 py-8 max-w-5xl" data-tour="get-quote">
       <div className="mb-8 text-center">
         <div className="mb-3 flex items-center justify-center gap-2">
           <Calculator className="h-7 w-7 text-primary" aria-hidden="true" />
@@ -19,7 +21,9 @@ export default function QuotePage() {
           Fill in your coverage details and your estimated premium updates automatically — no submit button needed.
         </p>
       </div>
-      <QuoteExperience />
+      <Suspense fallback={<p className="text-sm text-muted-foreground">Loading quote form…</p>}>
+        <QuotePageClient />
+      </Suspense>
     </div>
   )
 }

@@ -84,7 +84,13 @@ export const niffyInsureAbi: ContractAbiMetadata = {
       name: 'get_treasury_balance',
       params: [],
       returnType: 'i128',
-      description: 'Return the current treasury balance in the smallest token unit.',
+      description: 'Return the current SEP-41 token balance of the treasury address, in stroops.',
+    },
+    {
+      name: 'get_min_solvency_ratio_bps',
+      params: [],
+      returnType: 'u32',
+      description: 'Return the minimum solvency ratio in basis points (0–10000, default 0) used by the dashboard solvency widget and treasury.balance_low webhook.',
     },
     {
       name: 'get_protocol_fee_bps',

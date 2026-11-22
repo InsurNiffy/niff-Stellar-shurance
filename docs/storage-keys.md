@@ -78,6 +78,7 @@ unit (non-parameterised) variant and asserts uniqueness in a set.
 | `VoteDurLedgers` | `u32` | Configurable voting window |
 | `QuorumBps` | `u32` | Global participation quorum |
 | `GracePeriodLedgers` | `u32` | Post-expiry grace period |
+| `MaxAppealsPerClaim` | `u32` | Admin-configurable appeal cap (1–3; defaults to 1) |
 | `TtlAlertThreshold` | `u32` | TTL alert threshold |
 | `OracleEnabled` | `bool` | Global oracle enable flag |
 | `OraclePubKey(Address)` | `BytesN<32>` | Ed25519 key per oracle source |

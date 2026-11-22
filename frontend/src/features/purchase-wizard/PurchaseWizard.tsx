@@ -8,6 +8,7 @@ import { Stepper, type Step } from '@/components/ui/stepper'
 import { useDraftPersistence } from '@/hooks/use-draft-persistence'
 import { CoverageDetailsStep } from './CoverageDetailsStep'
 import { parseDeepLinkCoverage } from './deep-link'
+import { PENDING_QUOTE_KEY } from '@/app/quote/deep-link'
 import { QuoteReviewStep } from './QuoteReviewStep'
 import { WalletSignStep } from './WalletSignStep'
 import type { WizardDraft, WizardStep } from './types'
@@ -70,6 +71,35 @@ export function PurchaseWizard() {
       }
     }
   }, [hasDraft, loadDraft, searchParams])
+
+  // A quote handed off from the quote page takes priority over a stale draft.
+  const carriedQuoteRef = useRef(false)
+  useEffect(() => {
+    if (carriedQuoteRef.current) return
+    carriedQuoteRef.current = true
+    let raw: string | null = null
+    try {
+      raw = sessionStorage.getItem(PENDING_QUOTE_KEY)
+      if (raw) sessionStorage.removeItem(PENDING_QUOTE_KEY)
+    } catch {
+      return
+    }
+    if (!raw) return
+    try {
+      const carried = JSON.parse(raw) as {
+        quote?: QuoteResponse | null
+        inputs?: Partial<QuoteFormData>
+      }
+      if (carried.quote) {
+        setQuote(carried.quote)
+        setStep(1)
+        restoredRef.current = true
+      }
+      if (carried.inputs) setCoverageData(carried.inputs)
+    } catch {
+      // Ignore malformed state and fall back to the draft/deep-link flow.
+    }
+  }, [])
 
   // Navigation guard — warn before discarding entered coverage details
   useEffect(() => {

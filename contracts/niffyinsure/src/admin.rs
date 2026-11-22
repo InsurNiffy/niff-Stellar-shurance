@@ -908,7 +908,7 @@ pub fn set_cooldown_ledgers(env: &Env, new_ledgers: u32) -> Result<(), AdminErro
     Ok(())
 }
 
-// ── Configurable max appeals per claim (Issue #1605) ──────────────────────
+// ── Configurable max appeals per claim (Issue #1599) ──────────────────────
 
 #[contractevent(topics = ["niffyinsure", "appeals_cap_updated"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
