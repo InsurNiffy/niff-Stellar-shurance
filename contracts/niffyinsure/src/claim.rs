@@ -1723,8 +1723,8 @@ pub fn disburse_installment(env: &Env, claim_id: u64, amount: i128) -> Result<()
 // After a claim is Rejected, the claimant has `APPEAL_OPEN_WINDOW_LEDGERS` to
 // open an appeal. The appeal runs a fresh vote round with a higher quorum
 // requirement (APPEAL_ELEVATED_QUORUM_BPS) and a shorter deadline
-// (APPEAL_VOTE_WINDOW_LEDGERS). Only one appeal per claim is allowed
-// (MAX_APPEALS_PER_CLAIM = 1).
+// (APPEAL_VOTE_WINDOW_LEDGERS). The number of appeals per claim is an
+// admin-configurable instance-storage cap (default 1, range 1–3).
 //
 // State machine during appeal:
 //   Rejected → UnderAppeal  (open_appeal called within window)
@@ -1798,7 +1798,7 @@ pub struct AppealVoteCast {
 ///     The deadline ledger itself is INCLUSIVE: calling at
 ///     `now == appeal_open_deadline_ledger` succeeds; calling at
 ///     `now == appeal_open_deadline_ledger + 1` fails with `AppealWindowClosed`.
-///   - `claim.appeals_count < MAX_APPEALS_PER_CLAIM` (only one appeal allowed)
+///   - `claim.appeals_count < storage::get_max_appeals_per_claim(env)` (admin-configurable cap, default 1)
 ///
 /// Transitions: `Rejected → UnderAppeal`
 /// Resets vote counts, sets `appeal_deadline_ledger`, requires elevated quorum
@@ -1835,7 +1835,7 @@ pub fn open_appeal(env: &Env, claimant: &Address, claim_id: u64) -> Result<(), E
 
     // Cap: admin-configurable number of appeals per claim (default
     // ledger::MAX_APPEALS_PER_CLAIM, overridable via
-    // admin::set_max_appeals_per_claim, Issue #1605).
+    // admin::set_max_appeals_per_claim, Issue #1599).
     if claim.appeals_count >= storage::get_max_appeals_per_claim(env) {
         return Err(Error::AppealAlreadyUsed);
     }
