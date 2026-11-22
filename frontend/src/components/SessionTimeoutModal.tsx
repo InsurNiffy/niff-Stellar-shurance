@@ -24,8 +24,8 @@ const IDLE_TIMEOUT_MS =
     ? parseInt(process.env.NEXT_PUBLIC_SESSION_TIMEOUT_MS, 10)
     : 15 * 60 * 1000
 
-/** Show the modal 60 seconds before the session expires. */
-const WARNING_LEAD_MS = 60 * 1000
+/** Show the modal 2 minutes before the session expires. */
+const WARNING_LEAD_MS = 2 * 60 * 1000
 
 /**
  * Blocking modal that appears when the user has been idle for

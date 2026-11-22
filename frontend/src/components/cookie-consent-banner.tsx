@@ -86,7 +86,7 @@ export function CookieConsentBanner() {
           </Button>
           <Button
             size="sm"
-            variant="secondary"
+            variant="outline"
             onClick={() => handleChoice("declined")}
           >
             Decline

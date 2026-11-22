@@ -1,85 +1,88 @@
-'use client';
+import type { Metadata } from 'next'
+import { notFound } from 'next/navigation'
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
-import ClaimDetail from '../../../../components/claims/ClaimDetail';
-import ClaimTimeline from '../../../../components/claims/ClaimTimeline';
-import EvidenceViewer from '../../../../components/claims/EvidenceViewer';
-import { useClaim } from '../../../../src/features/claims/useClaim';
-import { useClaimVote } from '../../../../src/features/claims/useClaimVote';
-import { useVoterEligibility } from '../../../../src/features/claims/useVoterEligibility';
-import VotePanel from '../../../../components/claims/VotePanel';
+import { ClaimVotePanel } from '@/components/claims/claim-vote-panel'
+import { getConfig } from '@/config/env'
+import type { Claim } from '@/lib/schemas/vote'
+import { ClaimSchema } from '@/lib/schemas/vote'
+import { PrintButton } from '@/components/ui/print-button'
 
-export default function ClaimDetailPage() {
-  const params = useParams<{ id: string }>();
-  const claimId = params?.id;
+interface ClaimPageProps {
+  params: Promise<{ id: string }>
+}
 
-  const { claim, isLoading, error, refetch } = useClaim(claimId);
-  const { eligibility, isLoading: isEligibilityLoading } = useVoterEligibility(claimId);
-  const { vote, isSubmitting, error: voteError } = useClaimVote(claimId);
+async function fetchClaimForMeta(id: string): Promise<Claim | null> {
+  try {
+    const { apiUrl } = getConfig()
+    const res = await fetch(`${apiUrl}/api/claims/${encodeURIComponent(id)}`, {
+      next: { revalidate: 60 },
+    })
+    if (res.status === 404) return null
+    if (!res.ok) return null
+    const data = await res.json()
+    return ClaimSchema.parse(data)
+  } catch {
+    return null
+  }
+}
 
-  const [optimisticTally, setOptimisticTally] = useState<{
-    approve: number;
-    reject: number;
-  } | null>(null);
+export async function generateMetadata({ params }: ClaimPageProps): Promise<Metadata> {
+  const { id } = await params
+  const claim = await fetchClaimForMeta(id)
 
-  useEffect(() => {
-    setOptimisticTally(null);
-  }, [claim?.approveCount, claim?.rejectCount]);
-
-  const tally = useMemo(() => {
-    if (optimisticTally) return optimisticTally;
+  if (!claim) {
     return {
-      approve: claim?.approveCount ?? 0,
-      reject: claim?.rejectCount ?? 0,
-    };
-  }, [claim?.approveCount, claim?.rejectCount, optimisticTally]);
-
-  const handleVote = useCallback(
-    async (choice: 'approve' | 'reject') => {
-      setOptimisticTally({
-        approve: tally.approve + (choice === 'approve' ? 1 : 0),
-        reject: tally.reject + (choice === 'reject' ? 1 : 0),
-      });
-      try {
-        await vote(choice);
-        await refetch();
-      } catch {
-        setOptimisticTally(null);
-      }
-    },
-    [refetch, tally.approve, tally.reject, vote],
-  );
-
-  if (isLoading) {
-    return <div className="p-6 text-sm text-gray-500">Loading claim…</div>;
+      title: 'Claim Not Found',
+      description: 'The requested claim could not be found.',
+    }
   }
 
-  if (error || !claim) {
-    return (
-      <div className="p-6 text-sm text-red-600">
-        {error ?? 'Claim not found.'}
-      </div>
-    );
+  const title = `Claim ${id} — ${claim.status}`
+  const description = `Insurance claim ${id} is currently ${claim.status}. Review claim details and community voting status.`
+
+  return {
+    title,
+    description,
+    alternates: {
+      canonical: `/claims/${id}`,
+    },
+    openGraph: {
+      title,
+      description: `Claim status: ${claim.status}. View claim details and voting status.`,
+      type: 'website',
+    },
+  }
+}
+
+/**
+ * /claims/[id] — server component.
+ *
+ * Renders claim metadata server-side for shareable deep links and SEO.
+ * Wallet connection and eligibility checks happen client-side in ClaimVotePanel.
+ */
+export default async function ClaimPage({ params }: ClaimPageProps) {
+  const { id } = await params
+
+  const claim = await fetchClaimForMeta(id)
+  if (!claim) {
+    notFound()
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6">
-      <ClaimDetail claim={claim} />
-
-      <VotePanel
-        claim={claim}
-        tally={tally}
-        eligibility={eligibility}
-        isEligibilityLoading={isEligibilityLoading}
-        isSubmitting={isSubmitting}
-        error={voteError}
-        onVote={handleVote}
-      />
-
-      <EvidenceViewer claimId={claim.id} evidence={claim.evidence} />
-
-      <ClaimTimeline claimId={claim.id} events={claim.timeline} />
-    </div>
-  );
+    <main
+      className="mx-auto max-w-2xl px-4 py-10 pb-[calc(2.5rem+env(safe-area-inset-bottom,0px))]"
+      style={{
+        paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+      }}
+    >
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-xl font-bold" data-tour="file-claim">
+          Claim vote — <span className="font-mono text-base">{id}</span>
+        </h1>
+        <PrintButton />
+      </div>
+      <ClaimVotePanel claimId={id} />
+    </main>
+  )
 }
