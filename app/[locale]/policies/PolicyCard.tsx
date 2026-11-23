@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Policy, PolicyStatus } from './types';
 
@@ -66,6 +67,69 @@ function ExpiryCountdown({ expiresAt }: { expiresAt: string }) {
       {days} day{days === 1 ? '' : 's'} left
     </span>
   );
+}
+
+interface LedgerCountdownProps {
+  targetLedger: number;
+  currentLedger: number;
+  avgCloseSeconds: number;
+}
+
+function formatLedgerDuration(totalSeconds: number): string {
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} day${days === 1 ? '' : 's'}`);
+  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  if (minutes > 0 || parts.length === 0) {
+    parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+  }
+  return parts.join(' ');
+}
+
+function LedgerCountdown({
+  targetLedger,
+  currentLedger,
+  avgCloseSeconds,
+}: LedgerCountdownProps) {
+  const [mounted, setMounted] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    setMounted(true);
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (currentLedger >= targetLedger) {
+    return <span className="text-sm text-red-700">Deadline passed</span>;
+  }
+
+  if (!mounted) {
+    return (
+      <span className="text-sm text-gray-700">
+        ~{formatLedgerDuration((targetLedger - currentLedger) * avgCloseSeconds)}
+      </span>
+    );
+  }
+
+  const remainingLedgers = targetLedger - currentLedger;
+  const remainingSeconds = remainingLedgers * avgCloseSeconds;
+  const elapsedSeconds = Math.max(0, Math.floor((now - mountedAtRef(now)) / 1000));
+  const adjustedSeconds = Math.max(0, remainingSeconds - elapsedSeconds);
+
+  return (
+    <span className="text-sm text-gray-700" title="Estimated from average ledger close time">
+      ~{formatLedgerDuration(adjustedSeconds)} left
+    </span>
+  );
+}
+
+function mountedAtRef(now: number): number {
+  return now;
 }
 
 function StatusBadge({ status }: { status: PolicyStatus }) {
@@ -165,4 +229,11 @@ export function PolicyTableRow({ policy }: PolicyTableRowProps) {
   );
 }
 
-export { StatusBadge, OpenClaimIndicator, ExpiryCountdown, formatCoverage, formatDate };
+export {
+  StatusBadge,
+  OpenClaimIndicator,
+  ExpiryCountdown,
+  LedgerCountdown,
+  formatCoverage,
+  formatDate,
+};

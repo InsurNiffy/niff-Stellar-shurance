@@ -72,6 +72,58 @@ function formatCountdown(expiresAt: string): string {
   return `${minutes} min left`;
 }
 
+interface LedgerCountdownProps {
+  targetLedger: number;
+  currentLedger: number;
+  avgCloseSeconds: number;
+}
+
+function formatLedgerDuration(totalSeconds: number): string {
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} day${days === 1 ? '' : 's'}`);
+  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  if (minutes > 0 || parts.length === 0) {
+    parts.push(`${minutes} min${minutes === 1 ? '' : 's'}`);
+  }
+  return parts.join(' ');
+}
+
+function LedgerCountdown({ targetLedger, currentLedger, avgCloseSeconds }: LedgerCountdownProps) {
+  const [mounted, setMounted] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    setMounted(true);
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!mounted) {
+    return <span className="text-gray-400">—</span>;
+  }
+
+  if (currentLedger >= targetLedger) {
+    return <span className="text-gray-700">Deadline passed</span>;
+  }
+
+  const remainingLedgers = targetLedger - currentLedger;
+  const remainingSeconds = remainingLedgers * avgCloseSeconds;
+  const label = formatLedgerDuration(remainingSeconds);
+
+  return (
+    <span
+      className="text-gray-700"
+      title={`Approximately ${label} remaining (${remainingLedgers} ledgers × ${avgCloseSeconds}s)`}
+    >
+      ~{label} left
+    </span>
+  );
+}
+
 function StatusBadge({ status }: { status: PolicyStatus }) {
   return (
     <span
@@ -256,10 +308,10 @@ export default function PoliciesPage() {
       )}
 
       {loading ? (
-        <div className="mt-6 space-y-3">
-          <PolicySkeleton />
-          <PolicySkeleton />
-          <PolicySkeleton />
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <PolicySkeleton key={i} />
+          ))}
         </div>
       ) : policies.length === 0 ? (
         <div className="mt-6">
@@ -267,80 +319,42 @@ export default function PoliciesPage() {
         </div>
       ) : (
         <>
-          {/* Mobile: cards */}
-          <ul className="mt-6 space-y-3 md:hidden">
+          <ul className="mt-6 grid gap-4 sm:grid-cols-2">
             {policies.map((policy) => (
-              <li key={policy.id} className="rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-gray-900">{policy.policyNumber}</span>
+              <li
+                key={policy.id}
+                className="rounded-lg border border-gray-200 p-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{policy.policyNumber}</p>
+                    <p className="text-xs text-gray-500">
+                      {TYPE_LABELS[policy.type]} · {policy.asset}
+                    </p>
+                  </div>
                   <StatusBadge status={policy.status} />
                 </div>
-                <dl className="mt-3 space-y-1 text-sm text-gray-600">
-                  <div className="flex justify-between">
-                    <dt>Type</dt>
-                    <dd>{TYPE_LABELS[policy.type]}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Asset</dt>
-                    <dd>{policy.asset}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Coverage</dt>
-                    <dd>{formatCurrency(policy.coverage, policy.currency)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Expiry</dt>
-                    <dd>{formatCountdown(policy.expiresAt)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Claims</dt>
-                    <dd>
-                      <OpenClaimIndicator count={policy.openClaims} />
+                <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <dt className="text-xs text-gray-500">Coverage</dt>
+                    <dd className="font-medium text-gray-900">
+                      {formatCurrency(policy.coverage, policy.currency)}
                     </dd>
                   </div>
+                  <div>
+                    <dt className="text-xs text-gray-500">Expires</dt>
+                    <dd className="font-medium text-gray-900">{formatCountdown(policy.expiresAt)}</dd>
+                  </div>
                 </dl>
+                <div className="mt-3">
+                  <OpenClaimIndicator count={policy.openClaims} />
+                </div>
               </li>
             ))}
           </ul>
 
-          {/* Desktop: table */}
-          <div className="mt-6 hidden overflow-x-auto md:block">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead>
-                <tr className="text-left text-gray-500">
-                  <th className="px-3 py-2 font-medium">Policy</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Type</th>
-                  <th className="px-3 py-2 font-medium">Asset</th>
-                  <th className="px-3 py-2 font-medium">Coverage</th>
-                  <th className="px-3 py-2 font-medium">Expiry</th>
-                  <th className="px-3 py-2 font-medium">Claims</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {policies.map((policy) => (
-                  <tr key={policy.id}>
-                    <td className="px-3 py-3 font-medium text-gray-900">{policy.policyNumber}</td>
-                    <td className="px-3 py-3">
-                      <StatusBadge status={policy.status} />
-                    </td>
-                    <td className="px-3 py-3 text-gray-600">{TYPE_LABELS[policy.type]}</td>
-                    <td className="px-3 py-3 text-gray-600">{policy.asset}</td>
-                    <td className="px-3 py-3 text-gray-600">
-                      {formatCurrency(policy.coverage, policy.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-gray-600">{formatCountdown(policy.expiresAt)}</td>
-                    <td className="px-3 py-3">
-                      <OpenClaimIndicator count={policy.openClaims} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
           {nextCursor && (
-            <div className="mt-6 text-center">
+            <div className="mt-6 flex justify-center">
               <button
                 type="button"
                 onClick={loadMore}
