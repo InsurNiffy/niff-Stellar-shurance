@@ -11,6 +11,9 @@ import {
 
 const STORAGE_KEY = 'wallet.session';
 
+// App-configured network. Wallet-reported passphrase is compared against this.
+const APP_NETWORK_PASSPHRASE = WalletNetwork.TESTNET;
+
 interface WalletSession {
   address: string;
   walletId: string;
@@ -19,6 +22,7 @@ interface WalletSession {
 interface WalletContextValue {
   address: string | null;
   isConnected: boolean;
+  networkMismatch: boolean;
   connect: () => Promise<void>;
   disconnect: () => void;
   signTransaction: (xdr: string) => Promise<string>;
@@ -51,14 +55,22 @@ function writeSession(session: WalletSession) {
 
 function initKit() {
   StellarWalletsKit.init({
-    network: WalletNetwork.TESTNET,
+    network: APP_NETWORK_PASSPHRASE,
     modules: [new FreighterModule(), new xBullModule(), new LobstrModule()],
   });
+}
+
+// Compare the wallet-reported network passphrase against the app config.
+// Returns true when the wallet is on a different network than the app expects.
+function detectMismatch(walletPassphrase: string | undefined | null): boolean {
+  if (!walletPassphrase) return false;
+  return walletPassphrase !== APP_NETWORK_PASSPHRASE;
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [extensionAvailable, setExtensionAvailable] = useState(true);
+  const [networkMismatch, setNetworkMismatch] = useState(false);
   const kitReady = useRef(false);
 
   const ensureKit = useCallback(() => {
@@ -71,6 +83,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const disconnect = useCallback(() => {
     clearSession();
     setAddress(null);
+    setNetworkMismatch(false);
+  }, []);
+
+  // Re-check the wallet network on every wallet event.
+  const checkNetwork = useCallback(async () => {
+    try {
+      const { networkPassphrase } = await StellarWalletsKit.getNetwork();
+      setNetworkMismatch(detectMismatch(networkPassphrase));
+    } catch {
+      // Unable to read network: do not block on unknown state.
+      setNetworkMismatch(false);
+    }
   }, []);
 
   const connect = useCallback(async () => {
@@ -82,17 +106,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       writeSession({ address: selected, walletId });
       setAddress(selected);
       setExtensionAvailable(true);
+      await checkNetwork();
     } catch {
       setExtensionAvailable(false);
     }
-  }, [ensureKit]);
+  }, [ensureKit, checkNetwork]);
 
   const signTransaction = useCallback(
     async (xdr: string) => {
       ensureKit();
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
         address,
-        networkPassphrase: WalletNetwork.TESTNET,
+        networkPassphrase: APP_NETWORK_PASSPHRASE,
       });
       return signedTxXdr;
     },
@@ -117,6 +142,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           return;
         }
         setAddress(current);
+        await checkNetwork();
       } catch {
         if (cancelled) return;
         clearSession();
@@ -127,17 +153,28 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [ensureKit]);
+  }, [ensureKit, checkNetwork]);
+
+  // Poll the wallet network while connected so the overlay dismisses
+  // automatically once the user switches to the correct network.
+  useEffect(() => {
+    if (!address) return;
+    const interval = window.setInterval(() => {
+      void checkNetwork();
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [address, checkNetwork]);
 
   const value = useMemo<WalletContextValue>(
     () => ({
       address,
       isConnected: Boolean(address),
+      networkMismatch,
       connect,
       disconnect,
       signTransaction,
     }),
-    [address, connect, disconnect, signTransaction],
+    [address, networkMismatch, connect, disconnect, signTransaction],
   );
 
   return (
@@ -148,6 +185,39 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           className="w-full bg-amber-100 px-4 py-2 text-center text-sm text-amber-900"
         >
           Wallet extension not detected. Install Freighter, xBull, or Lobstr to connect.
+        </div>
+      )}
+      {networkMismatch && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="network-mismatch-title"
+          aria-describedby="network-mismatch-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+        >
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h2
+              id="network-mismatch-title"
+              className="text-lg font-semibold text-gray-900"
+            >
+              Wrong network
+            </h2>
+            <p
+              id="network-mismatch-desc"
+              className="mt-2 text-sm text-gray-700"
+            >
+              Your wallet is connected to a different network than this app. Switch
+              your wallet to the correct network to continue.
+            </p>
+            <button
+              type="button"
+              autoFocus
+              onClick={() => void checkNetwork()}
+              className="mt-4 w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
+            >
+              Switch Network
+            </button>
+          </div>
         </div>
       )}
       {children}
