@@ -118,3 +118,6 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1785 -->
 - #1785: C-17 Contract — Policy read APIs with bounded pagination
+
+<!-- handsoff-issue-1786 -->
+- #1786: C-18 Contract — Policy lifecycle: renewal, grace period, termination, expiry
