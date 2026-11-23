@@ -132,12 +132,33 @@ function OpenClaimIndicator({ count }: { count: number }) {
   );
 }
 
-function PolicySkeleton() {
+/**
+ * SkeletonRow — placeholder matching a single policy list row.
+ * Dimensions mirror the loaded row so layout does not shift (CLS-safe).
+ * Shimmer is disabled for users who prefer reduced motion.
+ */
+function SkeletonRow() {
   return (
-    <div className="animate-pulse rounded-lg border border-gray-200 p-4">
-      <div className="mb-3 h-4 w-1/3 rounded bg-gray-200" />
+    <div
+      className="rounded-lg border border-gray-200 p-4 motion-safe:animate-pulse"
+      aria-hidden="true"
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="h-4 w-1/3 rounded bg-gray-200" />
+        <div className="h-5 w-20 rounded-full bg-gray-200" />
+      </div>
       <div className="mb-2 h-3 w-2/3 rounded bg-gray-200" />
       <div className="h-3 w-1/2 rounded bg-gray-200" />
+    </div>
+  );
+}
+
+function PolicySkeletonList({ count = 3 }: { count?: number }) {
+  return (
+    <div className="mt-6 space-y-3" role="status" aria-label="Loading policies">
+      {Array.from({ length: count }).map((_, i) => (
+        <SkeletonRow key={i} />
+      ))}
     </div>
   );
 }
@@ -282,73 +303,66 @@ export default function PoliciesPage() {
             type="text"
             value={asset}
             onChange={(e) => updateFilter('asset', e.target.value)}
-            placeholder="e.g. 2021 Toyota"
+            placeholder="e.g. USDC"
             className="mt-1 rounded-md border border-gray-300 px-3 py-2"
           />
         </label>
       </div>
 
-      {error && (
-        <p role="alert" className="mt-6 rounded-md bg-red-50 p-3 text-sm text-red-700">
+      {loading ? (
+        <PolicySkeletonList />
+      ) : error ? (
+        <div className="mt-6 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-800">
           {error}
-        </p>
-      )}
-
-      <div className="mt-6 space-y-3">
-        {loading &&
-          Array.from({ length: 3 }).map((_, i) => <PolicySkeleton key={i} />)}
-
-        {!loading && policies.length === 0 && !error && <EmptyState />}
-
-        {!loading &&
-          policies.map((policy) => (
-            <div
-              key={policy.id}
-              className="rounded-lg border border-gray-200 p-4 hover:border-gray-300"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm text-gray-500">
-                    {policy.policyNumber}
-                  </span>
-                  <StatusBadge status={policy.status} />
-                </div>
-                <OpenClaimIndicator count={policy.openClaims} />
-              </div>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="font-medium text-gray-900">
-                    {TYPE_LABELS[policy.type]} · {policy.asset}
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    Coverage:{' '}
-                    {formatCurrency(
-                      policy.coverage,
-                      policy.currency,
-                      policy.decimals,
-                      typeof navigator !== 'undefined' ? navigator.language : 'en-US',
-                    )}
-                  </p>
-                </div>
-                <span className="text-sm text-gray-500">
-                  {formatCountdown(policy.expiresAt)}
-                </span>
-              </div>
-            </div>
-          ))}
-      </div>
-
-      {nextCursor && !loading && (
-        <div className="mt-6 text-center">
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {loadingMore ? 'Loading…' : 'Load more'}
-          </button>
         </div>
+      ) : policies.length === 0 ? (
+        <div className="mt-6">
+          <EmptyState />
+        </div>
+      ) : (
+        <>
+          <ul className="mt-6 space-y-3">
+            {policies.map((policy) => (
+              <li key={policy.id}>
+                <Link
+                  href={`/policies/${policy.id}`}
+                  className="block rounded-lg border border-gray-200 p-4 hover:border-blue-400 hover:shadow-sm"
+                >
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-gray-900">
+                      {policy.policyNumber}
+                    </span>
+                    <StatusBadge status={policy.status} />
+                  </div>
+                  <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-700">
+                    <span>{TYPE_LABELS[policy.type]}</span>
+                    <span>{policy.asset}</span>
+                    <span>
+                      {formatCurrency(policy.coverage, policy.currency, policy.decimals, 'en')}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
+                    <span>{formatCountdown(policy.expiresAt)}</span>
+                    <OpenClaimIndicator count={policy.openClaims} />
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          {nextCursor && (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              >
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </main>
   );

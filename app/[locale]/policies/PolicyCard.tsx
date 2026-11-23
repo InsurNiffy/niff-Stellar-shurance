@@ -196,6 +196,75 @@ export function PolicyTableRow({ policy, decimals, locale }: PolicyTableRowProps
   );
 }
 
+/**
+ * Skeleton placeholder matching the shape of a loaded PolicyCard.
+ * Uses the same outer <li> dimensions/padding so swapping in real content
+ * does not shift layout (CLS-safe). Shimmer is disabled for users who
+ * prefer reduced motion.
+ */
+export function PolicyCardSkeleton() {
+  return (
+    <li
+      aria-hidden="true"
+      className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm md:hidden"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="h-4 w-24 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+          <div className="h-3 w-12 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+        </div>
+        <div className="h-5 w-20 animate-pulse rounded-full bg-gray-200 motion-reduce:animate-none" />
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+        <div>
+          <dt className="text-xs text-gray-500">Coverage</dt>
+          <dd className="mt-1 h-4 w-28 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+        </div>
+        <div>
+          <dt className="text-xs text-gray-500">Expires</dt>
+          <dd className="mt-1 h-4 w-20 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+        </div>
+      </dl>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="h-5 w-20 animate-pulse rounded-full bg-gray-200 motion-reduce:animate-none" />
+        <div className="h-4 w-20 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Skeleton placeholder matching the shape of a loaded PolicyTableRow.
+ */
+export function PolicyTableRowSkeleton() {
+  return (
+    <tr
+      aria-hidden="true"
+      className="hidden border-b border-gray-100 last:border-0 md:table-row"
+    >
+      <td className="px-4 py-3">
+        <div className="h-4 w-24 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+        <div className="mt-1 h-3 w-12 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+      </td>
+      <td className="px-4 py-3">
+        <div className="h-5 w-20 animate-pulse rounded-full bg-gray-200 motion-reduce:animate-none" />
+      </td>
+      <td className="px-4 py-3">
+        <div className="h-4 w-28 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+      </td>
+      <td className="px-4 py-3">
+        <div className="h-4 w-20 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+      </td>
+      <td className="px-4 py-3">
+        <div className="h-5 w-20 animate-pulse rounded-full bg-gray-200 motion-reduce:animate-none" />
+      </td>
+      <td className="px-4 py-3 text-right">
+        <div className="ml-auto h-4 w-10 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+      </td>
+    </tr>
+  );
+}
+
 export {
   StatusBadge,
   OpenClaimIndicator,
