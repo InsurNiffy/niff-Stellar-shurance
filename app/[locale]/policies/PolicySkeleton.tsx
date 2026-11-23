@@ -3,7 +3,7 @@ export function PolicySkeleton() {
     <div
       role="status"
       aria-label="Loading policies"
-      className="animate-pulse rounded-lg border border-gray-200 p-4"
+      className="animate-pulse rounded-lg border border-gray-200 p-4 motion-reduce:animate-none"
     >
       <div className="flex items-center justify-between">
         <div className="h-4 w-32 rounded bg-gray-200" />

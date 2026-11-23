@@ -74,6 +74,7 @@ function StatusBadge({ status }: { status: PolicyStatus }) {
       className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}
     >
       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+      <span className="sr-only">Status: </span>
       {STATUS_LABELS[status]}
     </span>
   );
@@ -94,11 +95,17 @@ interface PolicyCardProps {
 }
 
 export function PolicyCard({ policy }: PolicyCardProps) {
+  const headingId = `policy-card-${policy.id}-heading`;
   return (
-    <li className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm md:hidden">
+    <li
+      className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm md:hidden"
+      aria-labelledby={headingId}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-gray-900">{policy.type}</p>
+          <p id={headingId} className="text-sm font-semibold text-gray-900">
+            {policy.type}
+          </p>
           <p className="text-xs text-gray-500">{policy.asset}</p>
         </div>
         <StatusBadge status={policy.status} />
@@ -122,6 +129,7 @@ export function PolicyCard({ policy }: PolicyCardProps) {
         <Link
           href={`/policies/${policy.id}`}
           className="text-sm font-medium text-blue-700 hover:underline"
+          aria-label={`View policy ${policy.type} for ${policy.asset}`}
         >
           View policy
         </Link>
@@ -157,6 +165,7 @@ export function PolicyTableRow({ policy }: PolicyTableRowProps) {
         <Link
           href={`/policies/${policy.id}`}
           className="text-sm font-medium text-blue-700 hover:underline"
+          aria-label={`View policy ${policy.type} for ${policy.asset}`}
         >
           View
         </Link>
