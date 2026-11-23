@@ -163,18 +163,39 @@ function PolicySkeletonList({ count = 3 }: { count?: number }) {
   );
 }
 
-function EmptyState() {
+/**
+ * EmptyState — contextual guidance shown when the policies API returns zero
+ * results. Decorative SVG is aria-hidden; the gentle float animation is
+ * disabled for users who prefer reduced motion (motion-safe).
+ */
+function EmptyState({ filtered }: { filtered: boolean }) {
   return (
     <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center">
-      <h2 className="text-lg font-semibold text-gray-900">No policies yet</h2>
+      <svg
+        className="mx-auto h-16 w-16 text-gray-300 motion-safe:animate-pulse"
+        viewBox="0 0 64 64"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <rect x="12" y="8" width="40" height="48" rx="4" />
+        <path d="M20 20h24M20 28h24M20 36h16" strokeLinecap="round" />
+      </svg>
+      <h2 className="mt-4 text-lg font-semibold text-gray-900">
+        {filtered ? 'No policies match your filters' : 'No policies yet'}
+      </h2>
       <p className="mt-2 text-sm text-gray-600">
-        You don&apos;t have any policies matching your filters. Get a quote to protect what matters.
+        {filtered
+          ? 'Try adjusting or clearing your filters to see more of your coverage.'
+          : 'Get a quote to protect what matters and see your policies here.'}
       </p>
       <Link
-        href="/quote"
+        href={filtered ? '/policies' : '/quote'}
         className="mt-4 inline-flex rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
       >
-        Get a quote
+        {filtered ? 'Clear filters' : 'Get a quote'}
       </Link>
     </div>
   );
@@ -260,17 +281,27 @@ export default function PoliciesPage() {
     }
   }, [fetchPage, loadingMore, nextCursor]);
 
-  return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-900">Your policies</h1>
+  const hasFilters = Boolean(status || type || asset);
 
-      <div className="mt-6 flex flex-wrap gap-4">
-        <label className="flex flex-col text-sm text-gray-700">
+  return (
+    <main className="mx-auto max-w-4xl px-4 py-8">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Policies</h1>
+        <Link
+          href="/quote"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Get a quote
+        </Link>
+      </div>
+
+      <div className="mt-6 flex flex-wrap gap-3">
+        <label className="flex items-center gap-2 text-sm text-gray-700">
           Status
           <select
             value={status}
             onChange={(e) => updateFilter('status', e.target.value)}
-            className="mt-1 rounded-md border border-gray-300 px-3 py-2"
+            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           >
             <option value="">All</option>
             {STATUS_OPTIONS.map((s) => (
@@ -280,13 +311,12 @@ export default function PoliciesPage() {
             ))}
           </select>
         </label>
-
-        <label className="flex flex-col text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-gray-700">
           Type
           <select
             value={type}
             onChange={(e) => updateFilter('type', e.target.value)}
-            className="mt-1 rounded-md border border-gray-300 px-3 py-2"
+            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           >
             <option value="">All</option>
             {TYPE_OPTIONS.map((t) => (
@@ -296,73 +326,59 @@ export default function PoliciesPage() {
             ))}
           </select>
         </label>
-
-        <label className="flex flex-col text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-gray-700">
           Asset
           <input
             type="text"
             value={asset}
             onChange={(e) => updateFilter('asset', e.target.value)}
             placeholder="e.g. USDC"
-            className="mt-1 rounded-md border border-gray-300 px-3 py-2"
+            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           />
         </label>
       </div>
 
-      {loading ? (
-        <PolicySkeletonList />
-      ) : error ? (
-        <div className="mt-6 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+      {error && (
+        <div role="alert" className="mt-6 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
           {error}
         </div>
-      ) : policies.length === 0 ? (
-        <div className="mt-6">
-          <EmptyState />
-        </div>
-      ) : (
-        <>
-          <ul className="mt-6 space-y-3">
-            {policies.map((policy) => (
-              <li key={policy.id}>
-                <Link
-                  href={`/policies/${policy.id}`}
-                  className="block rounded-lg border border-gray-200 p-4 hover:border-blue-400 hover:shadow-sm"
-                >
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold text-gray-900">
-                      {policy.policyNumber}
-                    </span>
-                    <StatusBadge status={policy.status} />
-                  </div>
-                  <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-700">
-                    <span>{TYPE_LABELS[policy.type]}</span>
-                    <span>{policy.asset}</span>
-                    <span>
-                      {formatCurrency(policy.coverage, policy.currency, policy.decimals, 'en')}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
-                    <span>{formatCountdown(policy.expiresAt)}</span>
-                    <OpenClaimIndicator count={policy.openClaims} />
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+      )}
 
-          {nextCursor && (
-            <div className="mt-6 flex justify-center">
-              <button
-                type="button"
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-              >
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </button>
-            </div>
-          )}
-        </>
+      {loading ? (
+        <PolicySkeletonList />
+      ) : policies.length === 0 ? (
+        !error && <div className="mt-6"><EmptyState filtered={hasFilters} /></div>
+      ) : (
+        <ul className="mt-6 space-y-3">
+          {policies.map((policy) => (
+            <li key={policy.id} className="rounded-lg border border-gray-200 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <span className="font-medium text-gray-900">{policy.policyNumber}</span>
+                <StatusBadge status={policy.status} />
+              </div>
+              <div className="mb-2 text-sm text-gray-600">
+                {TYPE_LABELS[policy.type]} · {policy.asset} · {formatCurrency(policy.coverage, policy.currency, policy.decimals, 'en')}
+              </div>
+              <div className="flex items-center justify-between text-sm text-gray-500">
+                <span>{formatCountdown(policy.expiresAt)}</span>
+                <OpenClaimIndicator count={policy.openClaims} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!loading && nextCursor && (
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
       )}
     </main>
   );

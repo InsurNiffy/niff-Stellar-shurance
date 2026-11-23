@@ -259,17 +259,46 @@ export function PolicyTableRowSkeleton() {
         <div className="h-5 w-20 animate-pulse rounded-full bg-gray-200 motion-reduce:animate-none" />
       </td>
       <td className="px-4 py-3 text-right">
-        <div className="ml-auto h-4 w-10 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
+        <div className="ml-auto h-4 w-12 animate-pulse rounded bg-gray-200 motion-reduce:animate-none" />
       </td>
     </tr>
   );
 }
 
-export {
-  StatusBadge,
-  OpenClaimIndicator,
-  ExpiryCountdown,
-  formatCoverage,
-  formatDate,
-  formatTokenAmount,
-};
+/**
+ * Empty state shown when the policies list returns zero results.
+ * Includes a headline, one-sentence description, and a primary CTA.
+ * The decorative illustration is aria-hidden and its subtle float
+ * animation is disabled for users who prefer reduced motion.
+ */
+export function PoliciesEmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white px-6 py-12 text-center">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 120 120"
+        className="h-24 w-24 animate-[float_3s_ease-in-out_infinite] text-blue-500 motion-reduce:animate-none"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="28" y="20" width="64" height="80" rx="6" />
+        <path d="M42 40h36M42 54h36M42 68h24" />
+        <circle cx="88" cy="88" r="16" className="fill-white" />
+        <path d="M88 80v16M80 88h16" />
+      </svg>
+      <h2 className="mt-4 text-lg font-semibold text-gray-900">No policies yet</h2>
+      <p className="mt-1 max-w-sm text-sm text-gray-600">
+        You have not purchased any coverage policies, so there is nothing to show here.
+      </p>
+      <Link
+        href="/policies/new"
+        className="mt-5 inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      >
+        Browse policies
+      </Link>
+    </div>
+  );
+}
