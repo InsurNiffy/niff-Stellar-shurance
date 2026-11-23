@@ -13,8 +13,9 @@ interface Policy {
   status: PolicyStatus;
   type: PolicyType;
   asset: string;
-  coverage: number;
+  coverage: string;
   currency: string;
+  decimals: number;
   expiresAt: string;
   openClaims: number;
 }
@@ -48,15 +49,53 @@ const TYPE_LABELS: Record<PolicyType, string> = {
 const STATUS_OPTIONS: PolicyStatus[] = ['active', 'grace', 'expired', 'terminated'];
 const TYPE_OPTIONS: PolicyType[] = ['auto', 'home', 'life', 'health'];
 
-function formatCurrency(amount: number, currency: string): string {
+/**
+ * Format a raw minor-unit token amount (bigint) into a locale-aware string.
+ * Uses bigint/string arithmetic only — never JavaScript `number`.
+ */
+function formatTokenAmount(raw: bigint, decimals: number, locale: string): string {
+  const negative = raw < 0n;
+  const abs = negative ? -raw : raw;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const fraction = abs % base;
+
+  const wholeStr = whole.toString();
+  const fractionStr = decimals > 0 ? fraction.toString().padStart(decimals, '0') : '';
+
+  let formattedWhole: string;
   try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 0,
-    }).format(amount);
+    formattedWhole = new Intl.NumberFormat(locale, { useGrouping: true }).format(
+      BigInt(wholeStr),
+    );
   } catch {
-    return `${currency} ${amount.toLocaleString()}`;
+    formattedWhole = wholeStr;
+  }
+
+  const trimmedFraction = fractionStr.replace(/0+$/, '');
+  const decimalSeparator = (() => {
+    try {
+      return (
+        new Intl.NumberFormat(locale).formatToParts(0).find((p) => p.type === 'decimal')
+          ?.value ?? '.'
+      );
+    } catch {
+      return '.';
+    }
+  })();
+
+  const body = trimmedFraction
+    ? `${formattedWhole}${decimalSeparator}${trimmedFraction}`
+    : formattedWhole;
+  return negative ? `-${body}` : body;
+}
+
+function formatCurrency(amount: string, currency: string, decimals: number, locale: string): string {
+  try {
+    const formatted = formatTokenAmount(BigInt(amount), decimals, locale);
+    return `${formatted} ${currency}`;
+  } catch {
+    return `${currency} ${amount}`;
   }
 }
 
@@ -255,103 +294,61 @@ export default function PoliciesPage() {
         </p>
       )}
 
-      {loading ? (
-        <div className="mt-6 space-y-3">
-          <PolicySkeleton />
-          <PolicySkeleton />
-          <PolicySkeleton />
-        </div>
-      ) : policies.length === 0 ? (
-        <div className="mt-6">
-          <EmptyState />
-        </div>
-      ) : (
-        <>
-          {/* Mobile: cards */}
-          <ul className="mt-6 space-y-3 md:hidden">
-            {policies.map((policy) => (
-              <li key={policy.id} className="rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-gray-900">{policy.policyNumber}</span>
+      <div className="mt-6 space-y-3">
+        {loading &&
+          Array.from({ length: 3 }).map((_, i) => <PolicySkeleton key={i} />)}
+
+        {!loading && policies.length === 0 && !error && <EmptyState />}
+
+        {!loading &&
+          policies.map((policy) => (
+            <div
+              key={policy.id}
+              className="rounded-lg border border-gray-200 p-4 hover:border-gray-300"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-gray-500">
+                    {policy.policyNumber}
+                  </span>
                   <StatusBadge status={policy.status} />
                 </div>
-                <dl className="mt-3 space-y-1 text-sm text-gray-600">
-                  <div className="flex justify-between">
-                    <dt>Type</dt>
-                    <dd>{TYPE_LABELS[policy.type]}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Asset</dt>
-                    <dd>{policy.asset}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Coverage</dt>
-                    <dd>{formatCurrency(policy.coverage, policy.currency)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Expiry</dt>
-                    <dd>{formatCountdown(policy.expiresAt)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Claims</dt>
-                    <dd>
-                      <OpenClaimIndicator count={policy.openClaims} />
-                    </dd>
-                  </div>
-                </dl>
-              </li>
-            ))}
-          </ul>
-
-          {/* Desktop: table */}
-          <div className="mt-6 hidden overflow-x-auto md:block">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead>
-                <tr className="text-left text-gray-500">
-                  <th className="px-3 py-2 font-medium">Policy</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Type</th>
-                  <th className="px-3 py-2 font-medium">Asset</th>
-                  <th className="px-3 py-2 font-medium">Coverage</th>
-                  <th className="px-3 py-2 font-medium">Expiry</th>
-                  <th className="px-3 py-2 font-medium">Claims</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {policies.map((policy) => (
-                  <tr key={policy.id}>
-                    <td className="px-3 py-3 font-medium text-gray-900">{policy.policyNumber}</td>
-                    <td className="px-3 py-3">
-                      <StatusBadge status={policy.status} />
-                    </td>
-                    <td className="px-3 py-3 text-gray-600">{TYPE_LABELS[policy.type]}</td>
-                    <td className="px-3 py-3 text-gray-600">{policy.asset}</td>
-                    <td className="px-3 py-3 text-gray-600">
-                      {formatCurrency(policy.coverage, policy.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-gray-600">{formatCountdown(policy.expiresAt)}</td>
-                    <td className="px-3 py-3">
-                      <OpenClaimIndicator count={policy.openClaims} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {nextCursor && (
-            <div className="mt-6 text-center">
-              <button
-                type="button"
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </button>
+                <OpenClaimIndicator count={policy.openClaims} />
+              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-medium text-gray-900">
+                    {TYPE_LABELS[policy.type]} · {policy.asset}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Coverage:{' '}
+                    {formatCurrency(
+                      policy.coverage,
+                      policy.currency,
+                      policy.decimals,
+                      typeof navigator !== 'undefined' ? navigator.language : 'en-US',
+                    )}
+                  </p>
+                </div>
+                <span className="text-sm text-gray-500">
+                  {formatCountdown(policy.expiresAt)}
+                </span>
+              </div>
             </div>
-          )}
-        </>
+          ))}
+      </div>
+
+      {nextCursor && !loading && (
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
       )}
     </main>
   );

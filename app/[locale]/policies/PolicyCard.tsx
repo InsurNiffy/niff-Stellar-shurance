@@ -27,16 +27,43 @@ function formatDate(value: string): string {
   });
 }
 
-function formatCoverage(amount: number, currency: string): string {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  } catch {
-    return `${amount} ${currency}`;
-  }
+/**
+ * Format a raw minor-unit token amount (bigint) into a locale-aware string.
+ * Uses bigint/string arithmetic only — never JavaScript `number`.
+ */
+function formatTokenAmount(raw: bigint, decimals: number, locale: string): string {
+  const negative = raw < 0n;
+  const abs = negative ? -raw : raw;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const fraction = abs % base;
+
+  const fractionDigits = fraction === 0n
+    ? ''
+    : fraction.toString().padStart(decimals, '0').replace(/0+$/, '');
+
+  const wholeFormatted = new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 0,
+  }).format(whole);
+
+  const decimalSeparator = new Intl.NumberFormat(locale)
+    .formatToParts(1.1)
+    .find((part) => part.type === 'decimal')?.value ?? '.';
+
+  const body = fractionDigits
+    ? `${wholeFormatted}${decimalSeparator}${fractionDigits}`
+    : wholeFormatted;
+
+  return negative ? `-${body}` : body;
+}
+
+function formatCoverage(
+  amount: bigint,
+  decimals: number,
+  currency: string,
+  locale: string,
+): string {
+  return `${formatTokenAmount(amount, decimals, locale)} ${currency}`;
 }
 
 function daysUntil(value: string): number | null {
@@ -91,9 +118,11 @@ function OpenClaimIndicator({ hasOpenClaim }: { hasOpenClaim: boolean }) {
 
 interface PolicyCardProps {
   policy: Policy;
+  decimals: number;
+  locale: string;
 }
 
-export function PolicyCard({ policy }: PolicyCardProps) {
+export function PolicyCard({ policy, decimals, locale }: PolicyCardProps) {
   return (
     <li className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm md:hidden">
       <div className="flex items-start justify-between gap-3">
@@ -107,7 +136,7 @@ export function PolicyCard({ policy }: PolicyCardProps) {
         <div>
           <dt className="text-xs text-gray-500">Coverage</dt>
           <dd className="font-medium text-gray-900">
-            {formatCoverage(policy.coverage, policy.currency)}
+            {formatCoverage(policy.coverage, decimals, policy.currency, locale)}
           </dd>
         </div>
         <div>
@@ -132,9 +161,11 @@ export function PolicyCard({ policy }: PolicyCardProps) {
 
 interface PolicyTableRowProps {
   policy: Policy;
+  decimals: number;
+  locale: string;
 }
 
-export function PolicyTableRow({ policy }: PolicyTableRowProps) {
+export function PolicyTableRow({ policy, decimals, locale }: PolicyTableRowProps) {
   return (
     <tr className="hidden border-b border-gray-100 last:border-0 md:table-row">
       <td className="px-4 py-3 text-sm text-gray-900">
@@ -145,7 +176,7 @@ export function PolicyTableRow({ policy }: PolicyTableRowProps) {
         <StatusBadge status={policy.status} />
       </td>
       <td className="px-4 py-3 text-sm text-gray-900">
-        {formatCoverage(policy.coverage, policy.currency)}
+        {formatCoverage(policy.coverage, decimals, policy.currency, locale)}
       </td>
       <td className="px-4 py-3">
         <ExpiryCountdown expiresAt={policy.expiresAt} />
@@ -165,4 +196,11 @@ export function PolicyTableRow({ policy }: PolicyTableRowProps) {
   );
 }
 
-export { StatusBadge, OpenClaimIndicator, ExpiryCountdown, formatCoverage, formatDate };
+export {
+  StatusBadge,
+  OpenClaimIndicator,
+  ExpiryCountdown,
+  formatCoverage,
+  formatDate,
+  formatTokenAmount,
+};
