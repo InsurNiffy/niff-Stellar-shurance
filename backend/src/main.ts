@@ -28,6 +28,7 @@ import { createNotificationDeliveryProcessor } from "./notifications/notificatio
 import { resolveUnsubscribeSecret } from "./notifications/unsubscribe";
 import { startNotificationWorker } from "./notifications/notification-jobs.worker";
 import { EnvironmentVariables } from "./config/env.definitions";
+import { trace, context, SpanStatusCode } from "@opentelemetry/api";
 
 export function parseOrigins(raw: string): string[] {
   return raw
@@ -83,6 +84,39 @@ async function assertRpcPassphrase(networkConfig: ReturnType<typeof loadNetworkC
     // RPC unreachable at startup — log warning but don't block (offline dev)
     startupLogger.warn(`Could not verify RPC passphrase because the RPC endpoint was unreachable: ${String(err)}`);
   }
+}
+
+/**
+ * Wraps a Soroban RPC simulation call in a custom span so latency can be
+ * attributed precisely in traces. The active context (and therefore the
+ * trace ID) is inherited from the inbound HTTP request.
+ */
+export async function withSorobanSimulationSpan<T>(
+  operation: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const tracer = trace.getTracer('niffyinsure-soroban-rpc');
+  return tracer.startActiveSpan(
+    `soroban.rpc.simulateTransaction`,
+    { attributes: { 'rpc.system': 'soroban', 'rpc.method': operation } },
+    context.active(),
+    async (span) => {
+      try {
+        const result = await fn();
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      } finally {
+        span.end();
+      }
+    },
+  );
 }
 
 async function bootstrap() {
@@ -207,51 +241,11 @@ async function bootstrap() {
     "Bootstrap",
   );
   if (!isProduction) {
-    Logger.log(`📚 Swagger docs: http://localhost:${port}/docs`, "Bootstrap");
-  }
-  const graphqlEnabled = configService.get<boolean>('GRAPHQL_ENABLED', true);
-  if (graphqlEnabled) {
-    const graphqlPath = configService.get<string>('GRAPHQL_PATH', '/graphql');
     Logger.log(
-      `🧭 GraphQL endpoint: http://localhost:${port}/api/v1${graphqlPath}`,
-      'Bootstrap',
+      `📚 Swagger docs available at: http://localhost:${port}/docs`,
+      "Bootstrap",
     );
   }
-  Logger.log(
-    `🌐 Network: ${networkConfig.network.toUpperCase()} | Contract: ${networkConfig.contractIds.niffyinsure || '(not set)'}`,
-    "Bootstrap",
-  );
-
-  // Notification delivery worker (#1483) — opt-in via ENABLE_NOTIFICATION_WORKER.
-  // The processor loads recipient details by ID inside the worker; queue
-  // payloads only ever contain IDs.
-  if (process.env.ENABLE_NOTIFICATION_WORKER === "true") {
-    try {
-      const prisma = app.get(PrismaService);
-      const preferences = app.get<NotificationPreferencesRepository>(
-        NOTIFICATION_PREFERENCES_REPOSITORY,
-      );
-      const notificationsService = app.get(NotificationsService);
-      const processor = createNotificationDeliveryProcessor({
-        prisma,
-        preferences,
-        sendMail: (message) => notificationsService.sendEmail(message),
-        unsubscribeSecret: resolveUnsubscribeSecret(configService),
-        baseUrl: process.env.APP_URL || `http://localhost:${port}`,
-      });
-      startNotificationWorker(processor);
-      Logger.log("📧 Notification delivery worker started", "Bootstrap");
-    } catch (error) {
-      Logger.error(
-        `Notification worker failed to start: ${error instanceof Error ? error.message : String(error)}`,
-        undefined,
-        "Bootstrap",
-      );
-    }
-  }
 }
-bootstrap().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  Logger.error(message, undefined, 'Bootstrap');
-  process.exit(1);
-});
+
+bootstrap();
