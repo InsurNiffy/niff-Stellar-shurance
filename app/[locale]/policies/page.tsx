@@ -255,103 +255,75 @@ export default function PoliciesPage() {
         </p>
       )}
 
-      {loading ? (
-        <div className="mt-6 space-y-3">
-          <PolicySkeleton />
-          <PolicySkeleton />
-          <PolicySkeleton />
-        </div>
-      ) : policies.length === 0 ? (
-        <div className="mt-6">
+      <div className="mt-6 space-y-3">
+        {loading ? (
+          <>
+            <PolicySkeleton />
+            <PolicySkeleton />
+            <PolicySkeleton />
+          </>
+        ) : policies.length === 0 ? (
           <EmptyState />
-        </div>
-      ) : (
-        <>
-          {/* Mobile: cards */}
-          <ul className="mt-6 space-y-3 md:hidden">
-            {policies.map((policy) => (
-              <li key={policy.id} className="rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-gray-900">{policy.policyNumber}</span>
-                  <StatusBadge status={policy.status} />
+        ) : (
+          policies.map((policy) => (
+            <Link
+              key={policy.id}
+              href={`/policies/${policy.id}`}
+              className="block rounded-lg border border-gray-200 p-4 transition hover:border-blue-400 hover:shadow-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-900">
+                    {TYPE_LABELS[policy.type]}
+                  </span>
+                  <span className="text-xs text-gray-500">{policy.policyNumber}</span>
                 </div>
-                <dl className="mt-3 space-y-1 text-sm text-gray-600">
-                  <div className="flex justify-between">
-                    <dt>Type</dt>
-                    <dd>{TYPE_LABELS[policy.type]}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Asset</dt>
-                    <dd>{policy.asset}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Coverage</dt>
-                    <dd>{formatCurrency(policy.coverage, policy.currency)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Expiry</dt>
-                    <dd>{formatCountdown(policy.expiresAt)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt>Claims</dt>
-                    <dd>
-                      <OpenClaimIndicator count={policy.openClaims} />
-                    </dd>
-                  </div>
-                </dl>
-              </li>
-            ))}
-          </ul>
+                <StatusBadge status={policy.status} />
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <div>
+                  <dt className="text-xs text-gray-500">Coverage</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatCurrency(policy.coverage, policy.currency)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Expires</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatCountdown(policy.expiresAt)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Asset</dt>
+                  <dd className="font-medium text-gray-900">{policy.asset}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Claims</dt>
+                  <dd>
+                    <OpenClaimIndicator count={policy.openClaims} />
+                  </dd>
+                </div>
+              </dl>
+            </Link>
+          ))
+        )}
+      </div>
 
-          {/* Desktop: table */}
-          <div className="mt-6 hidden overflow-x-auto md:block">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead>
-                <tr className="text-left text-gray-500">
-                  <th className="px-3 py-2 font-medium">Policy</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Type</th>
-                  <th className="px-3 py-2 font-medium">Asset</th>
-                  <th className="px-3 py-2 font-medium">Coverage</th>
-                  <th className="px-3 py-2 font-medium">Expiry</th>
-                  <th className="px-3 py-2 font-medium">Claims</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {policies.map((policy) => (
-                  <tr key={policy.id}>
-                    <td className="px-3 py-3 font-medium text-gray-900">{policy.policyNumber}</td>
-                    <td className="px-3 py-3">
-                      <StatusBadge status={policy.status} />
-                    </td>
-                    <td className="px-3 py-3 text-gray-600">{TYPE_LABELS[policy.type]}</td>
-                    <td className="px-3 py-3 text-gray-600">{policy.asset}</td>
-                    <td className="px-3 py-3 text-gray-600">
-                      {formatCurrency(policy.coverage, policy.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-gray-600">{formatCountdown(policy.expiresAt)}</td>
-                    <td className="px-3 py-3">
-                      <OpenClaimIndicator count={policy.openClaims} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {nextCursor && (
-            <div className="mt-6 text-center">
-              <button
-                type="button"
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </button>
-            </div>
+      {!loading && policies.length > 0 && (
+        <div className="mt-6 flex justify-center">
+          {nextCursor ? (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          ) : (
+            <p className="text-sm text-gray-500">You&apos;ve reached the end of the list.</p>
           )}
-        </>
+        </div>
       )}
     </main>
   );
