@@ -115,3 +115,6 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1619 -->
 - #1619: Backend: SSE real-time updates — Redis pub/sub for multi-instance claim status
+
+<!-- handsoff-issue-1795 -->
+- #1795: C-27 Contract — Claim withdrawal and strike tracking
