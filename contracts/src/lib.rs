@@ -1,9 +1,11 @@
 #![no_std]
 
+mod governance_token;
 mod vet;
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Vec};
 
+pub use governance_token::{GovernanceTokenKey, GovernanceTokenStub};
 pub use vet::VetRecord;
 
 #[contracterror]
@@ -84,5 +86,27 @@ impl ClaimsContract {
             .persistent()
             .get(&DataKey::Claim(id))
             .ok_or(ContractError::ClaimNotFound)
+    }
+}
+
+#[cfg(test)]
+mod governance_token_tests {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    #[test]
+    fn default_build_has_no_token_side_effects() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ClaimsContract);
+        let client = ClaimsContractClient::new(&env, &contract_id);
+
+        let claimant = Address::generate(&env);
+        env.mock_all_auths();
+        let id = client.file_claim(&claimant, &100i128, &None);
+        assert_eq!(id, 1);
+
+        // No governance token storage keys should be written in default builds.
+        assert!(!governance_token::is_activated(&env));
+        assert_eq!(governance_token::total_supply(&env), 0);
     }
 }

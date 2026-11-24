@@ -1,0 +1,35 @@
+[workspace]
+members = [
+    "insurance",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+soroban-sdk = "21.0.0"
+
+[features]
+# C-33 Contract — Governance token stub: feature-gated namespace reservation.
+#
+# The `governance-token` feature is intentionally OFF by default so that
+# default builds compile and pass tests with zero governance token side
+# effects. Enabling it activates the reserved `governance_token` module in
+# `insurance` (stub types + storage key variants only; live token logic is
+# still gated behind the same feature and must be implemented before
+# activation).
+#
+# TODO(governance-token activation path):
+#   1. Implement the live token logic inside `insurance::governance_token`
+#      behind `#[cfg(feature = "governance-token")]`.
+#   2. Wire the feature through to the `insurance` crate, e.g.
+#      `insurance = { path = "insurance", features = ["governance-token"] }`
+#      or build with `--features governance-token`.
+#   3. Verify feature-flagged builds compile in isolation
+#      (`cargo build -p insurance --features governance-token`) without
+#      breaking the default test suite.
+#   4. Only then flip the default in this manifest.
+governance-token = []
