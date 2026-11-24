@@ -148,6 +148,71 @@ contract id, event name, version, ledger, and transaction hash, and increments a
 `indexer.unknown_schema` metric. Warnings are observable in logs and metrics so
 operators can add a parser for the new schema.
 
+## Vote ingestion and tally reconciliation
+
+`VoteLogged` contract events are ingested into the `votes` table. Ingestion is
+**idempotent**: the table has a unique constraint on
+`(claim_id, voter_address)`, so replaying the same event (or receiving a
+duplicate from the stream) does not create a second row.
+
+Each vote insert and the corresponding tally update on `claims` happen in the
+**same DB transaction**:
+
+- `approve` votes increment `claims.approvals`.
+- `reject` votes increment `claims.rejections`.
+
+Because the insert and the tally bump commit atomically, a duplicate vote event
+is a no-op for both the `votes` row and the tally columns — tallies are never
+double-counted.
+
+### Reconciliation job
+
+A scheduled reconciliation job periodically compares the tally columns against
+the source of truth (`COUNT` of `votes` rows grouped by claim and vote):
+
+```sql
+SELECT c.id,
+       c.approvals,
+       c.rejections,
+       COUNT(v.id) FILTER (WHERE v.vote = 'approve') AS actual_approvals,
+       COUNT(v.id) FILTER (WHERE v.vote = 'reject')  AS actual_rejections
+FROM claims c
+LEFT JOIN votes v ON v.claim_id = c.id
+GROUP BY c.id, c.approvals, c.rejections
+HAVING c.approvals <> COUNT(v.id) FILTER (WHERE v.vote = 'approve')
+    OR c.rejections <> COUNT(v.id) FILTER (WHERE v.vote = 'reject');
+```
+
+Any claim returned by this query is a discrepancy. The job:
+
+- Emits a structured warning per discrepant claim (claim id, stored tallies,
+  actual counts) and increments a `reconciliation.discrepancy` metric.
+- Records the last run timestamp and the set of discrepant claim ids so the
+  status is observable.
+
+### Reconciliation status on `GET /claims/:id`
+
+The claim detail response includes a `reconciliation` object so clients can see
+whether the claim's tallies currently agree with its vote rows:
+
+```ts
+interface ClaimReconciliationStatus {
+  /** Whether stored tallies match COUNT of vote rows. */
+  ok: boolean;
+  /** Stored tally columns. */
+  approvals: number;
+  rejections: number;
+  /** Counts derived from the votes table. */
+  actualApprovals: number;
+  actualRejections: number;
+  /** ISO-8601 timestamp of the last reconciliation run, if any. */
+  checkedAt?: string;
+}
+```
+
+When `ok` is `false`, the claim's tallies disagree with its vote rows and the
+discrepancy has been flagged by the reconciliation job.
+
 ## Delivery guarantees
 
 - **Fan-out across instances.** Events are published to a Redis pub/sub channel
