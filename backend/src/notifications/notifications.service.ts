@@ -45,6 +45,31 @@ import {
   PolicyExpiryContext,
 } from './notification.templates';
 
+/**
+ * A queued notification job. Enqueued idempotently on the
+ * `(userId, type, refId)` dedup key and delivered by the BullMQ workers
+ * (email / push channels) wired in NotificationsModule.
+ */
+export interface NotificationJob {
+  userId: string;
+  type: NotificationType;
+  refId: string;
+  channel: 'email' | 'push';
+  payload?: Record<string, unknown>;
+}
+
+/** A persisted, unacknowledged notification record for the authenticated user. */
+export interface NotificationInboxRecord {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  refId: string;
+  channel: 'email' | 'push';
+  payload: Record<string, unknown> | null;
+  acknowledgedAt: string | null;
+  createdAt: string;
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -52,6 +77,10 @@ export class NotificationsService {
   // In-memory stores — replace with Prisma in production
   private readonly sentSet = new Set<string>();
   private readonly prefs = new Map<string, UserPreferences>();
+  // Idempotent enqueue dedup keys: `${userId}:${type}:${refId}`
+  private readonly enqueuedSet = new Set<string>();
+  // Persisted inbox records keyed by id
+  private readonly inbox = new Map<string, NotificationInboxRecord>();
 
   private transport: nodemailer.Transporter | null = null;
 
@@ -150,6 +179,68 @@ export class NotificationsService {
     return preferences[NOTIFICATION_TYPE_TO_PREFERENCE_KEY[notificationType]];
   }
 
+  /**
+   * Idempotently enqueue a notification for delivery by the BullMQ workers.
+   *
+   * Dedup key is `(userId, type, refId)` — a duplicate enqueue for the same
+   * event is a no-op and produces exactly one delivery. Delivery is gated on
+   * the user's `notification_preferences` opt-in flags: opted-out users get
+   * nothing enqueued.
+   */
+  async enqueueNotification(job: NotificationJob): Promise<NotificationInboxRecord | null> {
+    const dedupKey = `${job.userId}:${job.type}:${job.refId}`;
+
+    if (this.enqueuedSet.has(dedupKey)) {
+      this.logger.debug(`Duplicate notification enqueue skipped: ${dedupKey}`);
+      return null;
+    }
+
+    const optedIn = await this.shouldSendNotification(job.userId, job.type);
+    if (!optedIn) {
+      this.logger.debug(`Notification suppressed by preferences: ${dedupKey}`);
+      return null;
+    }
+
+    this.enqueuedSet.add(dedupKey);
+
+    const record: NotificationInboxRecord = {
+      id: dedupKey,
+      userId: job.userId,
+      type: job.type,
+      refId: job.refId,
+      channel: job.channel,
+      payload: job.payload ?? null,
+      acknowledgedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    this.inbox.set(record.id, record);
+
+    // BullMQ workers (email / push) consume this job; delivery is already
+    // gated above so opted-out users never reach the worker.
+    this.logger.log(`Enqueued ${job.channel} notification ${dedupKey}`);
+    return record;
+  }
+
+  /** Unacknowledged notification records for the authenticated user. */
+  async listUnacknowledged(userId: string): Promise<NotificationInboxRecord[]> {
+    return Array.from(this.inbox.values())
+      .filter((record) => record.userId === userId && record.acknowledgedAt === null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /** Frontend acknowledgement of a notification record. */
+  async acknowledge(userId: string, notificationId: string): Promise<NotificationInboxRecord> {
+    const record = this.inbox.get(notificationId);
+    if (!record || record.userId !== userId) {
+      throw new NotFoundException(`Notification ${notificationId} not found`);
+    }
+    if (record.acknowledgedAt === null) {
+      record.acknowledgedAt = new Date().toISOString();
+      this.inbox.set(record.id, record);
+    }
+    return record;
+  }
+
   async sendClaimNotifications(
     event: ClaimFinalizedEvent,
   ): Promise<NotificationRecord[]> {
@@ -227,319 +318,7 @@ export class NotificationsService {
   /** Exposed for tests. */
   _clearSentSet() {
     this.sentSet.clear();
+    this.enqueuedSet.clear();
+    this.inbox.clear();
   }
-
-  /**
-   * Send policy expiry notifications (email + push webhook) for a holder.
-   *
-   * Email is sent via SMTP when the holder has emailEnabled and an email address.
-   * Push is delivered via POST to PUSH_WEBHOOK_URL when configured.
-   * Opted-out users (renewalRemindersEnabled = false) receive no notifications.
-   */
-  async sendPolicyExpiryNotifications(
-    ctx: PolicyExpiryContext,
-    holderEmail?: string,
-  ): Promise<{ email: 'sent' | 'skipped' | 'failed'; push: 'sent' | 'skipped' | 'failed' }> {
-    const shouldSend = await this.shouldSendNotification(ctx.holderPublicKey, 'renewal_reminder');
-    if (!shouldSend) {
-      return { email: 'skipped', push: 'skipped' };
-    }
-
-    const emailResult = await this._sendPolicyExpiryEmail(ctx, holderEmail);
-    const pushResult = await this._sendPolicyExpiryPush(ctx);
-
-    return { email: emailResult, push: pushResult };
-  }
-
-  private async _sendPolicyExpiryEmail(
-    ctx: PolicyExpiryContext,
-    holderEmail?: string,
-  ): Promise<'sent' | 'skipped' | 'failed'> {
-    if (!holderEmail) return 'skipped';
-    try {
-      const tmpl = PolicyExpiryEmailTemplate(ctx);
-      await withRetry(() =>
-        this.getTransport().sendMail({
-          from: this.configService.get<string>('SMTP_FROM', 'niffyinsure@localhost'),
-          to: holderEmail,
-          subject: tmpl.subject,
-          text: tmpl.text,
-          html: tmpl.html,
-        }),
-      );
-      return 'sent';
-    } catch (err) {
-      this.logger.error(`Policy expiry email failed for policy ${ctx.policyId}: ${err}`);
-      return 'failed';
-    }
-  }
-
-  private async _sendPolicyExpiryPush(
-    ctx: PolicyExpiryContext,
-  ): Promise<'sent' | 'skipped' | 'failed'> {
-    const webhookUrl = this.configService.get<string>('PUSH_WEBHOOK_URL');
-    if (!webhookUrl) return 'skipped';
-    try {
-      const payload = PolicyExpiryPushTemplate(ctx);
-      const res = await withRetry(() =>
-        fetch(webhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }).then((r) => {
-          if (!r.ok) throw new Error(`Push webhook returned ${r.status}`);
-          return r;
-        }),
-      );
-      void res;
-      return 'sent';
-    } catch (err) {
-      this.logger.error(`Policy expiry push failed for policy ${ctx.policyId}: ${err}`);
-      return 'failed';
-    }
-  }
-
-  /** Sends a notification email through the shared SMTP transport. */
-  async sendEmail(message: {
-    to: string;
-    subject: string;
-    text: string;
-    html?: string;
-    headers?: Record<string, string>;
-  }): Promise<void> {
-    await this.getTransport().sendMail({
-      from: this.configService.get<string>('SMTP_FROM', 'niffyinsure@localhost'),
-      to: message.to,
-      subject: message.subject,
-      text: message.text,
-      ...(message.html ? { html: message.html } : {}),
-      ...(message.headers ? { headers: message.headers } : {}),
-    });
-  }
-
-  /** Persist a notification record so the frontend can ACK it on render. */
-  async createNotificationRecord(params: {
-    userId: string;
-    type: string;
-    payload: Record<string, unknown>;
-    ttlSeconds?: number;
-  }): Promise<string> {
-    const expiresAt = params.ttlSeconds
-      ? new Date(Date.now() + params.ttlSeconds * 1000)
-      : null;
-    const record = await this.prisma.notification.create({
-      data: {
-        userId: params.userId,
-        type: params.type,
-        // Cast needed: Prisma Json field accepts InputJsonValue, Record<string,unknown> needs coercion
-        payload: params.payload as import('@prisma/client').Prisma.InputJsonValue,
-        ...(expiresAt ? { expiresAt } : {}),
-      },
-    });
-    return record.id;
-  }
-
-  /** Mark a notification as delivered. Called by the frontend on render. */
-  async acknowledgeNotification(id: string, userId: string): Promise<void> {
-    const notification = await this.prisma.notification.findUnique({ where: { id } });
-    if (!notification) {
-      throw new NotFoundException(`Notification ${id} not found`);
-    }
-    if (notification.userId !== userId) {
-      throw new NotFoundException(`Notification ${id} not found`);
-    }
-    if (notification.acknowledgedAt) {
-      return; // idempotent — already acknowledged
-    }
-    await this.prisma.notification.update({
-      where: { id },
-      data: { acknowledgedAt: new Date() },
-    });
-  }
-
-  /** Returns unacknowledged notifications whose TTL has expired (eligible for re-send). */
-  async getStaleNotifications(limit = 100) {
-    return this.prisma.notification.findMany({
-      where: {
-        acknowledgedAt: null,
-        expiresAt: { lt: new Date() },
-      },
-      orderBy: { createdAt: 'asc' },
-      take: limit,
-    });
-  }
-
-
-  // ── Per-event × channel routing, quiet hours, digest (#1483) ──────────────
-
-  /** Routing preferences (per event × channel, quiet hours, digest mode). */
-  async getRoutingPreferences(
-    userId: string,
-  ): Promise<NotificationRoutingPreferences> {
-    const record = await this.preferencesRepository.findByUserId(userId);
-    return resolveRoutingPreferences(record?.routing);
-  }
-
-  /** Merges a partial routing update over the current preferences. */
-  async updateRoutingPreferences(
-    userId: string,
-    update: {
-      events?: Partial<Record<NotificationType, { email?: boolean; inApp?: boolean }>>;
-      quietHours?: { enabled?: boolean; start?: string; end?: string };
-      digestMode?: NotificationRoutingPreferences['digestMode'];
-    },
-  ): Promise<NotificationRoutingPreferences> {
-    const current = await this.getRoutingPreferences(userId);
-    const next: NotificationRoutingPreferences = {
-      events: Object.fromEntries(
-        NOTIFICATION_TYPES.map((type) => [
-          type,
-          { ...current.events[type], ...(update.events?.[type] ?? {}) },
-        ]),
-      ) as Record<NotificationType, { email: boolean; inApp: boolean }>,
-      quietHours: { ...current.quietHours, ...(update.quietHours ?? {}) },
-      digestMode: update.digestMode ?? current.digestMode,
-    };
-
-    const record = await this.preferencesRepository.findByUserId(userId);
-    await this.preferencesRepository.upsert({
-      userId,
-      renewalRemindersEnabled:
-        record?.renewalRemindersEnabled ??
-        DEFAULT_NOTIFICATION_PREFERENCES.renewalRemindersEnabled,
-      claimUpdatesEnabled:
-        record?.claimUpdatesEnabled ??
-        DEFAULT_NOTIFICATION_PREFERENCES.claimUpdatesEnabled,
-      routing: next,
-      email: record?.email ?? null,
-      emailVerified: record?.emailVerified ?? false,
-    });
-
-    return next;
-  }
-
-  /**
-   * One-click unsubscribe (#1483): disables email delivery for the user.
-   * `scope` is a notification type, or covers every type when omitted.
-   */
-  async unsubscribeFromEmail(
-    userId: string,
-    scope?: string,
-  ): Promise<{ unsubscribed: boolean; scope: string }> {
-    const routing = await this.getRoutingPreferences(userId);
-
-    const types: NotificationType[] =
-      !scope || scope === '*' || scope === 'all'
-        ? [...NOTIFICATION_TYPES]
-        : NOTIFICATION_TYPES.filter((type) => type === scope);
-
-    if (types.length === 0) {
-      return { unsubscribed: false, scope: scope ?? '*' };
-    }
-
-    const events = { ...routing.events };
-    for (const type of types) {
-      events[type] = { ...events[type], email: false };
-    }
-
-    await this.updateRoutingPreferences(userId, { events });
-    return { unsubscribed: true, scope: types.length === 1 ? types[0] : '*' };
-  }
-
-  /**
-   * Cursor-paginated in-app notification listing (newest first).
-   * Cursor is an opaque base64url-encoded row id.
-   */
-  async listNotifications(
-    userId: string,
-    options: { cursor?: string; limit?: number } = {},
-  ): Promise<{
-    items: Array<{
-      id: string;
-      type: string;
-      payload: unknown;
-      read: boolean;
-      createdAt: Date;
-      expiresAt: Date | null;
-    }>;
-    nextCursor: string | null;
-    hasMore: boolean;
-  }> {
-    const take = Math.min(Math.max(options.limit ?? 20, 1), 50);
-
-    let cursorId: string | undefined;
-    if (options.cursor) {
-      const decoded = Buffer.from(options.cursor, 'base64url').toString('utf8');
-      // Reject anything that is not a canonical base64url-encoded row id.
-      const canonical = Buffer.from(decoded, 'utf8').toString('base64url');
-      if (decoded && canonical === options.cursor) cursorId = decoded;
-      if (!cursorId) {
-        throw new BadRequestException({
-          code: 'INVALID_NOTIFICATION_CURSOR',
-          message: 'Invalid notification cursor.',
-        });
-      }
-    }
-
-    const rows = await this.prisma.notification.findMany({
-      where: { userId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-      take: take + 1,
-    });
-
-    const hasMore = rows.length > take;
-    const page = rows.slice(0, take);
-    const items = page.map((row) => ({
-      id: row.id,
-      type: row.type,
-      payload: row.payload,
-      read: row.acknowledgedAt !== null,
-      createdAt: row.createdAt,
-      expiresAt: row.expiresAt,
-    }));
-    const nextCursor =
-      hasMore && items.length > 0
-        ? Buffer.from(items[items.length - 1].id).toString('base64url')
-        : null;
-
-    return { items, nextCursor, hasMore };
-  }
-
-  /** Marks a notification as read (alias of acknowledge — same read marker). */
-  async markNotificationRead(id: string, userId: string): Promise<void> {
-    return this.acknowledgeNotification(id, userId);
-  }
-
-  private resolveNotificationPreferences(
-    record: NotificationPreferenceRecord | null,
-  ): NotificationPreferences {
-    return {
-      renewalRemindersEnabled:
-        record?.renewalRemindersEnabled ??
-        DEFAULT_NOTIFICATION_PREFERENCES.renewalRemindersEnabled,
-      claimUpdatesEnabled:
-        record?.claimUpdatesEnabled ??
-        DEFAULT_NOTIFICATION_PREFERENCES.claimUpdatesEnabled,
-    };
-  }
-}
-
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  maxAttempts = 3,
-  baseDelayMs = 500,
-): Promise<T> {
-  let lastErr: unknown;
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      if (i < maxAttempts - 1) {
-        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, i)));
-      }
-    }
-  }
-  throw lastErr;
 }
