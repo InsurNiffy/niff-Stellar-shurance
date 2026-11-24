@@ -94,6 +94,60 @@ Contract event field names follow the same `camelCase` convention as the wire
 format (e.g. `claimId`, `txHash`), so no translation is needed between contract
 events and API responses — only between the wire format and DB columns.
 
+## Contract event parser registry
+
+The indexer parses raw contract events with a **parser registry** that maps a
+contract id and a semver range to a concrete `EventParser`. Because contract
+event schemas can change between deployments, the registry lets the indexer
+parse old and new events from the same stream correctly.
+
+```ts
+interface EventParser {
+  /** Semver range this parser handles, e.g. "^1.0.0". */
+  range: string;
+  /** Contract event name this parser handles, e.g. "claim_filed". */
+  event: string;
+  /** Parse a raw contract event into the normalized shape. */
+  parse(raw: RawContractEvent): ParsedEvent;
+}
+
+class ParserRegistry {
+  register(contractId: string, parser: EventParser): void;
+  /** Resolve the parser for (contractId, event) at a given contract version. */
+  resolve(contractId: string, event: string, version: string): EventParser | undefined;
+}
+```
+
+### Initial schema parsers
+
+The initial contract schema registers one parser per event:
+
+| Event               | Semver range | Notes                                   |
+| ------------------- | ------------ | --------------------------------------- |
+| `claim_filed`       | `^1.0.0`     | Claim creation.                         |
+| `vote_cast`         | `^1.0.0`     | Vote recorded on a claim.               |
+| `policy_initiated`  | `^1.0.0`     | Policy lifecycle start.                 |
+| `policy_updated`    | `^1.0.0`     | Policy parameter change.                |
+| `claim_resolved`    | `^1.0.0`     | Claim resolution.                       |
+
+### Version routing
+
+Incoming events are routed to the correct parser using the **deployment
+registry version at the event's ledger**. The indexer looks up the contract
+version that was active when the event's ledger was produced, then asks the
+registry to resolve `(contractId, event, version)`. This means a single mixed
+stream containing events from multiple contract versions is parsed with the
+parser that matches each event's own version.
+
+### Unknown schemas
+
+If no parser matches `(contractId, event, version)` — for example an event from
+a contract version the indexer does not yet know about — the indexer does **not**
+silently skip the event. Instead it emits a structured warning row containing the
+contract id, event name, version, ledger, and transaction hash, and increments an
+`indexer.unknown_schema` metric. Warnings are observable in logs and metrics so
+operators can add a parser for the new schema.
+
 ## Delivery guarantees
 
 - **Fan-out across instances.** Events are published to a Redis pub/sub channel
