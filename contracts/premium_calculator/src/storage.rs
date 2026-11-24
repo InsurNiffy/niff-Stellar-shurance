@@ -37,6 +37,50 @@ pub fn is_paused(env: &Env) -> bool {
         .unwrap_or_default()
 }
 
+/// Returns the stored multiplier table, falling back to the built-in default
+/// when no table has been configured yet. Used by `compute` so the contract
+/// always has a valid table to delegate to the shared premium engine.
+pub fn get_table_or_default(env: &Env) -> MultiplierTable {
+    get_table(env).unwrap_or_else(|| default_table(env))
+}
+
+/// Validates a candidate multiplier table before it is persisted.
+///
+/// A table is rejected when any multiplier is non-positive, when the safety
+/// discount is negative, or when the version does not advance past the
+/// currently stored version. Returns `Ok(())` when the table is acceptable.
+pub fn validate_table(env: &Env, table: &MultiplierTable) -> Result<(), crate::errors::CalcError> {
+    use crate::errors::CalcError;
+
+    if table.safety_discount < 0 {
+        return Err(CalcError::InvalidTable);
+    }
+
+    for (_, value) in table.region.iter() {
+        if value <= 0 {
+            return Err(CalcError::InvalidTable);
+        }
+    }
+    for (_, value) in table.age.iter() {
+        if value <= 0 {
+            return Err(CalcError::InvalidTable);
+        }
+    }
+    for (_, value) in table.coverage.iter() {
+        if value <= 0 {
+            return Err(CalcError::InvalidTable);
+        }
+    }
+
+    if let Some(current) = get_table(env) {
+        if table.version <= current.version {
+            return Err(CalcError::InvalidTable);
+        }
+    }
+
+    Ok(())
+}
+
 pub fn default_table(env: &Env) -> MultiplierTable {
     let mut region = Map::new(env);
     region.set(RegionTier::Low, 8_500i128);
