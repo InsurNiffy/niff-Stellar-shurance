@@ -118,3 +118,6 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1795 -->
 - #1795: C-27 Contract — Claim withdrawal and strike tracking
+
+<!-- handsoff-issue-1796 -->
+- #1796: C-28 Contract — Appeal mechanism: open, vote, and finalize appeal round
