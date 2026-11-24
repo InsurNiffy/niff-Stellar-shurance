@@ -33,3 +33,25 @@ soroban-sdk = "21.0.0"
 #      breaking the default test suite.
 #   4. Only then flip the default in this manifest.
 governance-token = []
+
+# C-34 Contract — Oracle integration stub: parametric trigger scaffolding.
+#
+# The `experimental` feature is intentionally OFF by default so that default
+# builds cannot accidentally execute oracle triggers. Enabling it compiles
+# the `insurance::oracle` module (stub entrypoints `query_trigger`,
+# `validate_trigger`, `execute_trigger`). Even with the feature enabled, the
+# stub entrypoints panic with `ORACLE_TRIGGERS_DISABLED` until the
+# prerequisites below are satisfied.
+#
+# Prerequisites for production oracle activation:
+#   1. Security review — threat model for oracle data feeds, replay/forgery
+#      resistance, and fail-closed behaviour on malformed or stale inputs.
+#   2. Legal review — confirm parametric trigger payouts comply with the
+#      applicable insurance/regulatory regimes in each target jurisdiction.
+#   3. Cryptographic design — signed oracle attestations, key management and
+#      rotation, and on-chain verification of trigger evidence.
+#   4. Only after 1–3 are complete: replace the panicking stubs with live
+#      logic and wire the feature through to the `insurance` crate, e.g.
+#      `insurance = { path = "insurance", features = ["experimental"] }`
+#      or build with `--features experimental`.
+experimental = []
