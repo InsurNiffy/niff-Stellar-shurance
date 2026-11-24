@@ -2,7 +2,7 @@
 
 mod vet;
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec};
 
 pub use vet::VetRecord;
 
@@ -28,6 +28,7 @@ pub struct Claim {
 pub enum DataKey {
     Claim(u64),
     ClaimCounter,
+    WasmHash,
 }
 
 #[contract]
@@ -84,5 +85,27 @@ impl ClaimsContract {
             .persistent()
             .get(&DataKey::Claim(id))
             .ok_or(ContractError::ClaimNotFound)
+    }
+
+    /// Returns the wasm hash of the currently executing contract.
+    ///
+    /// The hash is read from the Soroban environment and cached in persistent
+    /// storage. When the cached hash differs from the executing wasm hash (i.e.
+    /// after an upgrade), a `ContractUpgraded` event is emitted with the old and
+    /// new hashes so off-chain monitors can detect the change.
+    pub fn get_wasm_hash(env: Env) -> BytesN<32> {
+        let current = env.current_contract_address();
+        let wasm_hash = env.deployer().get_wasm_hash(&current);
+
+        let previous: Option<BytesN<32>> = env.storage().persistent().get(&DataKey::WasmHash);
+        if previous.as_ref() != Some(&wasm_hash) {
+            env.storage().persistent().set(&DataKey::WasmHash, &wasm_hash);
+            env.events().publish(
+                (Symbol::new(&env, "ContractUpgraded"),),
+                (previous, wasm_hash.clone()),
+            );
+        }
+
+        wasm_hash
     }
 }
