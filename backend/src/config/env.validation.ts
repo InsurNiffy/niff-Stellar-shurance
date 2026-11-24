@@ -1,26 +1,10 @@
-import { buildValidationSchema, EnvironmentVariables } from './env.definitions';
+import * as Joi from 'joi';
 
-export const validationSchema = buildValidationSchema();
-
-function formatValidationMessage(message: string): string {
-  return message.replace(/["]/g, '');
-}
-
-export function validateEnvironment(
-  input: Record<string, unknown>,
-): EnvironmentVariables {
-  const { error, value } = validationSchema.validate(input, {
-    abortEarly: false,
-    allowUnknown: true,
-    convert: true,
-  });
-
-  if (!error) {
-    return value;
-  }
-
-  const details = error.details.map((detail) => formatValidationMessage(detail.message));
-  throw new Error(
-    ['Environment validation failed:', ...details.map((detail) => `- ${detail}`)].join('\n'),
-  );
-}
+export const envValidationSchema = Joi.object({
+  NODE_ENV: Joi.string()
+    .valid('development', 'production', 'test')
+    .default('development'),
+  PORT: Joi.number().port().default(3000),
+  CORS_ORIGIN: Joi.string().default('*'),
+  API_DEFAULT_VERSION: Joi.string().default('1'),
+});

@@ -1,5 +1,5 @@
 import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { TerminusModule } from '@nestjs/terminus';
 import { ThrottlerModule, ThrottlerStorage } from '@nestjs/throttler';
@@ -44,6 +44,7 @@ import { RejectUnversionedApiMiddleware } from './common/versioning/reject-unver
 import { AddressNormalizeInterceptor } from './common/interceptors/address-normalize.interceptor';
 import { LastSeenInterceptor } from './common/interceptors/last-seen.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { PostsModule } from './posts/posts.module';
 import { GovernanceModule } from './governance/governance.module';
 import { HorizonModule } from './horizon/horizon.module';
@@ -111,6 +112,10 @@ const IDEMPOTENCY_ROUTES = [
   providers: [
     RequestContextMiddleware,
     AppLoggerService,
+    {
+      provide: APP_FILTER,
+      useClass: HttpExceptionFilter,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: TransformInterceptor,

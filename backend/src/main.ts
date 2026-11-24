@@ -7,6 +7,7 @@ import { ValidationPipe, Logger, VersioningType } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
+import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
 import helmet from "helmet";
 import { ConfigService } from "@nestjs/config";
 import { RequestContextMiddleware } from "./common/middleware/request-context.middleware";
@@ -190,8 +191,12 @@ async function bootstrap() {
     }),
   );
 
-  // Exception filter
+  // Exception filter + response transform interceptor
   app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalInterceptors(new TransformInterceptor());
+
+  // Graceful shutdown — let Nest close DB/Redis/workers on SIGTERM/SIGINT
+  app.enableShutdownHooks();
 
   // Swagger — UI is disabled in production (spec is still generated for tooling).
   const document = buildOpenApiDocument(app);
@@ -207,51 +212,17 @@ async function bootstrap() {
     "Bootstrap",
   );
   if (!isProduction) {
-    Logger.log(`📚 Swagger docs: http://localhost:${port}/docs`, "Bootstrap");
-  }
-  const graphqlEnabled = configService.get<boolean>('GRAPHQL_ENABLED', true);
-  if (graphqlEnabled) {
-    const graphqlPath = configService.get<string>('GRAPHQL_PATH', '/graphql');
     Logger.log(
-      `🧭 GraphQL endpoint: http://localhost:${port}/api/v1${graphqlPath}`,
-      'Bootstrap',
+      `📚 Swagger docs available at: http://localhost:${port}/docs`,
+      "Bootstrap",
     );
   }
-  Logger.log(
-    `🌐 Network: ${networkConfig.network.toUpperCase()} | Contract: ${networkConfig.contractIds.niffyinsure || '(not set)'}`,
+}
+
+bootstrap().catch((err) => {
+  Logger.error(
+    `Fatal error during bootstrap: ${err instanceof Error ? err.stack : String(err)}`,
     "Bootstrap",
   );
-
-  // Notification delivery worker (#1483) — opt-in via ENABLE_NOTIFICATION_WORKER.
-  // The processor loads recipient details by ID inside the worker; queue
-  // payloads only ever contain IDs.
-  if (process.env.ENABLE_NOTIFICATION_WORKER === "true") {
-    try {
-      const prisma = app.get(PrismaService);
-      const preferences = app.get<NotificationPreferencesRepository>(
-        NOTIFICATION_PREFERENCES_REPOSITORY,
-      );
-      const notificationsService = app.get(NotificationsService);
-      const processor = createNotificationDeliveryProcessor({
-        prisma,
-        preferences,
-        sendMail: (message) => notificationsService.sendEmail(message),
-        unsubscribeSecret: resolveUnsubscribeSecret(configService),
-        baseUrl: process.env.APP_URL || `http://localhost:${port}`,
-      });
-      startNotificationWorker(processor);
-      Logger.log("📧 Notification delivery worker started", "Bootstrap");
-    } catch (error) {
-      Logger.error(
-        `Notification worker failed to start: ${error instanceof Error ? error.message : String(error)}`,
-        undefined,
-        "Bootstrap",
-      );
-    }
-  }
-}
-bootstrap().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  Logger.error(message, undefined, 'Bootstrap');
   process.exit(1);
 });
