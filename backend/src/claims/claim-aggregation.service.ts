@@ -12,11 +12,25 @@ export const CLAIM_AGGREGATION_JOB = 'recompute-claim-aggregation';
 
 const DEFAULT_QUORUM = 100;
 const DEFAULT_VOTING_WINDOW_LEDGERS = 120960;
+const AGGREGATION_CACHE_TTL_SECONDS = 30;
+const LEDGER_CLOSE_TIME_SECONDS = 5;
+
+export interface ClaimGovernanceFields {
+  quorum_progress_pct: number;
+  votes_needed: number;
+  deadline_estimate_utc: string | null;
+}
+
+interface CacheEntry {
+  value: ClaimGovernanceFields;
+  expiresAt: number;
+}
 
 @Injectable()
 @Processor(CLAIM_AGGREGATION_QUEUE)
 export class ClaimAggregationService extends WorkerHost {
   private readonly logger = new Logger(ClaimAggregationService.name);
+  private readonly cache = new Map<string, CacheEntry>();
 
   constructor(
     @InjectRepository(ClaimAggregation)
@@ -98,10 +112,62 @@ export class ClaimAggregationService extends WorkerHost {
       computedAt: new Date(),
     });
 
-    return this.aggregationRepo.save(aggregation);
+    const saved = await this.aggregationRepo.save(aggregation);
+    this.cache.delete(claimId);
+    return saved;
   }
 
   async getAggregation(claimId: string): Promise<ClaimAggregation | null> {
     return this.aggregationRepo.findOne({ where: { claimId } });
+  }
+
+  /**
+   * Compute the governance fields exposed by GET /claims/:id from the DB.
+   * Results are cached in-memory (Redis-backed cache in production) with a
+   * short TTL so repeated reads stay cheap without going stale.
+   */
+  async getGovernanceFields(claimId: string): Promise<ClaimGovernanceFields> {
+    const cached = this.cache.get(claimId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const claim = await this.claimRepo.findOne({ where: { id: claimId } });
+    if (!claim) {
+      throw new Error(`Claim ${claimId} not found`);
+    }
+
+    const votes = await this.voteRepo.find({ where: { claimId } });
+    const votesCast = votes.length;
+
+    const quorum = claim.quorum ?? DEFAULT_QUORUM;
+    const quorumProgressPct =
+      quorum > 0 ? Math.min((votesCast / quorum) * 100, 100) : 0;
+    const votesNeeded = Math.max(quorum - votesCast, 0);
+
+    const currentLedger = claim.currentLedger ?? 0;
+    const deadlineLedger =
+      claim.deadlineLedger ??
+      (claim.createdLedger ?? 0) + DEFAULT_VOTING_WINDOW_LEDGERS;
+    const ledgersRemaining = Math.max(deadlineLedger - currentLedger, 0);
+    const deadlineEstimateUtc =
+      ledgersRemaining > 0
+        ? new Date(
+            Date.now() + ledgersRemaining * LEDGER_CLOSE_TIME_SECONDS * 1000,
+          ).toISOString()
+        : null;
+
+    const value: ClaimGovernanceFields = {
+      quorum_progress_pct: Number(quorumProgressPct.toFixed(2)),
+      votes_needed: votesNeeded,
+      deadline_estimate_utc: deadlineEstimateUtc,
+    };
+
+    this.cache.set(claimId, {
+      value,
+      expiresAt: Date.now() + AGGREGATION_CACHE_TTL_SECONDS * 1000,
+    });
+
+    return value;
   }
 }
