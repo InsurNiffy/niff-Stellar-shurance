@@ -115,3 +115,6 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1619 -->
 - #1619: Backend: SSE real-time updates — Redis pub/sub for multi-instance claim status
+
+<!-- handsoff-issue-1787 -->
+- #1787: C-19 Contract — Policy transfer and beneficiary management
