@@ -27,6 +27,21 @@ pub struct Tally {
     pub no: u32,
 }
 
+/// Scope of a delegation: either global (all claims) or a specific claim.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DelegationScope {
+    Global,
+    Claim(u32),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Delegation {
+    pub delegatee: Address,
+    pub scope: DelegationScope,
+}
+
 #[contract]
 pub struct GovernanceContract;
 
@@ -65,6 +80,70 @@ impl GovernanceContract {
 
     pub fn reveal_deadline_ledger(env: Env) -> u32 {
         env.storage().instance().get(&REVEAL_DEADLINE).unwrap_or(0)
+    }
+
+    /// Delegate vote power from `delegator` to `delegatee` for the given scope.
+    /// Delegation chains are limited to depth 1: a delegatee that has itself
+    /// delegated cannot be used as a target, preventing cycles.
+    pub fn delegate(env: Env, delegator: Address, delegatee: Address, scope: DelegationScope) {
+        delegator.require_auth();
+        if delegator == delegatee {
+            panic!("cannot delegate to self");
+        }
+        // Depth limited to 1: the delegatee must not itself be a delegator.
+        if env
+            .storage()
+            .persistent()
+            .has(&(symbol_short!("DELEG"), delegatee.clone()))
+        {
+            panic!("delegation chain depth exceeded");
+        }
+        let record = Delegation {
+            delegatee: delegatee.clone(),
+            scope: scope.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&(symbol_short!("DELEG"), delegator.clone()), &record);
+        env.events()
+            .publish((symbol_short!("DelegationSet"), delegator), (delegatee, scope));
+    }
+
+    /// Revoke any delegation previously set by `delegator`.
+    pub fn revoke_delegation(env: Env, delegator: Address) {
+        delegator.require_auth();
+        let key = (symbol_short!("DELEG"), delegator.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().remove(&key);
+        }
+        env.events()
+            .publish((symbol_short!("DelegationRevoked"), delegator), ());
+    }
+
+    /// Resolve the effective voter and power for a vote on `claim_id`.
+    /// If `voter` has delegated for this claim (or globally), the delegatee
+    /// becomes the effective voter. Depth is limited to 1.
+    pub fn resolve_voter(env: Env, voter: Address, claim_id: u32) -> Address {
+        if let Some(record) = Self::get_delegation(&env, &voter) {
+            let applies = match record.scope {
+                DelegationScope::Global => true,
+                DelegationScope::Claim(id) => id == claim_id,
+            };
+            if applies {
+                return record.delegatee;
+            }
+        }
+        voter
+    }
+
+    pub fn get_delegation(env: Env, delegator: Address) -> Option<Delegation> {
+        Self::get_delegation(&env, &delegator)
+    }
+
+    fn get_delegation(env: &Env, delegator: &Address) -> Option<Delegation> {
+        env.storage()
+            .persistent()
+            .get(&(symbol_short!("DELEG"), delegator.clone()))
     }
 
     /// Store a commitment (hash of vote || salt) for the given voter and claim.

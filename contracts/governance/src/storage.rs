@@ -1,5 +1,13 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env};
 
+/// Scope of a delegation: either global or limited to a specific claim.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DelegationScope {
+    Global,
+    Claim(u64),
+}
+
 /// Storage keys for the governance contract.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,6 +20,10 @@ pub enum DataKey {
     Commitment(Address, u64),
     /// Accumulated tally for a claim (only updated during reveal).
     Tally(u64),
+    /// Delegatee for a delegator's global delegation.
+    GlobalDelegate(Address),
+    /// Delegatee for a delegator's per-claim delegation.
+    ClaimDelegate(Address, u64),
 }
 
 pub fn set_admin(env: &Env, admin: &Address) {
@@ -61,4 +73,43 @@ pub fn set_tally(env: &Env, claim_id: u64, tally: i128) {
     env.storage()
         .persistent()
         .set(&DataKey::Tally(claim_id), &tally);
+}
+
+pub fn set_delegation(env: &Env, delegator: &Address, scope: &DelegationScope, delegatee: &Address) {
+    match scope {
+        DelegationScope::Global => env
+            .storage()
+            .persistent()
+            .set(&DataKey::GlobalDelegate(delegator.clone()), delegatee),
+        DelegationScope::Claim(claim_id) => env
+            .storage()
+            .persistent()
+            .set(&DataKey::ClaimDelegate(delegator.clone(), *claim_id), delegatee),
+    }
+}
+
+pub fn get_delegation(env: &Env, delegator: &Address, scope: &DelegationScope) -> Option<Address> {
+    match scope {
+        DelegationScope::Global => env
+            .storage()
+            .persistent()
+            .get(&DataKey::GlobalDelegate(delegator.clone())),
+        DelegationScope::Claim(claim_id) => env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClaimDelegate(delegator.clone(), *claim_id)),
+    }
+}
+
+pub fn remove_delegation(env: &Env, delegator: &Address, scope: &DelegationScope) {
+    match scope {
+        DelegationScope::Global => env
+            .storage()
+            .persistent()
+            .remove(&DataKey::GlobalDelegate(delegator.clone())),
+        DelegationScope::Claim(claim_id) => env
+            .storage()
+            .persistent()
+            .remove(&DataKey::ClaimDelegate(delegator.clone(), *claim_id)),
+    }
 }
