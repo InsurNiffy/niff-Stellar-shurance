@@ -12,29 +12,35 @@ type SoftDeleteExtensionArgs = {
 };
 
 /**
- * PrismaService — wraps PrismaClient with explicit connection pool settings.
+ * Build a Prisma datasource URL from a base URL, appending pool settings.
  *
  * Pool sizing rationale:
- *  - DB_POOL_MAX (default 10): sized for a 2-vCPU app instance against a
- *    db.t3.medium (max_connections ≈ 170). Leave headroom for migrations,
- *    admin tools, and multiple replicas. Increase for larger instances.
- *  - DB_POOL_MIN (default 2): keeps warm connections ready; avoids cold-start
- *    latency on low-traffic periods.
- *  - DB_POOL_IDLE_TIMEOUT_MS (default 30 000): reclaim idle connections after
- *    30 s to avoid hitting DB max_connections under scale-down.
- *  - DB_POOL_CONNECTION_TIMEOUT_MS (default 5 000): fail fast rather than
- *    queue indefinitely; surfaces pool exhaustion as 503 instead of timeout.
- *
- * All settings are configurable via environment variables for different
- * deployment sizes (dev / staging / prod).
+ *  - connection_limit (DB_POOL_MAX, default 10): sized for a 2-vCPU app
+ *    instance against a db.t3.medium (max_connections ≈ 170). Leave headroom
+ *    for migrations, admin tools, and multiple replicas.
+ *  - pool_timeout (DB_POOL_CONNECTION_TIMEOUT_MS, default 5 000): fail fast
+ *    rather than queue indefinitely; surfaces pool exhaustion as 503.
  *
  * Runbook — diagnosing pool exhaustion:
  *  1. Check `db_pool_waiting` metric in Grafana; sustained > 0 means exhaustion.
  *  2. Check `db_pool_active` — if consistently at DB_POOL_MAX, increase it
  *     (verify DB max_connections first: `SHOW max_connections;`).
  *  3. Check for long-running queries holding connections: `pg_stat_activity`.
- *  4. If idle connections are high, reduce DB_POOL_MAX or DB_POOL_IDLE_TIMEOUT_MS.
+ *  4. If idle connections are high, reduce DB_POOL_MAX.
  */
+export function buildDatasourceUrl(
+  baseUrl: string | undefined,
+  poolMax: number,
+  connTimeoutMs: number,
+): string {
+  const url = baseUrl ?? '';
+  const separator = url.includes('?') ? '&' : '?';
+  return (
+    url +
+    `${separator}connection_limit=${poolMax}&pool_timeout=${Math.ceil(connTimeoutMs / 1000)}`
+  );
+}
+
 @Injectable()
 export class PrismaService
   extends PrismaClient
@@ -63,9 +69,7 @@ export class PrismaService
     super({
       datasources: {
         db: {
-          url:
-            config.get<string>('DATABASE_URL') +
-            `?connection_limit=${poolMax}&pool_timeout=${Math.ceil(connTimeout / 1000)}`,
+          url: buildDatasourceUrl(config.get<string>('DATABASE_URL'), poolMax, connTimeout),
         },
       },
       log:
@@ -192,20 +196,41 @@ export class PrismaService
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await this.$connect();
-        if (attempt > 1) {
-          this.logger.log(`DB connected on attempt ${attempt}`);
-        }
+        this.logger.log(
+          JSON.stringify({ event: 'prisma_connected', attempt }),
+        );
         return;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (attempt === maxAttempts) {
-          this.logger.error(`DB connection failed after ${maxAttempts} attempts: ${msg}`);
-          throw err;
-        }
+      } catch (err) {
+        const isLast = attempt === maxAttempts;
         const delay = Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs);
-        this.logger.warn(`DB connection attempt ${attempt}/${maxAttempts} failed — retrying in ${delay}ms: ${msg}`);
+        this.logger.error(
+          JSON.stringify({
+            event: 'prisma_connect_failed',
+            attempt,
+            maxAttempts,
+            retryInMs: isLast ? null : delay,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        if (isLast) throw err;
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
+    }
+  }
+
+  /** Lightweight liveness probe used by the health indicator. */
+  async isHealthy(): Promise<boolean> {
+    try {
+      await this.$queryRaw`SELECT 1`;
+      return true;
+    } catch (err) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'prisma_health_check_failed',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return false;
     }
   }
 }
