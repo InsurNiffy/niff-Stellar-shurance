@@ -1,13 +1,8 @@
-import { Module } from "@nestjs/common";
-import { EventsController } from "./events.controller";
-import { ClaimEventsService } from "./claim-events.service";
-import { SseConnectionRegistry } from "./sse-connection.registry";
-import { CacheModule } from "../cache/cache.module";
+import { Module } from '@nestjs/common';
+import { ClaimsEventsController } from './claims-events.controller';
 
 @Module({
-  imports: [CacheModule],
-  controllers: [EventsController],
-  providers: [ClaimEventsService, SseConnectionRegistry],
-  exports: [ClaimEventsService],
+  controllers: [ClaimsEventsController],
+  exports: [ClaimsEventsController],
 })
 export class EventsModule {}
