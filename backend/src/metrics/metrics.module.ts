@@ -1,20 +1,18 @@
-import { Module, Global, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { MetricsController } from './metrics.controller';
+import { Module } from '@nestjs/common';
+import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 import { MetricsService } from './metrics.service';
-import { MetricsAuthMiddleware } from './metrics-auth.middleware';
-import { MetricsCardinalityGuard } from './cardinality-guard.service';
-import { BusinessMetricsCollector } from './business-metrics.collector';
+import { CardinalityGuardService } from './cardinality-guard.service';
+import { MetricsController } from './metrics.controller';
 
-@Global()
 @Module({
+  imports: [
+    PrometheusModule.register({
+      defaultMetrics: { enabled: true },
+      controller: MetricsController,
+    }),
+  ],
   controllers: [MetricsController],
-  providers: [MetricsService, MetricsAuthMiddleware, MetricsCardinalityGuard, BusinessMetricsCollector],
-  exports: [MetricsService, MetricsCardinalityGuard],
+  providers: [MetricsService, CardinalityGuardService],
+  exports: [MetricsService, CardinalityGuardService],
 })
-export class MetricsModule implements NestModule {
-  configure(consumer: MiddlewareConsumer): void {
-    consumer
-      .apply(MetricsAuthMiddleware)
-      .forRoutes({ path: 'metrics', method: RequestMethod.GET });
-  }
-}
+export class MetricsModule {}
