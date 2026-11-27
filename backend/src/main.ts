@@ -28,6 +28,10 @@ import { createNotificationDeliveryProcessor } from "./notifications/notificatio
 import { resolveUnsubscribeSecret } from "./notifications/unsubscribe";
 import { startNotificationWorker } from "./notifications/notification-jobs.worker";
 import { EnvironmentVariables } from "./config/env.definitions";
+import { DeprecationHeadersInterceptor } from "./common/interceptors/deprecation-headers.interceptor";
+import { V1SunsetInterceptor } from "./common/interceptors/v1-sunset.interceptor";
+import { RejectUnversionedApiMiddleware } from "./common/middleware/reject-unversioned-api.middleware";
+import { trace, context, SpanStatusCode } from "@opentelemetry/api";
 
 export function parseOrigins(raw: string): string[] {
   return raw
@@ -85,6 +89,39 @@ async function assertRpcPassphrase(networkConfig: ReturnType<typeof loadNetworkC
   }
 }
 
+/**
+ * Wraps a Soroban RPC simulation call in a custom span so latency can be
+ * attributed precisely in traces. The active context (and therefore the
+ * trace ID) is inherited from the inbound HTTP request.
+ */
+export async function withSorobanSimulationSpan<T>(
+  operation: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const tracer = trace.getTracer('niffyinsure-soroban-rpc');
+  return tracer.startActiveSpan(
+    `soroban.rpc.simulateTransaction`,
+    { attributes: { 'rpc.system': 'soroban', 'rpc.method': operation } },
+    context.active(),
+    async (span) => {
+      try {
+        const result = await fn();
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      } finally {
+        span.end();
+      }
+    },
+  );
+}
+
 async function bootstrap() {
   validateEnvironment(process.env);
 
@@ -113,6 +150,10 @@ async function bootstrap() {
     type: VersioningType.URI,
     defaultVersion: "1",
   });
+
+  // Reject unversioned API requests with 400 before routing.
+  const rejectUnversioned = new RejectUnversionedApiMiddleware();
+  app.use(rejectUnversioned.use.bind(rejectUnversioned));
 
   // Security — Helmet tuned for a JSON-only API (no HTML served)
   app.use(
@@ -190,6 +231,12 @@ async function bootstrap() {
     }),
   );
 
+  // Deprecation headers — announce sunset dates on deprecated routes.
+  app.useGlobalInterceptors(
+    new DeprecationHeadersInterceptor(),
+    new V1SunsetInterceptor(),
+  );
+
   // Exception filter
   app.useGlobalFilters(new HttpExceptionFilter());
 
@@ -207,51 +254,11 @@ async function bootstrap() {
     "Bootstrap",
   );
   if (!isProduction) {
-    Logger.log(`📚 Swagger docs: http://localhost:${port}/docs`, "Bootstrap");
-  }
-  const graphqlEnabled = configService.get<boolean>('GRAPHQL_ENABLED', true);
-  if (graphqlEnabled) {
-    const graphqlPath = configService.get<string>('GRAPHQL_PATH', '/graphql');
     Logger.log(
-      `🧭 GraphQL endpoint: http://localhost:${port}/api/v1${graphqlPath}`,
-      'Bootstrap',
+      `📚 Swagger docs available at: http://localhost:${port}/docs`,
+      "Bootstrap",
     );
   }
-  Logger.log(
-    `🌐 Network: ${networkConfig.network.toUpperCase()} | Contract: ${networkConfig.contractIds.niffyinsure || '(not set)'}`,
-    "Bootstrap",
-  );
-
-  // Notification delivery worker (#1483) — opt-in via ENABLE_NOTIFICATION_WORKER.
-  // The processor loads recipient details by ID inside the worker; queue
-  // payloads only ever contain IDs.
-  if (process.env.ENABLE_NOTIFICATION_WORKER === "true") {
-    try {
-      const prisma = app.get(PrismaService);
-      const preferences = app.get<NotificationPreferencesRepository>(
-        NOTIFICATION_PREFERENCES_REPOSITORY,
-      );
-      const notificationsService = app.get(NotificationsService);
-      const processor = createNotificationDeliveryProcessor({
-        prisma,
-        preferences,
-        sendMail: (message) => notificationsService.sendEmail(message),
-        unsubscribeSecret: resolveUnsubscribeSecret(configService),
-        baseUrl: process.env.APP_URL || `http://localhost:${port}`,
-      });
-      startNotificationWorker(processor);
-      Logger.log("📧 Notification delivery worker started", "Bootstrap");
-    } catch (error) {
-      Logger.error(
-        `Notification worker failed to start: ${error instanceof Error ? error.message : String(error)}`,
-        undefined,
-        "Bootstrap",
-      );
-    }
-  }
 }
-bootstrap().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  Logger.error(message, undefined, 'Bootstrap');
-  process.exit(1);
-});
+
+bootstrap();
