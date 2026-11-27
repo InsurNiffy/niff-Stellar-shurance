@@ -28,6 +28,9 @@ import { createNotificationDeliveryProcessor } from "./notifications/notificatio
 import { resolveUnsubscribeSecret } from "./notifications/unsubscribe";
 import { startNotificationWorker } from "./notifications/notification-jobs.worker";
 import { EnvironmentVariables } from "./config/env.definitions";
+import { DeprecationHeadersInterceptor } from "./common/interceptors/deprecation-headers.interceptor";
+import { V1SunsetInterceptor } from "./common/interceptors/v1-sunset.interceptor";
+import { RejectUnversionedApiMiddleware } from "./common/middleware/reject-unversioned-api.middleware";
 import { trace, context, SpanStatusCode } from "@opentelemetry/api";
 
 export function parseOrigins(raw: string): string[] {
@@ -148,6 +151,10 @@ async function bootstrap() {
     defaultVersion: "1",
   });
 
+  // Reject unversioned API requests with 400 before routing.
+  const rejectUnversioned = new RejectUnversionedApiMiddleware();
+  app.use(rejectUnversioned.use.bind(rejectUnversioned));
+
   // Security — Helmet tuned for a JSON-only API (no HTML served)
   app.use(
     helmet({
@@ -222,6 +229,12 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
       transform: true,
     }),
+  );
+
+  // Deprecation headers — announce sunset dates on deprecated routes.
+  app.useGlobalInterceptors(
+    new DeprecationHeadersInterceptor(),
+    new V1SunsetInterceptor(),
   );
 
   // Exception filter
