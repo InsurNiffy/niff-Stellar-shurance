@@ -115,3 +115,9 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1619 -->
 - #1619: Backend: SSE real-time updates — Redis pub/sub for multi-instance claim status
+
+<!-- handsoff-issue-1835 -->
+- #1835: B-32 Backend — Support ticket module: contact form and staff reply flow
+
+<!-- handsoff-issue-1837 -->
+- #1837: B-34 Backend — Asset allowlist sync: AllowedAsset table from chain events
