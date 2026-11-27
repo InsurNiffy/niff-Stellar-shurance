@@ -162,36 +162,47 @@ function mountedAtRef(now: number): number {
 
 function StatusBadge({ status }: { status: PolicyStatus }) {
   return (
-    <span className="inline-flex items-center gap-1 font-mono text-sm">
-      <span title={address} aria-label={`Address: ${address}`}>
-        {truncateAddress(address)}
-      </span>
-      {showCopy && (
-        <button
-          type="button"
-          onClick={handleCopy}
-          aria-label={copied ? 'Copied!' : 'Copy address'}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground"
-        >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-        </button>
-      )}
-      {copied && (
-        <span role="status" className="text-xs text-green-600">
-          Copied!
-        </span>
-      )}
-      {showExplorer && (
-        <a
-          href={explorerUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`View ${address} on Stellar Expert`}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-        </a>
-      )}
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}
+    >
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+      <span className="sr-only">Status: </span>
+      {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+function OpenClaimIndicator({ hasOpenClaim }: { hasOpenClaim: boolean }) {
+  if (!hasOpenClaim) return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+      Open claim
+    </span>
+  );
+}
+
+interface PolicyCardProps {
+  policy: {
+    id: string;
+    name: string;
+    holder: string;
+    coverage: string;
+    status: string;
+  };
+  network?: string;
+  decimals?: number;
+  locale?: string;
+}
+
+export function PolicyCard({ policy }: PolicyCardProps) {
+  const headingId = `policy-card-${policy.id}-heading`;
+  return (
+    <li
+      className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm md:hidden"
+      aria-labelledby={headingId}
+    >
+    
     </span>
   );
 }
@@ -210,11 +221,20 @@ interface PolicyCardProps {
 }
 
 export function PolicyCard({ policy, network = 'testnet', decimals, locale }: PolicyCardProps) {
+  const headingId = `policy-card-${policy.id}-heading`;
   return (
-    <div className="rounded-lg border p-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold">{policy.name}</h3>
-        <span className="text-xs uppercase text-muted-foreground">{policy.status}</span>
+    <li
+      className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm md:hidden"
+      aria-labelledby={headingId}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p id={headingId} className="text-sm font-semibold text-gray-900">
+            {policy.type}
+          </p>
+          <p className="text-xs text-gray-500">{policy.asset}</p>
+        </div>
+        <StatusBadge status={policy.status} />
       </div>
       <dl className="mt-2 space-y-1 text-sm">
         <div className="flex items-center justify-between">
@@ -268,6 +288,7 @@ export function PolicyTableRow({ policy, decimals, locale }: PolicyTableRowProps
         <Link
           href={`/policies/${policy.id}`}
           className="text-sm font-medium text-blue-700 hover:underline"
+          aria-label={`View policy ${policy.type} for ${policy.asset}`}
         >
           View
         </Link>
