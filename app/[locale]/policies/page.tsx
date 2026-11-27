@@ -410,55 +410,74 @@ export default function PoliciesPage() {
         </div>
       )}
 
-      <div className="mt-6 space-y-4">
-        {loading &&
-          Array.from({ length: 3 }).map((_, i) => <PolicySkeleton key={i} />)}
-
-        {!loading && policies.length === 0 && !error && <EmptyState />}
-
-        {!loading &&
+      <div className="mt-6 space-y-3">
+        {loading ? (
+          <>
+            <PolicySkeleton />
+            <PolicySkeleton />
+            <PolicySkeleton />
+          </>
+        ) : policies.length === 0 ? (
+          <EmptyState />
+        ) : (
           policies.map((policy) => (
-            <article
+            <Link
               key={policy.id}
-              className="rounded-lg border border-gray-200 p-4 shadow-sm"
+              href={`/policies/${policy.id}`}
+              className="block rounded-lg border border-gray-200 p-4 transition hover:border-blue-400 hover:shadow-sm"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-semibold text-gray-900">
-                    {TYPE_LABELS[policy.type]} · {policy.policyNumber}
-                  </h2>
-                  <StatusBadge status={policy.status} />
+                  <span className="text-sm font-semibold text-gray-900">
+                    {TYPE_LABELS[policy.type]}
+                  </span>
+                  <span className="text-xs text-gray-500">{policy.policyNumber}</span>
                 </div>
-                <OpenClaimIndicator count={policy.openClaims} />
+                <StatusBadge status={policy.status} />
               </div>
-              <dl className="mt-3 grid grid-cols-2 gap-2 text-sm text-gray-600 sm:grid-cols-3">
+              <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div>
-                  <dt className="text-xs uppercase text-gray-400">Asset</dt>
-                  <dd>{policy.asset}</dd>
+                  <dt className="text-xs text-gray-500">Coverage</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatCurrency(policy.coverage, policy.currency)}
+                  </dd>
                 </div>
                 <div>
-                  <dt className="text-xs uppercase text-gray-400">Coverage</dt>
-                  <dd>{formatCurrency(policy.coverage, policy.currency)}</dd>
+                  <dt className="text-xs text-gray-500">Expires</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatCountdown(policy.expiresAt)}
+                  </dd>
                 </div>
                 <div>
-                  <dt className="text-xs uppercase text-gray-400">Expires</dt>
-                  <dd>{formatCountdown(policy.expiresAt)}</dd>
+                  <dt className="text-xs text-gray-500">Asset</dt>
+                  <dd className="font-medium text-gray-900">{policy.asset}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Claims</dt>
+                  <dd>
+                    <OpenClaimIndicator count={policy.openClaims} />
+                  </dd>
                 </div>
               </dl>
-            </article>
-          ))}
+            </Link>
+          ))
+        )}
       </div>
 
-      {nextCursor && !loading && (
-        <div className="mt-6 text-center">
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {loadingMore ? 'Loading…' : 'Load more'}
-          </button>
+      {!loading && policies.length > 0 && (
+        <div className="mt-6 flex justify-center">
+          {nextCursor ? (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          ) : (
+            <p className="text-sm text-gray-500">You&apos;ve reached the end of the list.</p>
+          )}
         </div>
       )}
     </main>
