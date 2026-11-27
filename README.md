@@ -116,6 +116,9 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 <!-- handsoff-issue-1619 -->
 - #1619: Backend: SSE real-time updates — Redis pub/sub for multi-instance claim status
 
+<!-- handsoff-issue-1855 -->
+- #1855: F-07 Frontend — Design system: Button, Input, Badge, Card, Dialog primitives
+
 <!-- handsoff-issue-1835 -->
 - #1835: B-32 Backend — Support ticket module: contact form and staff reply flow
 

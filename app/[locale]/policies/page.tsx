@@ -13,8 +13,9 @@ interface Policy {
   status: PolicyStatus;
   type: PolicyType;
   asset: string;
-  coverage: number;
+  coverage: string;
   currency: string;
+  decimals: number;
   expiresAt: string;
   openClaims: number;
 }
@@ -64,15 +65,82 @@ function retryDelay(attemptIndex: number): number {
   return Math.min(POLICIES_RETRY_BASE_DELAY_MS * 2 ** attemptIndex, 30_000);
 }
 
+/**
+ * Format a raw minor-unit token amount (bigint) into a locale-aware string.
+ * Uses bigint/string arithmetic only — never JavaScript `number`.
+ */
+function formatTokenAmount(raw: bigint, decimals: number, locale: string): string {
+  const negative = raw < 0n;
+  const abs = negative ? -raw : raw;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const fraction = abs % base;
+
+  const wholeStr = whole.toString();
+  const fractionStr = decimals > 0 ? fraction.toString().padStart(decimals, '0') : '';
+
+  let formattedWhole: string;
+
+  try {
+    formattedWhole = new Intl.NumberFormat(locale, { useGrouping: true }).format(
+      BigInt(wholeStr),
+    );
+  } catch {
+    formattedWhole = wholeStr;
+  }
+
+  const trimmedFraction = fractionStr.replace(/0+$/, '');
+  const decimalSeparator = (() => {
+    try {
+      return (
+        new Intl.NumberFormat(locale).formatToParts(0).find((p) => p.type === 'decimal')
+          ?.value ?? '.'
+      );
+    } catch {
+      return '.';
+    }
+  })();
+
+  const body = trimmedFraction
+    ? `${formattedWhole}${decimalSeparator}${trimmedFraction}`
+    : formattedWhole;
+
+  return negative ? `-${body}` : body;
+}
+
 function formatCurrency(amount: number, currency: string): string {
   try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 0,
-    }).format(amount);
+    formattedWhole = new Intl.NumberFormat(locale, { useGrouping: true }).format(
+      BigInt(wholeStr),
+    );
   } catch {
-    return `${currency} ${amount.toLocaleString()}`;
+    formattedWhole = wholeStr;
+  }
+
+  const trimmedFraction = fractionStr.replace(/0+$/, '');
+  const decimalSeparator = (() => {
+    try {
+      return (
+        new Intl.NumberFormat(locale).formatToParts(0).find((p) => p.type === 'decimal')
+          ?.value ?? '.'
+      );
+    } catch {
+      return '.';
+    }
+  })();
+
+  const body = trimmedFraction
+    ? `${formattedWhole}${decimalSeparator}${trimmedFraction}`
+    : formattedWhole;
+  return negative ? `-${body}` : body;
+}
+
+function formatCurrency(amount: string, currency: string, decimals: number, locale: string): string {
+  try {
+    const formatted = formatTokenAmount(BigInt(amount), decimals, locale);
+    return `${formatted} ${currency}`;
+  } catch {
+    return `${currency} ${amount}`;
   }
 }
 
@@ -109,28 +177,70 @@ function OpenClaimIndicator({ count }: { count: number }) {
   );
 }
 
-function PolicySkeleton() {
+/**
+ * SkeletonRow — placeholder matching a single policy list row.
+ * Dimensions mirror the loaded row so layout does not shift (CLS-safe).
+ * Shimmer is disabled for users who prefer reduced motion.
+ */
+function SkeletonRow() {
   return (
-    <div className="animate-pulse rounded-lg border border-gray-200 p-4">
-      <div className="mb-3 h-4 w-1/3 rounded bg-gray-200" />
+    <div
+      className="rounded-lg border border-gray-200 p-4 motion-safe:animate-pulse"
+      aria-hidden="true"
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="h-4 w-1/3 rounded bg-gray-200" />
+        <div className="h-5 w-20 rounded-full bg-gray-200" />
+      </div>
       <div className="mb-2 h-3 w-2/3 rounded bg-gray-200" />
       <div className="h-3 w-1/2 rounded bg-gray-200" />
     </div>
   );
 }
 
-function EmptyState() {
+function PolicySkeletonList({ count = 3 }: { count?: number }) {
+  return (
+    <div className="mt-6 space-y-3" role="status" aria-label="Loading policies">
+      {Array.from({ length: count }).map((_, i) => (
+        <SkeletonRow key={i} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * EmptyState — contextual guidance shown when the policies API returns zero
+ * results. Decorative SVG is aria-hidden; the gentle float animation is
+ * disabled for users who prefer reduced motion (motion-safe).
+ */
+function EmptyState({ filtered }: { filtered: boolean }) {
   return (
     <div className="rounded-lg border border-dashed border-gray-300 p-10 text-center">
-      <h2 className="text-lg font-semibold text-gray-900">No policies yet</h2>
+      <svg
+        className="mx-auto h-16 w-16 text-gray-300 motion-safe:animate-pulse"
+        viewBox="0 0 64 64"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <rect x="12" y="8" width="40" height="48" rx="4" />
+        <path d="M20 20h24M20 28h24M20 36h16" strokeLinecap="round" />
+      </svg>
+      <h2 className="mt-4 text-lg font-semibold text-gray-900">
+        {filtered ? 'No policies match your filters' : 'No policies yet'}
+      </h2>
       <p className="mt-2 text-sm text-gray-600">
-        You don&apos;t have any policies matching your filters. Get a quote to protect what matters.
+        {filtered
+          ? 'Try adjusting or clearing your filters to see more of your coverage.'
+          : 'Get a quote to protect what matters and see your policies here.'}
       </p>
       <Link
-        href="/quote"
+        href={filtered ? '/policies' : '/quote'}
         className="mt-4 inline-flex rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
       >
-        Get a quote
+        {filtered ? 'Clear filters' : 'Get a quote'}
       </Link>
     </div>
   );
@@ -237,17 +347,27 @@ export default function PoliciesPage() {
     }
   }, [fetchPageWithRetry, loadingMore, nextCursor]);
 
-  return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-900">Your policies</h1>
+  const hasFilters = Boolean(status || type || asset);
 
-      <div className="mt-6 flex flex-wrap gap-4">
-        <label className="flex flex-col text-sm text-gray-700">
+  return (
+    <main className="mx-auto max-w-4xl px-4 py-8">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Policies</h1>
+        <Link
+          href="/quote"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Get a quote
+        </Link>
+      </div>
+
+      <div className="mt-6 flex flex-wrap gap-3">
+        <label className="flex items-center gap-2 text-sm text-gray-700">
           Status
           <select
             value={status}
             onChange={(e) => updateFilter('status', e.target.value)}
-            className="mt-1 rounded-md border border-gray-300 px-3 py-2"
+            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           >
             <option value="">All</option>
             {STATUS_OPTIONS.map((s) => (
@@ -257,13 +377,12 @@ export default function PoliciesPage() {
             ))}
           </select>
         </label>
-
-        <label className="flex flex-col text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-gray-700">
           Type
           <select
             value={type}
             onChange={(e) => updateFilter('type', e.target.value)}
-            className="mt-1 rounded-md border border-gray-300 px-3 py-2"
+            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           >
             <option value="">All</option>
             {TYPE_OPTIONS.map((t) => (
@@ -273,23 +392,22 @@ export default function PoliciesPage() {
             ))}
           </select>
         </label>
-
-        <label className="flex flex-col text-sm text-gray-700">
+        <label className="flex items-center gap-2 text-sm text-gray-700">
           Asset
           <input
             type="text"
             value={asset}
             onChange={(e) => updateFilter('asset', e.target.value)}
-            placeholder="e.g. 2021 Toyota"
-            className="mt-1 rounded-md border border-gray-300 px-3 py-2"
+            placeholder="e.g. USDC"
+            className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           />
         </label>
       </div>
 
       {error && (
-        <p role="alert" className="mt-6 rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div role="alert" className="mt-6 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
           {error}
-        </p>
+        </div>
       )}
 
       <div className="mt-6 space-y-4">
