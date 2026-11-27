@@ -292,52 +292,56 @@ export default function PoliciesPage() {
         </p>
       )}
 
-      {loading ? (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <PolicySkeleton key={i} />
-          ))}
-        </div>
-      ) : policies.length === 0 ? (
-        <div className="mt-6">
-          <EmptyState />
-        </div>
-      ) : (
-        <>
-          <ul className="mt-6 grid gap-4 sm:grid-cols-2">
-            {policies.map((policy) => (
-              <li key={policy.id} className="rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-sm text-gray-500">{policy.policyNumber}</span>
+      <div className="mt-6 space-y-4">
+        {loading &&
+          Array.from({ length: 3 }).map((_, i) => <PolicySkeleton key={i} />)}
+
+        {!loading && policies.length === 0 && !error && <EmptyState />}
+
+        {!loading &&
+          policies.map((policy) => (
+            <article
+              key={policy.id}
+              className="rounded-lg border border-gray-200 p-4 shadow-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-gray-900">
+                    {TYPE_LABELS[policy.type]} · {policy.policyNumber}
+                  </h2>
                   <StatusBadge status={policy.status} />
                 </div>
-                <p className="mt-2 text-sm text-gray-700">
-                  {TYPE_LABELS[policy.type]} · {policy.asset}
-                </p>
-                <p className="mt-1 text-sm text-gray-600">
-                  {formatCurrency(policy.coverage, policy.currency)} coverage
-                </p>
-                <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                  <span>{formatCountdown(policy.expiresAt)}</span>
-                  <OpenClaimIndicator count={policy.openClaims} />
+                <OpenClaimIndicator count={policy.openClaims} />
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-sm text-gray-600 sm:grid-cols-3">
+                <div>
+                  <dt className="text-xs uppercase text-gray-400">Asset</dt>
+                  <dd>{policy.asset}</dd>
                 </div>
-              </li>
-            ))}
-          </ul>
+                <div>
+                  <dt className="text-xs uppercase text-gray-400">Coverage</dt>
+                  <dd>{formatCurrency(policy.coverage, policy.currency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase text-gray-400">Expires</dt>
+                  <dd>{formatCountdown(policy.expiresAt)}</dd>
+                </div>
+              </dl>
+            </article>
+          ))}
+      </div>
 
-          {nextCursor && (
-            <div className="mt-6 flex justify-center">
-              <button
-                type="button"
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </button>
-            </div>
-          )}
-        </>
+      {nextCursor && !loading && (
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
       )}
     </main>
   );

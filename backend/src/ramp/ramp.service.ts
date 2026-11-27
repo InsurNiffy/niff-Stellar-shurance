@@ -1,12 +1,24 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { firstValueFrom } from 'rxjs';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RampTransaction, RampProviderHealth, RampDirection, RampStatus } from '@prisma/client';
 
 const STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+export interface RampWebhookPayload {
+  id?: string;
+  transaction_id?: string;
+  external_id?: string;
+  status?: string;
+  amount?: string;
+  asset_code?: string;
+  purchase_id?: string;
+  [key: string]: unknown;
+}
 
 @Injectable()
 export class RampService {
@@ -30,6 +42,74 @@ export class RampService {
 
   private getAnchorUrl(): string {
     return this.config.get<string>('SEP24_ANCHOR_URL') ?? '';
+  }
+
+  private getWebhookSecret(): string {
+    return this.config.get<string>('RAMP_WEBHOOK_SECRET') ?? '';
+  }
+
+  /**
+   * Verify the provider HMAC signature over the raw request body.
+   * Throws UnauthorizedException (401) when the signature is missing or invalid.
+   */
+  verifyWebhookSignature(rawBody: string | Buffer, signature?: string): void {
+    const secret = this.getWebhookSecret();
+    if (!secret || !signature) {
+      throw new UnauthorizedException('Missing ramp webhook signature');
+    }
+
+    const payload = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+    const expected = createHmac('sha256', secret).update(payload).digest('hex');
+    const provided = signature.startsWith('sha256=') ? signature.slice('sha256='.length) : signature;
+
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    const providedBuf = Buffer.from(provided, 'utf8');
+    if (expectedBuf.length !== providedBuf.length || !timingSafeEqual(expectedBuf, providedBuf)) {
+      throw new UnauthorizedException('Invalid ramp webhook signature');
+    }
+  }
+
+  /**
+   * Handle an incoming provider webhook: verify signature, then persist/update the RampTransaction.
+   */
+  async handleWebhook(
+    rawBody: string | Buffer,
+    signature: string | undefined,
+    payload: RampWebhookPayload,
+  ): Promise<RampTransaction> {
+    this.verifyWebhookSignature(rawBody, signature);
+
+    const externalId = payload.external_id ?? payload.transaction_id ?? payload.id;
+    const mapped = payload.status ? this.mapAnchorStatus(payload.status) : null;
+
+    if (externalId) {
+      const existing = await this.prisma.rampTransaction.findFirst({ where: { externalId } });
+      if (existing) {
+        return this.prisma.rampTransaction.update({
+          where: { id: existing.id },
+          data: {
+            status: mapped ?? existing.status,
+            completedAt: mapped === RampStatus.COMPLETED ? new Date() : existing.completedAt,
+          },
+        });
+      }
+    }
+
+    const provider = await this.getHealthyProvider();
+    const created = await this.prisma.rampTransaction.create({
+      data: {
+        userId: (payload.user_id as string) ?? '',
+        providerId: provider?.id ?? '',
+        direction: RampDirection.DEPOSIT,
+        assetCode: payload.asset_code ?? 'USDC',
+        amount: payload.amount ?? null,
+        externalId: externalId ?? null,
+        status: mapped ?? RampStatus.PENDING,
+        completedAt: mapped === RampStatus.COMPLETED ? new Date() : null,
+      },
+    });
+
+    return created;
   }
 
   /**
@@ -214,6 +294,25 @@ export class RampService {
   }
 
   /**
+   * Readiness probe: reports whether at least one ramp provider is healthy.
+   */
+  async getReadiness(): Promise<{ enabled: boolean; healthy: boolean; lastCheckedAt: Date | null }> {
+    if (!this.isEnabled()) {
+      return { enabled: false, healthy: true, lastCheckedAt: null };
+    }
+
+    const provider = await this.prisma.rampProviderHealth.findFirst({
+      orderBy: { lastCheckedAt: 'desc' },
+    });
+
+    return {
+      enabled: true,
+      healthy: provider?.healthy ?? false,
+      lastCheckedAt: provider?.lastCheckedAt ?? null,
+    };
+  }
+
+  /**
    * Reconciliation job that flags transactions stuck longer than the threshold.
    */
   @Cron(CronExpression.EVERY_10_MINUTES)
@@ -237,6 +336,51 @@ export class RampService {
         data: { stuck: true, stuckFlaggedAt: new Date() },
       });
       this.logger.warn(`Ramp transaction ${transaction.id} flagged as stuck`);
+    }
+  }
+
+  /**
+   * Reconciliation: match completed RampTransactions against PolicyRenewal rows.
+   * Marks matching renewals as paid and links the ramp transaction.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async reconcileCompletedTransactions(): Promise<void> {
+    if (!this.isEnabled()) {
+      return;
+    }
+
+    const completed = await this.prisma.rampTransaction.findMany({
+      where: { status: RampStatus.COMPLETED, reconciledAt: null },
+    });
+
+    for (const transaction of completed) {
+      try {
+        const renewal = await this.prisma.policyRenewal.findFirst({
+          where: {
+            userId: transaction.userId,
+            status: 'PENDING',
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        if (!renewal) {
+          continue;
+        }
+
+        await this.prisma.policyRenewal.update({
+          where: { id: renewal.id },
+          data: { status: 'PAID', paidAt: new Date(), rampTransactionId: transaction.id },
+        });
+
+        await this.prisma.rampTransaction.update({
+          where: { id: transaction.id },
+          data: { reconciledAt: new Date() },
+        });
+
+        this.logger.log(`Reconciled ramp transaction ${transaction.id} to renewal ${renewal.id}`);
+      } catch (err) {
+        this.logger.warn(`Reconciliation failed for ${transaction.id}: ${(err as Error).message}`);
+      }
     }
   }
 }
