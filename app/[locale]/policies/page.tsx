@@ -156,6 +156,58 @@ function formatCountdown(expiresAt: string): string {
   return `${minutes} min left`;
 }
 
+interface LedgerCountdownProps {
+  targetLedger: number;
+  currentLedger: number;
+  avgCloseSeconds: number;
+}
+
+function formatLedgerDuration(totalSeconds: number): string {
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} day${days === 1 ? '' : 's'}`);
+  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  if (minutes > 0 || parts.length === 0) {
+    parts.push(`${minutes} min${minutes === 1 ? '' : 's'}`);
+  }
+  return parts.join(' ');
+}
+
+function LedgerCountdown({ targetLedger, currentLedger, avgCloseSeconds }: LedgerCountdownProps) {
+  const [mounted, setMounted] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    setMounted(true);
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!mounted) {
+    return <span className="text-gray-400">—</span>;
+  }
+
+  if (currentLedger >= targetLedger) {
+    return <span className="text-gray-700">Deadline passed</span>;
+  }
+
+  const remainingLedgers = targetLedger - currentLedger;
+  const remainingSeconds = remainingLedgers * avgCloseSeconds;
+  const label = formatLedgerDuration(remainingSeconds);
+
+  return (
+    <span
+      className="text-gray-700"
+      title={`Approximately ${label} remaining (${remainingLedgers} ledgers × ${avgCloseSeconds}s)`}
+    >
+      ~{label} left
+    </span>
+  );
+}
+
 function StatusBadge({ status }: { status: PolicyStatus }) {
   return (
     <span
