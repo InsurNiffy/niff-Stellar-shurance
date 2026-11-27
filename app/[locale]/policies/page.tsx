@@ -48,6 +48,22 @@ const TYPE_LABELS: Record<PolicyType, string> = {
 const STATUS_OPTIONS: PolicyStatus[] = ['active', 'grace', 'expired', 'terminated'];
 const TYPE_OPTIONS: PolicyType[] = ['auto', 'home', 'life', 'health'];
 
+// Centralized React Query-style config for policy queries (issue #1853).
+// Policies are blockchain-backed and change infrequently, so we cache them
+// longer than the default and only retry transient (non-4xx) failures.
+const POLICIES_STALE_TIME_MS = 30_000;
+const POLICIES_RETRY_COUNT = 3;
+const POLICIES_RETRY_BASE_DELAY_MS = 1_000;
+
+function isClientError(error: unknown): boolean {
+  const status = (error as { status?: number } | null)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+function retryDelay(attemptIndex: number): number {
+  return Math.min(POLICIES_RETRY_BASE_DELAY_MS * 2 ** attemptIndex, 30_000);
+}
+
 function formatCurrency(amount: number, currency: string): string {
   try {
     return new Intl.NumberFormat(undefined, {
@@ -159,17 +175,38 @@ export default function PoliciesPage() {
       const params = new URLSearchParams(queryString);
       if (cursor) params.set('cursor', cursor);
       const res = await fetch(`/api/policies?${params.toString()}`);
-      if (!res.ok) throw new Error('Failed to load policies');
+      if (!res.ok) {
+        const err = new Error('Failed to load policies') as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
       return (await res.json()) as PoliciesResponse;
     },
     [queryString],
+  );
+
+  // Fetch with retry/backoff honoring the centralized config above.
+  const fetchPageWithRetry = useCallback(
+    async (cursor: string | null) => {
+      let attempt = 0;
+      for (;;) {
+        try {
+          return await fetchPage(cursor);
+        } catch (err) {
+          if (isClientError(err) || attempt >= POLICIES_RETRY_COUNT) throw err;
+          await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt)));
+          attempt += 1;
+        }
+      }
+    },
+    [fetchPage],
   );
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchPage(null)
+    fetchPageWithRetry(null)
       .then((data) => {
         if (cancelled) return;
         setPolicies(data.items);
@@ -184,13 +221,13 @@ export default function PoliciesPage() {
     return () => {
       cancelled = true;
     };
-  }, [fetchPage]);
+  }, [fetchPageWithRetry]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const data = await fetchPage(nextCursor);
+      const data = await fetchPageWithRetry(nextCursor);
       setPolicies((prev) => [...prev, ...data.items]);
       setNextCursor(data.nextCursor);
     } catch {
@@ -198,7 +235,7 @@ export default function PoliciesPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [fetchPage, loadingMore, nextCursor]);
+  }, [fetchPageWithRetry, loadingMore, nextCursor]);
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">

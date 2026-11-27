@@ -1,168 +1,126 @@
 'use client';
 
-import Link from 'next/link';
-import type { Policy, PolicyStatus } from './types';
+import { useState } from 'react';
+import { Copy, Check, ExternalLink } from 'lucide-react';
 
-const STATUS_LABELS: Record<PolicyStatus, string> = {
-  active: 'Active',
-  grace: 'Grace period',
-  expired: 'Expired',
-  terminated: 'Terminated',
+const STELLAR_EXPLORER_BASE: Record<string, string> = {
+  public: 'https://stellar.expert/explorer/public',
+  testnet: 'https://stellar.expert/explorer/testnet',
+  futurenet: 'https://stellar.expert/explorer/futurenet',
 };
 
-const STATUS_STYLES: Record<PolicyStatus, string> = {
-  active: 'bg-green-100 text-green-800 border-green-300',
-  grace: 'bg-amber-100 text-amber-800 border-amber-300',
-  expired: 'bg-gray-100 text-gray-700 border-gray-300',
-  terminated: 'bg-red-100 text-red-800 border-red-300',
-};
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
+function truncateAddress(address: string): string {
+  if (address.length <= 8) return address;
+  return `${address.slice(0, 4)}…${address.slice(-4)}`;
 }
 
-function formatCoverage(amount: number, currency: string): string {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  } catch {
-    return `${amount} ${currency}`;
-  }
+function isValidStellarAddress(address: string): boolean {
+  return /^[GC][A-Z2-7]{55}$/.test(address);
 }
 
-function daysUntil(value: string): number | null {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const diff = date.getTime() - Date.now();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+interface WalletAddressProps {
+  address: string;
+  network?: string;
+  showCopy?: boolean;
+  showExplorer?: boolean;
 }
 
-function ExpiryCountdown({ expiresAt }: { expiresAt: string }) {
-  const days = daysUntil(expiresAt);
-  if (days === null) {
-    return <span className="text-sm text-gray-600">{expiresAt}</span>;
-  }
-  if (days < 0) {
+export function WalletAddress({
+  address,
+  network = 'testnet',
+  showCopy = true,
+  showExplorer = true,
+}: WalletAddressProps) {
+  const [copied, setCopied] = useState(false);
+  const valid = isValidStellarAddress(address);
+
+  const handleCopy = async () => {
+    if (!valid) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard unavailable; fail silently.
+    }
+  };
+
+  const explorerBase = STELLAR_EXPLORER_BASE[network] ?? STELLAR_EXPLORER_BASE.testnet;
+  const explorerUrl = `${explorerBase}/account/${address}`;
+
+  if (!valid) {
     return (
-      <span className="text-sm text-red-700">
-        Expired {Math.abs(days)} day{Math.abs(days) === 1 ? '' : 's'} ago
+      <span className="inline-flex items-center gap-1 font-mono text-sm text-muted-foreground">
+        <span aria-label={`Invalid address: ${address}`}>Invalid address</span>
       </span>
     );
   }
-  if (days === 0) {
-    return <span className="text-sm text-amber-700">Expires today</span>;
-  }
-  return (
-    <span className="text-sm text-gray-700">
-      {days} day{days === 1 ? '' : 's'} left
-    </span>
-  );
-}
 
-function StatusBadge({ status }: { status: PolicyStatus }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}
-    >
-      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
-      {STATUS_LABELS[status]}
-    </span>
-  );
-}
-
-function OpenClaimIndicator({ hasOpenClaim }: { hasOpenClaim: boolean }) {
-  if (!hasOpenClaim) return null;
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
-      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
-      Open claim
+    <span className="inline-flex items-center gap-1 font-mono text-sm">
+      <span title={address} aria-label={`Address: ${address}`}>
+        {truncateAddress(address)}
+      </span>
+      {showCopy && (
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label={copied ? 'Copied!' : 'Copy address'}
+          className="inline-flex items-center text-muted-foreground hover:text-foreground"
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
+      )}
+      {copied && (
+        <span role="status" className="text-xs text-green-600">
+          Copied!
+        </span>
+      )}
+      {showExplorer && (
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`View ${address} on Stellar Expert`}
+          className="inline-flex items-center text-muted-foreground hover:text-foreground"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+      )}
     </span>
   );
 }
 
 interface PolicyCardProps {
-  policy: Policy;
+  policy: {
+    id: string;
+    name: string;
+    holder: string;
+    coverage: string;
+    status: string;
+  };
+  network?: string;
 }
 
-export function PolicyCard({ policy }: PolicyCardProps) {
+export function PolicyCard({ policy, network = 'testnet' }: PolicyCardProps) {
   return (
-    <li className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm md:hidden">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-gray-900">{policy.type}</p>
-          <p className="text-xs text-gray-500">{policy.asset}</p>
-        </div>
-        <StatusBadge status={policy.status} />
+    <div className="rounded-lg border p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">{policy.name}</h3>
+        <span className="text-xs uppercase text-muted-foreground">{policy.status}</span>
       </div>
-      <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-        <div>
-          <dt className="text-xs text-gray-500">Coverage</dt>
-          <dd className="font-medium text-gray-900">
-            {formatCoverage(policy.coverage, policy.currency)}
+      <dl className="mt-2 space-y-1 text-sm">
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">Holder</dt>
+          <dd>
+            <WalletAddress address={policy.holder} network={network} />
           </dd>
         </div>
-        <div>
-          <dt className="text-xs text-gray-500">Expires</dt>
-          <dd>
-            <ExpiryCountdown expiresAt={policy.expiresAt} />
-          </dd>
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">Coverage</dt>
+          <dd>{policy.coverage}</dd>
         </div>
       </dl>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <OpenClaimIndicator hasOpenClaim={policy.hasOpenClaim} />
-        <Link
-          href={`/policies/${policy.id}`}
-          className="text-sm font-medium text-blue-700 hover:underline"
-        >
-          View policy
-        </Link>
-      </div>
-    </li>
+    </div>
   );
 }
-
-interface PolicyTableRowProps {
-  policy: Policy;
-}
-
-export function PolicyTableRow({ policy }: PolicyTableRowProps) {
-  return (
-    <tr className="hidden border-b border-gray-100 last:border-0 md:table-row">
-      <td className="px-4 py-3 text-sm text-gray-900">
-        <div className="font-medium">{policy.type}</div>
-        <div className="text-xs text-gray-500">{policy.asset}</div>
-      </td>
-      <td className="px-4 py-3">
-        <StatusBadge status={policy.status} />
-      </td>
-      <td className="px-4 py-3 text-sm text-gray-900">
-        {formatCoverage(policy.coverage, policy.currency)}
-      </td>
-      <td className="px-4 py-3">
-        <ExpiryCountdown expiresAt={policy.expiresAt} />
-      </td>
-      <td className="px-4 py-3">
-        <OpenClaimIndicator hasOpenClaim={policy.hasOpenClaim} />
-      </td>
-      <td className="px-4 py-3 text-right">
-        <Link
-          href={`/policies/${policy.id}`}
-          className="text-sm font-medium text-blue-700 hover:underline"
-        >
-          View
-        </Link>
-      </td>
-    </tr>
-  );
-}
-
-export { StatusBadge, OpenClaimIndicator, ExpiryCountdown, formatCoverage, formatDate };
