@@ -15,5 +15,8 @@
       "port": 443,
       "description": "Pinata IPFS gateway (external dependency)"
     }
-  ]
+  ],
+  "alertThresholdsDays": [30, 7],
+  "checkIntervalMinutes": 60,
+  "statusFile": "ops/.secret-rotation-dates.json"
 }

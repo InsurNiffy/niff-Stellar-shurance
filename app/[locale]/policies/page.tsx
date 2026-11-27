@@ -49,6 +49,22 @@ const TYPE_LABELS: Record<PolicyType, string> = {
 const STATUS_OPTIONS: PolicyStatus[] = ['active', 'grace', 'expired', 'terminated'];
 const TYPE_OPTIONS: PolicyType[] = ['auto', 'home', 'life', 'health'];
 
+// Centralized React Query-style config for policy queries (issue #1853).
+// Policies are blockchain-backed and change infrequently, so we cache them
+// longer than the default and only retry transient (non-4xx) failures.
+const POLICIES_STALE_TIME_MS = 30_000;
+const POLICIES_RETRY_COUNT = 3;
+const POLICIES_RETRY_BASE_DELAY_MS = 1_000;
+
+function isClientError(error: unknown): boolean {
+  const status = (error as { status?: number } | null)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+function retryDelay(attemptIndex: number): number {
+  return Math.min(POLICIES_RETRY_BASE_DELAY_MS * 2 ** attemptIndex, 30_000);
+}
+
 /**
  * Format a raw minor-unit token amount (bigint) into a locale-aware string.
  * Uses bigint/string arithmetic only — never JavaScript `number`.
@@ -64,6 +80,35 @@ function formatTokenAmount(raw: bigint, decimals: number, locale: string): strin
   const fractionStr = decimals > 0 ? fraction.toString().padStart(decimals, '0') : '';
 
   let formattedWhole: string;
+
+  try {
+    formattedWhole = new Intl.NumberFormat(locale, { useGrouping: true }).format(
+      BigInt(wholeStr),
+    );
+  } catch {
+    formattedWhole = wholeStr;
+  }
+
+  const trimmedFraction = fractionStr.replace(/0+$/, '');
+  const decimalSeparator = (() => {
+    try {
+      return (
+        new Intl.NumberFormat(locale).formatToParts(0).find((p) => p.type === 'decimal')
+          ?.value ?? '.'
+      );
+    } catch {
+      return '.';
+    }
+  })();
+
+  const body = trimmedFraction
+    ? `${formattedWhole}${decimalSeparator}${trimmedFraction}`
+    : formattedWhole;
+
+  return negative ? `-${body}` : body;
+}
+
+function formatCurrency(amount: number, currency: string): string {
   try {
     formattedWhole = new Intl.NumberFormat(locale, { useGrouping: true }).format(
       BigInt(wholeStr),
@@ -240,17 +285,38 @@ export default function PoliciesPage() {
       const params = new URLSearchParams(queryString);
       if (cursor) params.set('cursor', cursor);
       const res = await fetch(`/api/policies?${params.toString()}`);
-      if (!res.ok) throw new Error('Failed to load policies');
+      if (!res.ok) {
+        const err = new Error('Failed to load policies') as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
       return (await res.json()) as PoliciesResponse;
     },
     [queryString],
+  );
+
+  // Fetch with retry/backoff honoring the centralized config above.
+  const fetchPageWithRetry = useCallback(
+    async (cursor: string | null) => {
+      let attempt = 0;
+      for (;;) {
+        try {
+          return await fetchPage(cursor);
+        } catch (err) {
+          if (isClientError(err) || attempt >= POLICIES_RETRY_COUNT) throw err;
+          await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt)));
+          attempt += 1;
+        }
+      }
+    },
+    [fetchPage],
   );
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchPage(null)
+    fetchPageWithRetry(null)
       .then((data) => {
         if (cancelled) return;
         setPolicies(data.items);
@@ -265,13 +331,13 @@ export default function PoliciesPage() {
     return () => {
       cancelled = true;
     };
-  }, [fetchPage]);
+  }, [fetchPageWithRetry]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const data = await fetchPage(nextCursor);
+      const data = await fetchPageWithRetry(nextCursor);
       setPolicies((prev) => [...prev, ...data.items]);
       setNextCursor(data.nextCursor);
     } catch {
@@ -279,7 +345,7 @@ export default function PoliciesPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [fetchPage, loadingMore, nextCursor]);
+  }, [fetchPageWithRetry, loadingMore, nextCursor]);
 
   const hasFilters = Boolean(status || type || asset);
 
@@ -344,31 +410,46 @@ export default function PoliciesPage() {
         </div>
       )}
 
-      {loading ? (
-        <PolicySkeletonList />
-      ) : policies.length === 0 ? (
-        !error && <div className="mt-6"><EmptyState filtered={hasFilters} /></div>
-      ) : (
-        <ul className="mt-6 space-y-3">
-          {policies.map((policy) => (
-            <li key={policy.id} className="rounded-lg border border-gray-200 p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <span className="font-medium text-gray-900">{policy.policyNumber}</span>
-                <StatusBadge status={policy.status} />
-              </div>
-              <div className="mb-2 text-sm text-gray-600">
-                {TYPE_LABELS[policy.type]} · {policy.asset} · {formatCurrency(policy.coverage, policy.currency, policy.decimals, 'en')}
-              </div>
-              <div className="flex items-center justify-between text-sm text-gray-500">
-                <span>{formatCountdown(policy.expiresAt)}</span>
+      <div className="mt-6 space-y-4">
+        {loading &&
+          Array.from({ length: 3 }).map((_, i) => <PolicySkeleton key={i} />)}
+
+        {!loading && policies.length === 0 && !error && <EmptyState />}
+
+        {!loading &&
+          policies.map((policy) => (
+            <article
+              key={policy.id}
+              className="rounded-lg border border-gray-200 p-4 shadow-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-gray-900">
+                    {TYPE_LABELS[policy.type]} · {policy.policyNumber}
+                  </h2>
+                  <StatusBadge status={policy.status} />
+                </div>
                 <OpenClaimIndicator count={policy.openClaims} />
               </div>
-            </li>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-sm text-gray-600 sm:grid-cols-3">
+                <div>
+                  <dt className="text-xs uppercase text-gray-400">Asset</dt>
+                  <dd>{policy.asset}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase text-gray-400">Coverage</dt>
+                  <dd>{formatCurrency(policy.coverage, policy.currency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase text-gray-400">Expires</dt>
+                  <dd>{formatCountdown(policy.expiresAt)}</dd>
+                </div>
+              </dl>
+            </article>
           ))}
-        </ul>
-      )}
+      </div>
 
-      {!loading && nextCursor && (
+      {nextCursor && !loading && (
         <div className="mt-6 text-center">
           <button
             type="button"
