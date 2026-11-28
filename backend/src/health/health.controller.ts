@@ -27,9 +27,33 @@ interface HealthResponse {
   };
 }
 
+const DEFAULT_TIMEOUT_MS = 3_000;
+
+function resolveTimeout(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
+  private readonly dbTimeoutMs = resolveTimeout(
+    process.env.HEALTH_DB_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
+  );
+  private readonly redisTimeoutMs = resolveTimeout(
+    process.env.HEALTH_REDIS_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
+  );
+  private readonly rpcTimeoutMs = resolveTimeout(
+    process.env.HEALTH_RPC_TIMEOUT_MS,
+    5_000,
+  );
+  private readonly horizonTimeoutMs = resolveTimeout(
+    process.env.HEALTH_HORIZON_TIMEOUT_MS,
+    5_000,
+  );
+
   constructor(
     private readonly prismaHealth: PrismaHealthIndicator,
     private readonly redisHealth: RedisHealthIndicator,
@@ -52,22 +76,40 @@ export class HealthController {
   @ApiResponse({ status: 200, description: 'Ready to serve traffic' })
   @ApiResponse({ status: 503, description: 'Not ready' })
   async ready(@Res() res: Response): Promise<void> {
-    const [db, redis, tls] = await Promise.all([
+    const [db, redis, rpc, horizon, tls] = await Promise.all([
       runProbe(async () => {
         await this.prismaHealth.isHealthy('db');
         return { status: 'up' as const };
-      }, 3_000),
+      }, this.dbTimeoutMs),
       runProbe(async () => {
         const up = await checkRedisHealth();
         return { status: (up ? 'up' : 'down') as ComponentStatus };
-      }, 3_000),
+    const [db, redis, rpc, horizon, tls] = await Promise.all([
+      runProbe(async () => {
+        await this.prismaHealth.isHealthy('db');
+        return { status: 'up' as const };
+      }, this.dbTimeoutMs),
+      runProbe(async () => {
+        const up = await checkRedisHealth();
+        return { status: (up ? 'up' : 'down') as ComponentStatus };
+      }, this.redisTimeoutMs),
+      runProbe(async () => {
+        await this.rpcHealth.isHealthy('rpc');
+        return { status: 'up' as const };
+      }, this.rpcTimeoutMs),
+      this.horizonHealth.check(this.horizonTimeoutMs),
       this.checkTlsCertificates(),
     ]);
 
-    const ready = db.status === 'up' && redis.status === 'up' && tls.status !== 'down';
+    const ready =
+      db.status === 'up' &&
+      redis.status === 'up' &&
+      rpc.status === 'up' &&
+      horizon.status === 'up' &&
+      tls.status !== 'down';
     res.status(ready ? 200 : 503).json({
       status: ready ? 'up' : 'down',
-      components: { db, redis, tls },
+      components: { db, redis, rpc, horizon, tls },
     });
   }
 
@@ -81,16 +123,16 @@ export class HealthController {
       runProbe(async () => {
         await this.prismaHealth.isHealthy('db');
         return { status: 'up' as const };
-      }, 3_000),
+      }, this.dbTimeoutMs),
       runProbe(async () => {
         const up = await checkRedisHealth();
         return { status: (up ? 'up' : 'down') as ComponentStatus };
-      }, 3_000),
+      }, this.redisTimeoutMs),
       runProbe(async () => {
         await this.rpcHealth.isHealthy('rpc');
         return { status: 'up' as const };
-      }, 5_000),
-      this.horizonHealth.check(),
+      }, this.rpcTimeoutMs),
+      this.horizonHealth.check(this.horizonTimeoutMs),
       this.indexerHealth.check(),
       this.checkRampProviderHealth(),
     ]);
@@ -145,6 +187,6 @@ export class HealthController {
       }
 
       return { status: lastHealth.status as ComponentStatus };
-    }, 3_000);
+    }, this.dbTimeoutMs);
   }
 }
