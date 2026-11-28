@@ -25,7 +25,13 @@ export class FeatureFlagsGuard implements CanActivate {
       [context.getHandler(), context.getClass()],
     );
 
-    if (!featureName || this.featureFlagsService.isEnabled(featureName)) {
+    if (!featureName) {
+      return true;
+    }
+
+    const flag = this.featureFlagsService.getFlag(featureName);
+
+    if (flag && flag.enabled) {
       return true;
     }
 
@@ -34,7 +40,11 @@ export class FeatureFlagsGuard implements CanActivate {
       `Blocked disabled feature access feature=${featureName} method=${request.method} path=${request.url} ip=${request.ip}`,
     );
 
-    if (this.featureFlagsService.getDisabledStatusCode() === 403) {
+    const statusCode = flag
+      ? flag.disabledStatusCode
+      : this.featureFlagsService.getDisabledStatusCode();
+
+    if (statusCode === 403) {
       throw new ForbiddenException('Feature disabled');
     }
 
