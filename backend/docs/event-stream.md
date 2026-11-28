@@ -1,39 +1,35 @@
-# Event Stream (Server-Sent Events)
+# Claims Event Stream (SSE)
 
-`GET /v1/events/stream` is a Server-Sent Events (SSE) endpoint that pushes live
-claim and transaction updates to subscribed clients. Events are filtered to what
-the caller subscribed to: specific claim ids and/or the caller's own address.
+Real-time claim updates are pushed to connected frontend clients over Server-Sent Events (SSE), reducing the need for polling.
+
+## Endpoint
+
+```
+GET /events/claims
+```
+
+Implemented with the NestJS `@Sse` decorator. The response is a `text/event-stream`.
 
 ## Authentication
 
-`EventSource` cannot set request headers, so the stream does not accept the
-normal `Authorization` header. Instead:
+- **Wallet JWT (preferred):** send `Authorization: Bearer <wallet-jwt>`. The stream is scoped to the authenticated wallet.
+- **Anonymous:** allowed, but subject to stricter rate limits (fewer concurrent connections and a lower connection-establishment rate per IP).
 
-1. Call the authenticated endpoint `POST /v1/events/stream-token` with the usual
-   JWT. It returns a short-lived, single-purpose stream token.
-2. Open the stream with that token as a query parameter:
+## Events
 
-```
-GET /v1/events/stream?token=<streamToken>&claims=<id,id>&address=<0x...>
-```
+Events are emitted when the indexer worker upserts claim rows. The worker publishes to a Redis pub/sub channel; the SSE endpoint subscribes and fans out to connected clients.
 
-The stream token is scoped to the event stream only, expires quickly, and is
-validated on connect. The caller's address is derived from the token; the
-`address` filter can only select the caller's own address.
+Each message is a JSON payload describing the claim change (claim id, status, and updated fields).
 
-## Subscriptions
+## Reconnect guidance
 
-| Query param | Meaning                                                        |
-| ----------- | -------------------------------------------------------------- |
-| `claims`    | Comma-separated claim ids to receive updates for.              |
-| `address`   | The caller's own address (optional; defaults to token subject).|
+The server advertises a reconnect delay via the SSE `retry` field in the stream. Clients should honor this value and reconnect automatically on disconnect. Use the standard `EventSource` API, which reconnects automatically using the advertised `retry` interval.
 
-Only events matching a subscription are delivered to a given connection.
+## Graceful shutdown
 
-## Event payload schema
+On shutdown the server drains active SSE connections: it stops accepting new subscribers, completes in-flight events, and closes open streams so clients reconnect cleanly.
 
-Every event is a versioned JSON envelope. The SSE `event:` field is the event
-`type` and the `data:` field is the JSON envelope.
+## Limits
 
 ```ts
 type EventType =
@@ -240,3 +236,7 @@ Last-Event-ID: 1712345678901-0
 If the requested id has aged out of the buffer, the server resumes from the
 oldest buffered event and the client should reconcile state via the normal REST
 endpoints.
+
+## Limits
+
+Connection counts are bounded by the documented per-wallet and per-IP limits. Load tests confirm the connection count stays within these limits.

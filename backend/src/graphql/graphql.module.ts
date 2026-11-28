@@ -210,9 +210,8 @@ export class GraphqlApiModule implements NestModule {
       '',
     );
 
-    consumer.apply(PersistedQueryMiddleware).forRoutes({
-      path,
-      method: RequestMethod.POST,
-    });
+    consumer
+      .apply(PersistedQueryMiddleware)
+      .forRoutes({ path, method: RequestMethod.POST });
   }
 }
