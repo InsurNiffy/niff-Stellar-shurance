@@ -9,6 +9,7 @@ import { IndexerHealthIndicator } from './indexer.health';
 import { runProbe, ComponentStatus, ProbeResult } from './probes';
 import { checkRedisHealth } from '../redis/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { TlsCertificateMonitorService } from '../tls/tls-certificate-monitor.service';
 
 interface ComponentResult extends ProbeResult {
   lagLedgers?: number;
@@ -60,6 +61,7 @@ export class HealthController {
     private readonly horizonHealth: HorizonHealthIndicator,
     private readonly indexerHealth: IndexerHealthIndicator,
     @Optional() private readonly prisma?: PrismaService,
+    @Optional() private readonly tlsMonitor?: TlsCertificateMonitorService,
   ) {}
 
   @Get('live')
@@ -74,7 +76,15 @@ export class HealthController {
   @ApiResponse({ status: 200, description: 'Ready to serve traffic' })
   @ApiResponse({ status: 503, description: 'Not ready' })
   async ready(@Res() res: Response): Promise<void> {
-    const [db, redis, rpc, horizon] = await Promise.all([
+    const [db, redis, rpc, horizon, tls] = await Promise.all([
+      runProbe(async () => {
+        await this.prismaHealth.isHealthy('db');
+        return { status: 'up' as const };
+      }, this.dbTimeoutMs),
+      runProbe(async () => {
+        const up = await checkRedisHealth();
+        return { status: (up ? 'up' : 'down') as ComponentStatus };
+    const [db, redis, rpc, horizon, tls] = await Promise.all([
       runProbe(async () => {
         await this.prismaHealth.isHealthy('db');
         return { status: 'up' as const };
@@ -88,16 +98,18 @@ export class HealthController {
         return { status: 'up' as const };
       }, this.rpcTimeoutMs),
       this.horizonHealth.check(this.horizonTimeoutMs),
+      this.checkTlsCertificates(),
     ]);
 
     const ready =
       db.status === 'up' &&
       redis.status === 'up' &&
       rpc.status === 'up' &&
-      horizon.status === 'up';
+      horizon.status === 'up' &&
+      tls.status !== 'down';
     res.status(ready ? 200 : 503).json({
       status: ready ? 'up' : 'down',
-      components: { db, redis, rpc, horizon },
+      components: { db, redis, rpc, horizon, tls },
     });
   }
 
@@ -143,6 +155,21 @@ export class HealthController {
 
     const httpStatus = overallStatus === 'up' ? 200 : overallStatus === 'degraded' ? 207 : 503;
     res.status(httpStatus).json(body);
+  }
+
+  private async checkTlsCertificates(): Promise<ComponentResult> {
+    const monitor = this.tlsMonitor;
+    if (!monitor) {
+      return { status: 'up' as const };
+    }
+
+    return runProbe(async () => {
+      const summary = await monitor.getStatusSummary();
+      return {
+        status: summary.status,
+        reason: summary.reason,
+      };
+    }, 5_000);
   }
 
   private async checkRampProviderHealth(): Promise<ComponentResult | undefined> {

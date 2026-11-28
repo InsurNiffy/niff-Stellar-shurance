@@ -95,6 +95,43 @@ export class MetricsCardinalityGuard {
   }
 
   /**
+   * Validate a label value against the cardinality limit.
+   * Returns true when the value is already known or would keep the label under
+   * MAX_CARDINALITY series. Returns false when accepting the value would push
+   * the label over the limit (i.e. the value must be rejected/normalized).
+   *
+   * Unlike checkCardinality, this does NOT record the value — callers should
+   * only record after a successful validation via checkCardinality.
+   */
+  isWithinCardinalityLimit(labelName: string, value: string): boolean {
+    const values = this.cardinalityTracking.get(labelName);
+    if (!values) return true;
+    if (values.has(value)) return true;
+    return values.size < this.MAX_CARDINALITY;
+  }
+
+  /**
+   * Guard a label value: reject values that would create more than
+   * MAX_CARDINALITY series for the given label.
+   *
+   * Returns the original value when it is safe to record, otherwise returns
+   * the provided fallback (defaults to "overflow") and logs a warning. Safe
+   * values are recorded so subsequent calls are tracked consistently.
+   */
+  guardLabel(labelName: string, value: string, fallback = 'overflow'): string {
+    if (this.isWithinCardinalityLimit(labelName, value)) {
+      this.checkCardinality(labelName, value);
+      return value;
+    }
+
+    this.logger.warn(
+      `Rejected label value for "${labelName}": cardinality limit of ${this.MAX_CARDINALITY} reached. ` +
+        `Falling back to "${fallback}".`,
+    );
+    return fallback;
+  }
+
+  /**
    * Get current cardinality stats for all tracked labels (for monitoring/debugging).
    */
   getCardinalityStats(): Record<string, number> {
