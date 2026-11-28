@@ -179,6 +179,47 @@ export class NotificationsController {
   ) {}
 
   /**
+   * GET /api/notifications
+   * Returns unacknowledged notification records for the authenticated user.
+   */
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List unacknowledged notifications for authenticated user' })
+  @ApiResponse({ status: 200, description: 'Unacknowledged notifications' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async listUnacknowledged(@WalletAddress() walletAddress: string) {
+    return this.service.getUnacknowledgedNotifications(walletAddress);
+  }
+
+  /**
+   * POST /api/notifications/ack
+   * Acknowledge one or more notifications for the authenticated user.
+   */
+  @Post('ack')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Acknowledge notifications for authenticated user' })
+  @ApiResponse({ status: 200, description: 'Notifications acknowledged' })
+  @ApiResponse({ status: 400, description: 'Invalid acknowledgement payload' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async acknowledge(
+    @WalletAddress() walletAddress: string,
+    @Body() body: { ids?: unknown },
+  ) {
+    const ids = body?.ids;
+    if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => typeof id !== 'string')) {
+      throw new BadRequestException({
+        code: 'INVALID_ACK_PAYLOAD',
+        message: 'ids must be a non-empty array of notification id strings.',
+      });
+    }
+    const acknowledged = await this.service.acknowledgeNotifications(walletAddress, ids as string[]);
+    return { acknowledged };
+  }
+
+  /**
    * GET /api/notifications/preferences
    * Returns notification preferences for authenticated wallet user.
    * On first access, creates preference record with defaults.
@@ -210,216 +251,6 @@ export class NotificationsController {
   @ApiResponse({ status: 200, description: 'Updated routing preferences' })
   @ApiResponse({ status: 400, description: 'Invalid routing preferences' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async updateRoutingPreferences(
-    @WalletAddress() walletAddress: string,
-    @Body() body: Record<string, unknown> | undefined,
-  ) {
-    return this.service.updateRoutingPreferences(
-      walletAddress,
-      validateRoutingPreferencesUpdate(body),
-    );
-  }
+  async updateRoutingPref
 
-  /**
-   * GET /api/v1/notifications
-   * Cursor-paginated in-app notification listing (newest first).
-   */
-  @Get()
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'List in-app notifications (cursor paginated)' })
-  @ApiResponse({ status: 200, description: 'Notification page with nextCursor/hasMore' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async listNotifications(
-    @WalletAddress() walletAddress: string,
-    @Query('cursor') cursor?: string,
-    @Query('limit') limit?: string,
-  ) {
-    const parsedLimit = limit !== undefined ? Number(limit) : undefined;
-    if (parsedLimit !== undefined && (!Number.isFinite(parsedLimit) || parsedLimit < 1)) {
-      throw new BadRequestException({ code: 'INVALID_NOTIFICATION_LIMIT', message: 'limit must be a positive number.' });
-    }
-    return this.service.listNotifications(walletAddress, {
-      cursor: cursor || undefined,
-      limit: parsedLimit,
-    });
-  }
-
-  /**
-   * POST /api/v1/notifications/:id/read
-   * Marks a notification as read (sets the read marker).
-   */
-  @Post(':id/read')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Mark a notification as read' })
-  @ApiResponse({ status: 204, description: 'Notification marked as read' })
-  @ApiResponse({ status: 404, description: 'Notification not found or not owned by caller' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async markNotificationRead(
-    @Param('id') id: string,
-    @WalletAddress() userId: string,
-  ) {
-    await this.service.markNotificationRead(id, userId);
-  }
-
-  /**
-   * PATCH /api/notifications/preferences
-   * Updates notification preferences for authenticated wallet user.
-   * Validates fields and applies only the provided fields.
-   */
-  @Patch('preferences')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update authenticated user notification preferences' })
-  @ApiResponse({ status: 200, description: 'Updated notification preferences' })
-  @ApiResponse({ status: 400, description: 'Invalid preferences' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async updateAuthenticatedUserPreferences(
-    @WalletAddress() walletAddress: string,
-    @Body() body: Record<string, unknown> | undefined,
-  ) {
-    const preferences = await this.service.updateUserNotificationPreferences(
-      walletAddress,
-      validateNotificationPreferenceUpdate(body),
-    );
-    return preferences;
-  }
-
-  /**
-   * GET /api/notifications/preferences/:publicKey
-   * Returns preferences with email/chat IDs partially masked.
-   */
-  @Get('preferences/:publicKey')
-  @ApiOperation({ summary: 'Get notification preferences' })
-  getPreferences(@Param('publicKey') publicKey: string) {
-    if (!isValidPublicKey(publicKey)) {
-      throw new BadRequestException({ code: 'INVALID_PUBLIC_KEY', message: 'Invalid Stellar public key.' });
-    }
-    const p = this.service.getPreferences(publicKey);
-    return {
-      claimantPublicKey: p.claimantPublicKey,
-      emailEnabled: p.emailEnabled,
-      email: p.email ? maskEmail(p.email) : undefined,
-      discordEnabled: p.discordEnabled,
-      discordUserId: p.discordUserId ? '***' : undefined,
-      telegramEnabled: p.telegramEnabled,
-      telegramChatId: p.telegramChatId ? '***' : undefined,
-    };
-  }
-
-  @Get('users/:userId/preferences')
-  @ApiOperation({ summary: 'Get per-user notification preferences' })
-  async getUserNotificationPreferences(@Param('userId') userId: string) {
-    const preferences = await this.service.getUserNotificationPreferences(userId);
-    return { userId, preferences };
-  }
-
-  @Put('users/:userId/preferences')
-  @ApiOperation({ summary: 'Update per-user notification preferences' })
-  async updateUserNotificationPreferences(
-    @Param('userId') userId: string,
-    @Body() body: Record<string, unknown> | undefined,
-  ) {
-    const preferences = await this.service.updateUserNotificationPreferences(
-      userId,
-      validateNotificationPreferenceUpdate(body),
-    );
-    return { userId, preferences };
-  }
-
-  /**
-   * PUT /api/notifications/preferences/:publicKey
-   * Update opt-in/out preferences. Protect with JWT guard in production.
-   */
-  @Put('preferences/:publicKey')
-  @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Update notification preferences (opt-in / opt-out)' })
-  updatePreferences(
-    @Param('publicKey') publicKey: string,
-    @Body() dto: UpdatePreferencesDto,
-  ) {
-    if (!isValidPublicKey(publicKey)) {
-      throw new BadRequestException({ code: 'INVALID_PUBLIC_KEY', message: 'Invalid Stellar public key.' });
-    }
-    this.service.updatePreferences({ claimantPublicKey: publicKey, ...dto });
-    return { claimantPublicKey: publicKey };
-  }
-
-  /**
-   * POST /api/notifications/:id/ack
-   * Mark a notification as delivered. Called by the frontend on render.
-   * Idempotent — repeat calls for an already-acknowledged notification are no-ops.
-   */
-  @Post(':id/ack')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Acknowledge a notification (mark as delivered)' })
-  @ApiResponse({ status: 204, description: 'Notification acknowledged' })
-  @ApiResponse({ status: 404, description: 'Notification not found or not owned by caller' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async acknowledgeNotification(
-    @Param('id') id: string,
-    @WalletAddress() userId: string,
-  ) {
-    await this.service.acknowledgeNotification(id, userId);
-  }
-
-  /**
-   * POST /api/v1/notifications/unsubscribe?token=…
-   * RFC 8058 one-click unsubscribe. Unauthenticated by necessity — the
-   * signed HMAC token is the credential. Verifies the token, then disables
-   * email delivery for the user (per scope, or all email when scope covers
-   * every type).
-   */
-  @Post('unsubscribe')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'One-click unsubscribe (RFC 8058)' })
-  @ApiResponse({ status: 200, description: 'Email delivery disabled' })
-  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  async unsubscribe(
-    @Query('token') token?: string,
-    @Body() _body?: unknown,
-  ) {
-    const secret = resolveUnsubscribeSecret(this.configService);
-    const payload = verifyUnsubscribeToken(token, secret);
-    if (!payload) {
-      throw new BadRequestException({
-        code: 'INVALID_UNSUBSCRIBE_TOKEN',
-        message: 'Invalid or expired unsubscribe token.',
-      });
-    }
-    const result = await this.service.unsubscribeFromEmail(
-      payload.userId,
-      payload.scope,
-    );
-    return { unsubscribed: result.unsubscribed, scope: result.scope };
-  }
-
-  /**
-   * POST /api/notifications/trigger
-   * Trigger a test claim finalization event. Restrict to internal traffic in production.
-   */
-  @Post('trigger')
-  @HttpCode(HttpStatus.ACCEPTED)
-  @ApiOperation({ summary: 'Trigger a test claim finalization event' })
-  @ApiResponse({ status: 202, description: 'Event queued' })
-  triggerEvent(@Body() dto: TriggerEventDto) {
-    this.consumer.emit({
-      claimId: dto.claimId,
-      policyId: dto.policyId,
-      claimantPublicKey: dto.claimantPublicKey,
-      outcome: dto.outcome,
-      finalizedAt: dto.finalizedAt ?? new Date().toISOString(),
-    });
-    return { message: 'Claim finalization event queued.', claimId: dto.claimId };
-  }
-}
-
-function maskEmail(email: string): string {
-  const [local, domain] = email.split('@');
-  if (!local || !domain) return '***@***';
-  return `${local.slice(0, 2)}***@${domain}`;
-}
+/* … truncated 7822 chars — edit only what you need near the top … */
