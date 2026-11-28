@@ -138,3 +138,30 @@ fn paused_and_unpaused_events_include_scope() {
         soroban_sdk::testutils::arbitrary::std::format!("{:?}", env.events().all());
     assert!(unpaused_dbg.contains("unpaused") || unpaused_dbg.contains("pause_toggled"));
 }
+
+/// pause_bind must block bind/initiate but leave claims and reads available.
+#[test]
+fn pause_bind_blocks_bind_allows_claims() {
+    let (env, client, admin) = setup();
+    client.pause_bind(&admin, &PauseReason::UpgradePending);
+
+    let flags = client.get_pause_flags();
+    assert!(flags.bind_paused, "bind should be paused");
+    assert!(!flags.global, "global should not be paused");
+    assert!(!flags.claims_paused, "claims should not be paused");
+
+    // Reads still work.
+    let _ = client.get_pause_flags();
+    let _ = client.get_pause_reason();
+    assert!(client.is_paused());
+}
+
+/// get_pause_reason returns None after unpause.
+#[test]
+fn get_pause_reason_cleared_after_unpause() {
+    let (env, client, admin) = setup();
+    client.pause(&admin, &PauseReason::SolvencyRisk);
+    assert!(client.get_pause_reason().is_some());
+    client.unpause(&admin);
+    assert!(client.get_pause_reason().is_none(), "reason must be cleared after unpause");
+}
