@@ -18,6 +18,7 @@ import type { Request } from 'express';
 import { Feature } from '../feature-flags/feature.decorator';
 import { RAMP_FEATURE_FLAG, RAMP_WEBHOOK_SECRET_HEADER } from './ramp.constants';
 import { RampInitiateRequest, RampPremiumService, RampQuoteRequest } from './ramp-premium.service';
+import { RampReconciliationService } from './ramp-reconciliation.service';
 
 interface RampPurchaseCompletedPayload {
   type: 'PURCHASE_CREATED' | 'PURCHASE_FAILED' | 'PURCHASE_REFUNDED';
@@ -54,6 +55,7 @@ export class RampController {
   constructor(
     private readonly config: ConfigService,
     private readonly premium: RampPremiumService,
+    private readonly reconciliation: RampReconciliationService,
   ) {}
 
   @Get('config')
@@ -123,8 +125,8 @@ export class RampController {
    * Signature is in the `x-body-signature-sha256` header as a hex digest.
    *
    * Flow:
-   *   PURCHASE_CREATED (status=COMPLETE) -> log successful payment
-   *   PURCHASE_FAILED / PURCHASE_REFUNDED -> log failure, no orphaned policy
+   *   PURCHASE_CREATED (status=COMPLETE) -> persist RampTransaction, reconcile against PolicyRenewal
+   *   PURCHASE_FAILED / PURCHASE_REFUNDED -> persist RampTransaction, no orphaned policy
    */
   @Post('webhook')
   @HttpCode(200)
@@ -153,6 +155,17 @@ export class RampController {
       finalTxHash: purchase.finalTxHash,
     });
 
+    const transaction = await this.reconciliation.persistTransaction({
+      purchaseId: purchase.id,
+      status: purchase.status,
+      receiverAddress: purchase.receiverAddress,
+      cryptoAmount: purchase.cryptoAmount,
+      cryptoCurrency: purchase.cryptoCurrency,
+      fiatValue: purchase.fiatValue,
+      fiatCurrency: purchase.fiatCurrency,
+      finalTxHash: purchase.finalTxHash,
+    });
+
     switch (type) {
       case 'PURCHASE_CREATED':
         if (purchase.status === 'COMPLETE') {
@@ -161,6 +174,7 @@ export class RampController {
             `receiver=${purchase.receiverAddress} ` +
             `amount=${purchase.cryptoAmount} ${purchase.cryptoCurrency}`,
           );
+          await this.reconciliation.reconcile(transaction);
         }
         break;
       case 'PURCHASE_FAILED':

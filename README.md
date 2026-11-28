@@ -118,3 +118,33 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1787 -->
 - #1787: C-19 Contract — Policy transfer and beneficiary management
+
+<!-- handsoff-issue-1800 -->
+- #1800: C-32 Contract — Admin dispute: post-approval claim freeze before payout
+
+<!-- handsoff-issue-1794 -->
+- #1794: C-26 Contract — Claim payout: process_claim and PayoutTimeout handling
+
+<!-- handsoff-issue-1784 -->
+- #1784: C-16 Contract — initiate_policy: bind a policy and collect premium
+
+<!-- handsoff-issue-1785 -->
+- #1785: C-17 Contract — Policy read APIs with bounded pagination
+
+<!-- handsoff-issue-1786 -->
+- #1786: C-18 Contract — Policy lifecycle: renewal, grace period, termination, expiry
+
+<!-- handsoff-issue-1855 -->
+- #1855: F-07 Frontend — Design system: Button, Input, Badge, Card, Dialog primitives
+
+<!-- handsoff-issue-1835 -->
+- #1835: B-32 Backend — Support ticket module: contact form and staff reply flow
+
+<!-- handsoff-issue-1837 -->
+- #1837: B-34 Backend — Asset allowlist sync: AllowedAsset table from chain events
+
+<!-- handsoff-issue-1795 -->
+- #1795: C-27 Contract — Claim withdrawal and strike tracking
+
+<!-- handsoff-issue-1796 -->
+- #1796: C-28 Contract — Appeal mechanism: open, vote, and finalize appeal round

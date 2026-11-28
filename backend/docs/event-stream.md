@@ -94,6 +94,125 @@ Contract event field names follow the same `camelCase` convention as the wire
 format (e.g. `claimId`, `txHash`), so no translation is needed between contract
 events and API responses — only between the wire format and DB columns.
 
+## Contract event parser registry
+
+The indexer parses raw contract events with a **parser registry** that maps a
+contract id and a semver range to a concrete `EventParser`. Because contract
+event schemas can change between deployments, the registry lets the indexer
+parse old and new events from the same stream correctly.
+
+```ts
+interface EventParser {
+  /** Semver range this parser handles, e.g. "^1.0.0". */
+  range: string;
+  /** Contract event name this parser handles, e.g. "claim_filed". */
+  event: string;
+  /** Parse a raw contract event into the normalized shape. */
+  parse(raw: RawContractEvent): ParsedEvent;
+}
+
+class ParserRegistry {
+  register(contractId: string, parser: EventParser): void;
+  /** Resolve the parser for (contractId, event) at a given contract version. */
+  resolve(contractId: string, event: string, version: string): EventParser | undefined;
+}
+```
+
+### Initial schema parsers
+
+The initial contract schema registers one parser per event:
+
+| Event               | Semver range | Notes                                   |
+| ------------------- | ------------ | --------------------------------------- |
+| `claim_filed`       | `^1.0.0`     | Claim creation.                         |
+| `vote_cast`         | `^1.0.0`     | Vote recorded on a claim.               |
+| `policy_initiated`  | `^1.0.0`     | Policy lifecycle start.                 |
+| `policy_updated`    | `^1.0.0`     | Policy parameter change.                |
+| `claim_resolved`    | `^1.0.0`     | Claim resolution.                       |
+
+### Version routing
+
+Incoming events are routed to the correct parser using the **deployment
+registry version at the event's ledger**. The indexer looks up the contract
+version that was active when the event's ledger was produced, then asks the
+registry to resolve `(contractId, event, version)`. This means a single mixed
+stream containing events from multiple contract versions is parsed with the
+parser that matches each event's own version.
+
+### Unknown schemas
+
+If no parser matches `(contractId, event, version)` — for example an event from
+a contract version the indexer does not yet know about — the indexer does **not**
+silently skip the event. Instead it emits a structured warning row containing the
+contract id, event name, version, ledger, and transaction hash, and increments an
+`indexer.unknown_schema` metric. Warnings are observable in logs and metrics so
+operators can add a parser for the new schema.
+
+## Vote ingestion and tally reconciliation
+
+`VoteLogged` contract events are ingested into the `votes` table. Ingestion is
+**idempotent**: the table has a unique constraint on
+`(claim_id, voter_address)`, so replaying the same event (or receiving a
+duplicate from the stream) does not create a second row.
+
+Each vote insert and the corresponding tally update on `claims` happen in the
+**same DB transaction**:
+
+- `approve` votes increment `claims.approvals`.
+- `reject` votes increment `claims.rejections`.
+
+Because the insert and the tally bump commit atomically, a duplicate vote event
+is a no-op for both the `votes` row and the tally columns — tallies are never
+double-counted.
+
+### Reconciliation job
+
+A scheduled reconciliation job periodically compares the tally columns against
+the source of truth (`COUNT` of `votes` rows grouped by claim and vote):
+
+```sql
+SELECT c.id,
+       c.approvals,
+       c.rejections,
+       COUNT(v.id) FILTER (WHERE v.vote = 'approve') AS actual_approvals,
+       COUNT(v.id) FILTER (WHERE v.vote = 'reject')  AS actual_rejections
+FROM claims c
+LEFT JOIN votes v ON v.claim_id = c.id
+GROUP BY c.id, c.approvals, c.rejections
+HAVING c.approvals <> COUNT(v.id) FILTER (WHERE v.vote = 'approve')
+    OR c.rejections <> COUNT(v.id) FILTER (WHERE v.vote = 'reject');
+```
+
+Any claim returned by this query is a discrepancy. The job:
+
+- Emits a structured warning per discrepant claim (claim id, stored tallies,
+  actual counts) and increments a `reconciliation.discrepancy` metric.
+- Records the last run timestamp and the set of discrepant claim ids so the
+  status is observable.
+
+### Reconciliation status on `GET /claims/:id`
+
+The claim detail response includes a `reconciliation` object so clients can see
+whether the claim's tallies currently agree with its vote rows:
+
+```ts
+interface ClaimReconciliationStatus {
+  /** Whether stored tallies match COUNT of vote rows. */
+  ok: boolean;
+  /** Stored tally columns. */
+  approvals: number;
+  rejections: number;
+  /** Counts derived from the votes table. */
+  actualApprovals: number;
+  actualRejections: number;
+  /** ISO-8601 timestamp of the last reconciliation run, if any. */
+  checkedAt?: string;
+}
+```
+
+When `ok` is `false`, the claim's tallies disagree with its vote rows and the
+discrepancy has been flagged by the reconciliation job.
+
 ## Delivery guarantees
 
 - **Fan-out across instances.** Events are published to a Redis pub/sub channel

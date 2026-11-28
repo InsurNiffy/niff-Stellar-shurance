@@ -1,0 +1,57 @@
+[workspace]
+members = [
+    "insurance",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+soroban-sdk = "21.0.0"
+
+[features]
+# C-33 Contract — Governance token stub: feature-gated namespace reservation.
+#
+# The `governance-token` feature is intentionally OFF by default so that
+# default builds compile and pass tests with zero governance token side
+# effects. Enabling it activates the reserved `governance_token` module in
+# `insurance` (stub types + storage key variants only; live token logic is
+# still gated behind the same feature and must be implemented before
+# activation).
+#
+# TODO(governance-token activation path):
+#   1. Implement the live token logic inside `insurance::governance_token`
+#      behind `#[cfg(feature = "governance-token")]`.
+#   2. Wire the feature through to the `insurance` crate, e.g.
+#      `insurance = { path = "insurance", features = ["governance-token"] }`
+#      or build with `--features governance-token`.
+#   3. Verify feature-flagged builds compile in isolation
+#      (`cargo build -p insurance --features governance-token`) without
+#      breaking the default test suite.
+#   4. Only then flip the default in this manifest.
+governance-token = []
+
+# C-34 Contract — Oracle integration stub: parametric trigger scaffolding.
+#
+# The `experimental` feature is intentionally OFF by default so that default
+# builds cannot accidentally execute oracle triggers. Enabling it compiles
+# the `insurance::oracle` module (stub entrypoints `query_trigger`,
+# `validate_trigger`, `execute_trigger`). Even with the feature enabled, the
+# stub entrypoints panic with `ORACLE_TRIGGERS_DISABLED` until the
+# prerequisites below are satisfied.
+#
+# Prerequisites for production oracle activation:
+#   1. Security review — threat model for oracle data feeds, replay/forgery
+#      resistance, and fail-closed behaviour on malformed or stale inputs.
+#   2. Legal review — confirm parametric trigger payouts comply with the
+#      applicable insurance/regulatory regimes in each target jurisdiction.
+#   3. Cryptographic design — signed oracle attestations, key management and
+#      rotation, and on-chain verification of trigger evidence.
+#   4. Only after 1–3 are complete: replace the panicking stubs with live
+#      logic and wire the feature through to the `insurance` crate, e.g.
+#      `insurance = { path = "insurance", features = ["experimental"] }`
+#      or build with `--features experimental`.
+experimental = []
