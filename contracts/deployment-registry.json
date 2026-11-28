@@ -1,5 +1,5 @@
 {
-  "_comment": "After each deploy, call the version() entrypoint via simulation and record the result in deployedVersion. Alert if deployedVersion does not match expectedVersion.",
+  "_comment": "After each deploy, call the version() and get_wasm_hash() entrypoints via simulation and record the results in deployedVersion and deployedWasmHash. Alert if deployedVersion does not match expectedVersion, or if deployedWasmHash does not match expectedWasmHash.",
   "networks": {
     "testnet": {
       "contracts": [
@@ -9,8 +9,9 @@
           "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
           "expectedVersion": "${NIFFYINSURE_EXPECTED_VERSION}",
           "deployedVersion": "",
+          "deployedWasmHash": "",
           "deployedAt": "",
-          "notes": "Testnet deployment. Set CONTRACT_ID_TESTNET env var. Run `sha256sum niffyinsure.wasm` after each build. After deploy, invoke `get_wasm_hash()` and compare it with `expectedWasmHash`, then record the deployed version in deployedVersion."
+          "notes": "Testnet deployment. Set CONTRACT_ID_TESTNET env var. Run `sha256sum niffyinsure.wasm` after each build. After deploy, invoke `get_wasm_hash()` and compare it with `expectedWasmHash`, then record the deployed version in deployedVersion and the returned hash in deployedWasmHash."
         }
       ]
     },
@@ -22,8 +23,9 @@
           "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
           "expectedVersion": "${NIFFYINSURE_EXPECTED_VERSION}",
           "deployedVersion": "",
+          "deployedWasmHash": "",
           "deployedAt": "",
-          "notes": "Mainnet deployment. CONTRACT_ID_MAINNET is REQUIRED at startup — server refuses to start without it. After deploy, invoke `get_wasm_hash()` and compare it with `expectedWasmHash`, then record the deployed version in deployedVersion. Alert if deployedVersion != expectedVersion."
+          "notes": "Mainnet deployment. CONTRACT_ID_MAINNET is REQUIRED at startup — server refuses to start without it. After deploy, invoke `get_wasm_hash()` and compare it with `expectedWasmHash`, then record the deployed version in deployedVersion and the returned hash in deployedWasmHash. Alert if deployedVersion != expectedVersion or deployedWasmHash != expectedWasmHash."
         }
       ]
     },
@@ -35,8 +37,9 @@
           "expectedWasmHash": "${NIFFYINSURE_EXPECTED_WASM_HASH}",
           "expectedVersion": "${NIFFYINSURE_EXPECTED_VERSION}",
           "deployedVersion": "",
+          "deployedWasmHash": "",
           "deployedAt": "",
-          "notes": "Futurenet deployment. Set CONTRACT_ID_FUTURENET env var. After deploy, invoke `get_wasm_hash()` and compare it with `expectedWasmHash`, then record the deployed version in deployedVersion."
+          "notes": "Futurenet deployment. Set CONTRACT_ID_FUTURENET env var. After deploy, invoke `get_wasm_hash()` and compare it with `expectedWasmHash`, then record the deployed version in deployedVersion and the returned hash in deployedWasmHash."
         }
       ]
     }

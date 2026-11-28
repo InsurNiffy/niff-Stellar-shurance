@@ -16,6 +16,8 @@ Every Soroban RPC call is wrapped by the helper in
 | `soroban.attempt`    | The retry attempt number (1-based).                      |
 | `soroban.breaker_state` | Circuit breaker state at call time (`closed`, `open`, `halfOpen`). |
 
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, the SDK runs with a no-op exporter — no traces are exported and there is no performance overhead. This is the default in development, so tracing is opt-in locally.
+
 Spans are exported via the configured OTLP exporter and appear in Jaeger under
 the service name set by `OTEL_SERVICE_NAME`.
 
