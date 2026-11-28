@@ -66,9 +66,11 @@ export interface ChallengeResponse {
 }
 
 export interface VerifyResponse {
-  /** Signed JWT — sub=publicKey, scope=user. */
+  /** Signed JWT access token — sub=publicKey, scope=user. */
   token: string;
-  /** ISO timestamp when the token expires. */
+  /** Refresh token used to obtain a new access/refresh pair. */
+  refreshToken: string;
+  /** ISO timestamp when the access token expires. */
   expiresAt: string;
 }
 
@@ -134,7 +136,7 @@ export async function verifyChallenge(
     throw new UnauthorizedException('Signature verification failed.');
   }
 
-  // Mint JWT — scope is explicitly 'user'; no admin capabilities are granted.
+  // Mint JWT pair — scope is explicitly 'user'; no admin capabilities are granted.
   const now = Math.floor(Date.now() / 1000);
   const ttlSeconds = parseTtlToSeconds(config.jwt.ttl);
   const payload = {
@@ -148,7 +150,21 @@ export async function verifyChallenge(
   const token = jwt.sign(payload, config.jwt.secret);
   const expiresAt = new Date((now + ttlSeconds) * 1000).toISOString();
 
-  return { token, expiresAt };
+  // Issue a refresh token bound to this subject. Rotation/blacklisting is
+  // handled by RefreshTokenService on the /auth/refresh and /auth/logout routes.
+  const refreshToken = jwt.sign(
+    {
+      sub: publicKey,
+      scope: 'refresh',
+      jti: uuidv4(),
+      iss: config.jwt.issuer,
+      iat: now,
+      exp: now + parseTtlToSeconds(config.jwt.refreshTtl),
+    },
+    config.jwt.secret,
+  );
+
+  return { token, refreshToken, expiresAt };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

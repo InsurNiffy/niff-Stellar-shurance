@@ -47,6 +47,24 @@ export class AuthController {
   }
 
   /**
+   * GET /api/auth/challenge?address=
+   * Issue a domain-bound challenge nonce (canonical endpoint).
+   * The nonce is stored in Redis with a TTL and consumed on first use.
+   */
+  @Get('challenge')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 20, ttl: 300_000 } })
+  @ApiOperation({ summary: 'Request a wallet challenge nonce (GET)' })
+  @ApiQuery({ name: 'address', description: 'Stellar Ed25519 wallet address (G...)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Challenge issued. Sign the message and POST to /auth/verify.',
+  })
+  async challengeGet(@Query() query: NonceQueryDto) {
+    return this.walletAuthService.generateChallenge(query.address);
+  }
+
+  /**
    * POST /api/auth/challenge
    * Issue a domain-bound challenge nonce (legacy endpoint — kept for backwards compatibility).
    */

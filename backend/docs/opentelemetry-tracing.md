@@ -1,75 +1,51 @@
 # OpenTelemetry Tracing
 
-Distributed tracing is implemented via `@opentelemetry/sdk-node` with auto-instrumentation for HTTP, Prisma/PostgreSQL, and Redis (ioredis). Soroban RPC simulation calls are wrapped with a custom span helper.
+This document describes how the backend emits traces for Soroban RPC calls and
+what operational limits the `SorobanRpcService` respects.
 
-## Environment Variables
+## Soroban RPC spans
 
-| Variable | Default | Description |
-|---|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset — no-op)_ | OTLP HTTP endpoint, e.g. `http://localhost:4318` (Jaeger exposes an OTLP receiver) |
-| `OTEL_SERVICE_NAME` | `niffyinsure-backend` | Service name in traces |
-| `OTEL_SAMPLING_RATE` | `1.0` (dev) / `0.1` (prod) | Head-sampling rate 0.0–1.0 |
+Every Soroban RPC call is wrapped by the helper in
+`backend/src/soroban/soroban-span.ts`. The helper creates a span named
+`soroban.rpc` and tags it with:
+
+| Attribute            | Description                                              |
+| -------------------- | -------------------------------------------------------- |
+| `soroban.contract_id`| The contract ID the call targets (when applicable).      |
+| `soroban.method`     | The RPC method invoked (e.g. `getLedgerEntries`, `simulateTransaction`). |
+| `soroban.attempt`    | The retry attempt number (1-based).                      |
+| `soroban.breaker_state` | Circuit breaker state at call time (`closed`, `open`, `halfOpen`). |
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, the SDK runs with a no-op exporter — no traces are exported and there is no performance overhead. This is the default in development, so tracing is opt-in locally.
 
-## Auto-Instrumentation
+Spans are exported via the configured OTLP exporter and appear in Jaeger under
+the service name set by `OTEL_SERVICE_NAME`.
 
-The SDK registers auto-instrumentation for the following layers:
+## Retry and circuit breaker
 
-| Layer | Instrumentation |
-|---|---|
-| HTTP (inbound/outbound) | `@opentelemetry/instrumentation-http` |
-| PostgreSQL | `@opentelemetry/instrumentation-pg` (via Prisma) |
-| Redis | `@opentelemetry/instrumentation-ioredis` |
+- RPC calls are retried with exponential backoff (3 attempts total).
+- An `opossum` circuit breaker opens after 3 consecutive failures and closes
+after a successful probe (half-open).
+- The breaker state is exposed at `GET /health` under `soroban.breaker`.
 
-## Local Development with Jaeger
+## Rate-limit headers
 
-Run Jaeger all-in-one (includes OTLP HTTP receiver on port 4318):
+The Soroban RPC provider returns rate-limit headers that the service respects:
 
-```bash
-docker run --rm -d \
-  -p 16686:16686 \
-  -p 4318:4318 \
-  --name jaeger \
-  jaegertracing/all-in-one:latest
-```
+- `Retry-After` — seconds to wait before retrying after a `429`.
+- `X-RateLimit-Limit` — request budget for the current window.
+- `X-RateLimit-Remaining` — remaining requests in the window.
+- `X-RateLimit-Reset` — epoch seconds when the window resets.
 
-Then set in your `.env`:
+When `X-RateLimit-Remaining` reaches zero the service backs off until the reset
+time instead of hammering the endpoint.
 
-```
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-OTEL_SERVICE_NAME=niffyinsure-backend
-OTEL_SAMPLING_RATE=1.0
-```
+## Horizon finality lag
 
-Open the Jaeger UI at http://localhost:16686 and select the `niffyinsure-backend` service.
-
-## Trace Correlation with Logs
-
-Every incoming request attaches `x-request-id` as a span attribute (`request.id`). The `correlation_id` (from the `x-correlation-id` header, falling back to the request id) is propagated as a span attribute (`correlation_id`) on the active span, so traces can be joined with structured logs and frontend events. Structured log entries include the same `requestId` field, enabling correlation between traces and logs.
-
-For the full frontend → backend → contract-call correlation flow and how to use it when
-investigating a cross-layer issue, see [`docs/correlation-id-guide.md`](../../docs/correlation-id-guide.md).
-
-## Sensitive Data Policy
-
-- XDR payloads and private keys **must never** appear as span attributes.
-- Request/response bodies are not captured by auto-instrumentation (body capture hooks are disabled).
-- Only `soroban.contract_id` and `soroban.method` are recorded for Soroban RPC spans.
-
-## Soroban RPC Spans
-
-Use `withSorobanSpan` from `src/common/tracing/soroban-span.ts` to wrap simulation calls:
-
-```typescript
-import { withSorobanSpan } from '@/common/tracing/soroban-span'
-
-const result = await withSorobanSpan(
-  { contractId: 'C...', method: 'simulateTransaction', requestId },
-  () => server.simulateTransaction(tx),
-)
-```
-
-## Production Sampling
-
-The default production sampling rate is `0.1` (10%). Adjust via `OTEL_SAMPLING_RATE` without redeployment.
+Horizon and Soroban RPC are not perfectly synchronized. A transaction that is
+`SUCCESS` on Soroban RPC may not yet be visible on Horizon, and vice versa.
+Consumers should treat Horizon results as eventually consistent and allow for a
+finality lag of a few ledgers (~5s per ledger) before considering a state
+final. The service does not block on Horizon finality; callers that require
+finality should poll until the ledger sequence advances past the transaction's
+ledger.
