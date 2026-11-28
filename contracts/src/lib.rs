@@ -5,7 +5,7 @@ mod governance_token;
 mod oracle;
 mod vet;
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol, Vec};
 
 pub use governance_token::{GovernanceTokenKey, GovernanceTokenStub};
 #[cfg(feature = "experimental")]
@@ -18,6 +18,8 @@ pub use vet::VetRecord;
 pub enum ContractError {
     VetNotFound = 1,
     ClaimNotFound = 2,
+    InvalidTable = 3,
+    TableNotFound = 4,
 }
 
 #[contracttype]
@@ -29,15 +31,52 @@ pub struct Claim {
     pub required_specialization: Option<String>,
 }
 
+/// A multiplier table: a list of basis-point multipliers applied to premiums.
+/// Each entry must be a positive value; the table must be non-empty.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MultiplierTable {
+    pub multipliers: Vec<i128>,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Claim(u64),
     ClaimCounter,
+    GlobalMultiplierTable,
+    AssetMultiplierTable(Address),
+    TableVersion,
 }
 
 #[contract]
 pub struct ClaimsContract;
+
+/// Validate a multiplier table before storing it.
+fn validate_table(table: &MultiplierTable) -> Result<(), ContractError> {
+    if table.multipliers.is_empty() {
+        return Err(ContractError::InvalidTable);
+    }
+    for m in table.multipliers.iter() {
+        if m <= 0 {
+            return Err(ContractError::InvalidTable);
+        }
+    }
+    Ok(())
+}
+
+fn bump_version(env: &Env) -> u64 {
+    let version: u64 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TableVersion)
+        .unwrap_or(0);
+    let next = version + 1;
+    env.storage().persistent().set(&DataKey::TableVersion, &next);
+    env.events()
+        .publish((Symbol::new(env, "MultiplierTableUpdated"),), next);
+    next
+}
 
 #[contractimpl]
 impl ClaimsContract {
@@ -90,6 +129,89 @@ impl ClaimsContract {
             .persistent()
             .get(&DataKey::Claim(id))
             .ok_or(ContractError::ClaimNotFound)
+    }
+
+    /// Admin: replace the global multiplier table. Validated before storing.
+    pub fn update_multiplier_table(
+        env: Env,
+        admin: Address,
+        table: MultiplierTable,
+    ) -> Result<u64, ContractError> {
+        admin.require_auth();
+        validate_table(&table)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::GlobalMultiplierTable, &table);
+        Ok(bump_version(&env))
+    }
+
+    /// Returns the current global multiplier table.
+    pub fn get_multiplier_table(env: Env) -> Result<MultiplierTable, ContractError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::GlobalMultiplierTable)
+            .ok_or(ContractError::TableNotFound)
+    }
+
+    /// Admin: tune a single premium multiplier in the global table.
+    pub fn admin_set_premium_multiplier(
+        env: Env,
+        admin: Address,
+        index: u32,
+        multiplier: i128,
+    ) -> Result<u64, ContractError> {
+        admin.require_auth();
+        if multiplier <= 0 {
+            return Err(ContractError::InvalidTable);
+        }
+        let mut table: MultiplierTable = env
+            .storage()
+            .persistent()
+            .get(&DataKey::GlobalMultiplierTable)
+            .ok_or(ContractError::TableNotFound)?;
+        if index >= table.multipliers.len() {
+            return Err(ContractError::InvalidTable);
+        }
+        table.multipliers.set(index, multiplier);
+        validate_table(&table)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::GlobalMultiplierTable, &table);
+        Ok(bump_version(&env))
+    }
+
+    /// Admin: set a per-asset multiplier table that overrides the global table.
+    pub fn admin_set_asset_premium_table(
+        env: Env,
+        admin: Address,
+        asset: Address,
+        table: MultiplierTable,
+    ) -> Result<u64, ContractError> {
+        admin.require_auth();
+        validate_table(&table)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::AssetMultiplierTable(asset), &table);
+        Ok(bump_version(&env))
+    }
+
+    /// Returns the effective multiplier table for an asset: the per-asset table
+    /// when present, otherwise the global table.
+    pub fn get_asset_premium_table(
+        env: Env,
+        asset: Address,
+    ) -> Result<MultiplierTable, ContractError> {
+        if let Some(table) = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AssetMultiplierTable(asset))
+        {
+            return Ok(table);
+        }
+        env.storage()
+            .persistent()
+            .get(&DataKey::GlobalMultiplierTable)
+            .ok_or(ContractError::TableNotFound)
     }
 
     /// Query an oracle parametric trigger. Only available with `--features experimental`.

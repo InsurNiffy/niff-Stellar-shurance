@@ -48,6 +48,9 @@ export interface ListClaimsParams {
   after?: string;
   limit?: number;
   status?: string;
+  severity?: string;
+  policyId?: string;
+  search?: string;
 }
 
 export interface ClaimCommentDto {
@@ -120,9 +123,103 @@ export class ClaimsService {
     return { claimId, unsignedXdr };
   }
 
+  /**
+   * Build an unsigned `file_claim` transaction for the claimant wallet to sign.
+   * Mirrors the contract-side `file_claim` entry point (#1814).
+   */
+  async buildFileClaimTransaction(
+    claimant: string,
+    policyId: string,
+    amount: string,
+    description: string,
+  ): Promise<{ unsignedXdr: string }> {
+    if (!claimant || !policyId) {
+      throw new BadRequestException('claimant and policyId are required');
+    }
+    const { unsignedXdr } = await this.soroban.buildFileClaimTransaction({
+      claimant,
+      policyId,
+      amount,
+      description,
+    });
+    return { unsignedXdr };
+  }
+
   /** Get the appropriate client for reads — replica if enabled, otherwise primary. */
   private getReadClient() {
     return this.prismaReplica.isEnabled() ? this.prismaReplica : this.prisma;
+  }
+
+  /**
+   * GET /v1/claims — tenant-scoped, cursor-paginated list with filters
+   * (status, severity, policyId, free-text search) (#1814).
+   */
+  async listClaims(params: ListClaimsParams): Promise<ClaimsListResponseDto> {
+    const limit = clampLimit(params.limit);
+    const tenantId = this.tenantCtx.tenantId;
+
+    const filters: Prisma.ClaimWhereInput = {};
+    if (params.status) {
+      filters.status = params.status as Prisma.ClaimWhereInput['status'];
+    }
+    if (params.severity) {
+      filters.severity = params.severity as Prisma.ClaimWhereInput['severity'];
+    }
+    if (params.policyId) {
+      filters.policyId = params.policyId;
+    }
+    if (params.search) {
+      const term = params.search.trim();
+      if (term) {
+        filters.OR = [
+          { description: { contains: term, mode: 'insensitive' } },
+          { claimantAddress: { contains: term, mode: 'insensitive' } },
+        ];
+      }
+    }
+
+    const where = claimTenantWhere(tenantId, filters);
+    const keysetWhere = buildKeysetWhere(params.after);
+    const combinedWhere: Prisma.ClaimWhereInput = keysetWhere
+      ? { AND: [where, keysetWhere] }
+      : where;
+
+    const rows = await this.getReadClient().claim.findMany({
+      where: combinedWhere,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? buildNextCursor(page[page.length - 1]) : null;
+
+    return {
+      items: page.map((row) => this.claimViewMapper.toSummary(row)),
+      nextCursor,
+    };
+  }
+
+  /**
+   * GET /v1/claims/:id — tenant-scoped detail enriched with pre-computed
+   * governance fields from ClaimAggregationService (#1814).
+   */
+  async getClaimById(id: number): Promise<ClaimDetailResponseDto> {
+    const claim = await this.getReadClient().claim.findFirst({
+      where: claimTenantWhere(this.tenantCtx.tenantId, { id }),
+    });
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${id} not found`);
+    }
+
+    const governance = await this.aggregation.getGovernanceFields(id);
+
+    return {
+      ...this.claimViewMapper.toDetail(claim),
+      quorum_progress_pct: governance.quorumProgressPct,
+      votes_needed: governance.votesNeeded,
+      deadline_estimate_utc: governance.deadlineEstimateUtc,
+    };
   }
 
   /**
@@ -224,81 +321,13 @@ export class ClaimsService {
     this.assertCommentsOpen(claim);
     await this.assertCanComment(claimId, walletAddress);
 
-    const comment = await this.prisma.claimComment.create({
+    const created = await this.prisma.claimComment.create({
       data: {
         claimId,
         authorAddress: walletAddress.toLowerCase(),
         body: trimmed,
       },
     });
-
-    const dto = this.toCommentDto(comment);
-    await this.publishCommentEvent('created', dto);
-    return dto;
-  }
-
-  /**
-   * DELETE /v1/claims/:id/comments/:commentId — the author within the edit
-   * window, or a moderator at any time.
-   */
-  async deleteClaimComment(
-    claimId: number,
-    commentId: number,
-    walletAddress: string,
-    isModerator = false,
-  ): Promise<void> {
-    const comment = await this.prisma.claimComment.findFirst({
-      where: { id: commentId, claimId, deletedAt: null },
-    });
-    if (!comment) {
-      throw new NotFoundException(`Comment with ID ${commentId} not found`);
-    }
-
-    const isAuthor = comment.authorAddress.toLowerCase() === walletAddress.toLowerCase();
-    if (!isModerator) {
-      if (!isAuthor) {
-        throw new ForbiddenException('Only the author or a moderator may delete this comment');
-      }
-      const age = Date.now() - comment.createdAt.getTime();
-      if (age > CLAIM_COMMENT_EDIT_WINDOW_MS) {
-        throw new ForbiddenException('The comment edit window has expired');
-      }
-    }
-
-    await this.prisma.claimComment.update({
-      where: { id: commentId },
-      data: { deletedAt: new Date() },
-    });
-
-    await this.publishCommentEvent('deleted', this.toCommentDto({ ...comment, reportedAt: comment.reportedAt ?? null }));
-  }
-
-  /**
-   * Serve pre-computed aggregation metrics (#1622) for the claim detail
-   * endpoint. Falls back to a live computation when no snapshot exists yet
-   * (e.g. a freshly created claim before the scheduled job has run).
-   */
-  private async resolveAggregation(claimId: number) {
-    const snapshot = await this.aggregation.getSnapshot(claimId);
-    if (snapshot) {
-      return snapshot;
-    }
-    return this.aggregation.computeForClaim(claimId);
-  }
-
-  private async publishCommentEvent(
-    action: 'created' | 'deleted',
-    comment: ClaimCommentDto,
-  ): Promise<void> {
-    try {
-      await this.redis.publish(CLAIM_COMMENT_EVENT_CHANNEL, {
-        action,
-        comment,
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Failed to publish claim comment event: ${(err as Error).message}`,
-      );
-    }
+    return this.toCommentDto(created);
   }
 }

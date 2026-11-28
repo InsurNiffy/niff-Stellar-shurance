@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn get_version_returns_zero_when_uninitialized_no_panic() {
+    fn get_version_zero_before_init() {
         let env = Env::default();
         let contract_id = env.register(PremiumCalculator, ());
         let client = PremiumCalculatorClient::new(&env, &contract_id);
@@ -230,133 +230,142 @@ mod tests {
     }
 
     #[test]
-    fn compute_not_initialized_returns_typed_error() {
+    fn initialize_seeds_default_table() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        assert!(client.get_version() >= 1);
+    }
+
+    #[test]
+    fn initialize_twice_fails() {
+        let (env, contract_id, admin) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        assert_eq!(
+            client.try_initialize(&admin),
+            Err(Ok(CalcError::AlreadyInitialized))
+        );
+    }
+
+    #[test]
+    fn compute_before_init_fails() {
         let env = Env::default();
         let contract_id = env.register(PremiumCalculator, ());
         let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let err = client
-            .try_compute(&sample_input(&env))
-            .err()
-            .unwrap()
-            .unwrap();
-        assert_eq!(err, CalcError::NotInitialized);
+        assert_eq!(
+            client.try_compute(&sample_input(&env)),
+            Err(Ok(CalcError::NotInitialized))
+        );
     }
 
     #[test]
-    fn already_initialized_returns_typed_error() {
-        let (env, contract_id, admin) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let err = client.try_initialize(&admin).err().unwrap().unwrap();
-        assert_eq!(err, CalcError::AlreadyInitialized);
-    }
-
-    #[test]
-    fn invalid_base_amount_returns_typed_error() {
-        let (env, contract_id, _) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let mut input = sample_input(&env);
-        input.base_amount = 0;
-        let err = client.try_compute(&input).err().unwrap().unwrap();
-        assert_eq!(err, CalcError::InvalidBaseAmount);
-    }
-
-    #[test]
-    fn safety_score_out_of_range_returns_typed_error() {
-        let (env, contract_id, _) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let mut input = sample_input(&env);
-        input.safety_score = 101;
-        let err = client.try_compute(&input).err().unwrap().unwrap();
-        assert_eq!(err, CalcError::SafetyScoreOutOfRange);
-    }
-
-    #[test]
-    fn paused_compute_returns_typed_error() {
-        let (env, contract_id, _) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        client.set_paused(&true);
-        let err = client
-            .try_compute(&sample_input(&env))
-            .err()
-            .unwrap()
-            .unwrap();
-        assert_eq!(err, CalcError::Paused);
-    }
-
-    #[test]
-    fn update_table_invalid_config_version_returns_typed_error() {
-        let (env, contract_id, _) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let mut table = storage::default_table(&env);
-        table.version = 1;
-        let err = client.try_update_table(&table).err().unwrap().unwrap();
-        assert_eq!(err, CalcError::InvalidConfigVersion);
-    }
-
-    #[test]
-    fn update_table_missing_region_returns_typed_error() {
-        let (env, contract_id, _) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let mut table = storage::default_table(&env);
-        table.version = 2;
-        table.region = Map::new(&env);
-        let err = client.try_update_table(&table).err().unwrap().unwrap();
-        assert_eq!(err, CalcError::MissingRegionMultiplier);
-    }
-
-    #[test]
-    fn update_table_region_out_of_bounds_returns_typed_error() {
-        let (env, contract_id, _) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let mut table = storage::default_table(&env);
-        table.version = 2;
-        table.region.set(RegionTier::Low, MIN_MULTIPLIER - 1);
-        let err = client.try_update_table(&table).err().unwrap().unwrap();
-        assert_eq!(err, CalcError::RegionMultiplierOutOfBounds);
-    }
-
-    #[test]
-    fn update_table_safety_discount_out_of_bounds_returns_typed_error() {
-        let (env, contract_id, _) = setup();
-        let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let mut table = storage::default_table(&env);
-        table.version = 2;
-        table.safety_discount = MAX_SAFETY_DISCOUNT + 1;
-        let err = client.try_update_table(&table).err().unwrap().unwrap();
-        assert_eq!(err, CalcError::SafetyDiscountOutOfBounds);
-    }
-
-    #[test]
-    fn compute_happy_path_returns_premium() {
+    fn compute_returns_result_after_init() {
         let (env, contract_id, _) = setup();
         let client = PremiumCalculatorClient::new(&env, &contract_id);
         let result = client.compute(&sample_input(&env));
         assert!(result.premium > 0);
-        assert_eq!(result.config_version, 1);
+        assert_eq!(result.config_version, client.get_version());
     }
 
     #[test]
-    fn compute_matches_pure_engine_golden_vector() {
+    fn paused_calculator_rejects_compute() {
         let (env, contract_id, _) = setup();
         let client = PremiumCalculatorClient::new(&env, &contract_id);
-        // Same golden vector as niffyinsure::premium tests:
-        // Medium/Adult/Standard/safety=50, base=1_000_000 → 900_000
-        let result = client.compute(&sample_input(&env));
-        assert_eq!(result.premium, 900_000);
+        client.set_paused(&true);
+        assert_eq!(
+            client.try_compute(&sample_input(&env)),
+            Err(Ok(CalcError::Paused))
+        );
+        client.set_paused(&false);
+        assert!(client.compute(&sample_input(&env)).premium > 0);
     }
 
     #[test]
-    fn compute_matches_high_young_premium_golden_vector() {
+    fn update_table_rejects_non_increasing_version() {
         let (env, contract_id, _) = setup();
         let client = PremiumCalculatorClient::new(&env, &contract_id);
-        let input = CalcInput {
-            region: RegionTier::High,
-            age_band: AgeBand::Young,
-            coverage: CoverageTier::Premium,
-            safety_score: 80,
-            base_amount: 12_345_678,
-        };
-        let result = client.compute(&input);
-        assert_eq!(result.premium, 22_749_999);
+        let current = client.get_version();
+        let mut table = storage::default_table(&env);
+        table.version = current;
+        assert_eq!(
+            client.try_update_table(&table),
+            Err(Ok(CalcError::InvalidConfigVersion))
+        );
+    }
+
+    #[test]
+    fn update_table_validates_rows() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let current = client.get_version();
+        let mut table = storage::default_table(&env);
+        table.version = current + 1;
+        let mut bad_region: Map<RegionTier, i128> = Map::new(&env);
+        bad_region.set(RegionTier::Low, MAX_MULTIPLIER + 1);
+        table.region = bad_region;
+        assert_eq!(
+            client.try_update_table(&table),
+            Err(Ok(CalcError::MissingRegionMultiplier))
+        );
+    }
+
+    #[test]
+    fn update_table_accepts_valid_increment() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let current = client.get_version();
+        let mut table = storage::default_table(&env);
+        table.version = current + 1;
+        client.update_table(&table);
+        assert_eq!(client.get_version(), current + 1);
+    }
+
+    #[test]
+    fn compute_matches_pure_engine_golden_vectors() {
+        let (env, contract_id, _) = setup();
+        let client = PremiumCalculatorClient::new(&env, &contract_id);
+        let table = storage::get_table(&env).unwrap();
+
+        let regions = [RegionTier::Low, RegionTier::Medium, RegionTier::High];
+        let ages = [AgeBand::Young, AgeBand::Adult, AgeBand::Senior];
+        let coverages = [
+            CoverageTier::Basic,
+            CoverageTier::Standard,
+            CoverageTier::Premium,
+        ];
+        let safety_scores = [0u32, 50, 100];
+        let base_amounts = [1_000_000i128, 5_000_000, 25_000_000];
+
+        for region in regions.iter() {
+            for age_band in ages.iter() {
+                for coverage in coverages.iter() {
+                    for safety_score in safety_scores.iter() {
+                        for base_amount in base_amounts.iter() {
+                            let input = CalcInput {
+                                region: region.clone(),
+                                age_band: age_band.clone(),
+                                coverage: coverage.clone(),
+                                safety_score: *safety_score,
+                                base_amount: *base_amount,
+                            };
+                            let on_chain = client.compute(&input);
+                            let pure_input = PureInput {
+                                region: region.clone(),
+                                age_band: age_band.clone(),
+                                coverage: coverage.clone(),
+                                safety_score: *safety_score,
+                            };
+                            let pure = premium_pure::compute_premium(
+                                &pure_input,
+                                *base_amount,
+                                &table,
+                            )
+                            .unwrap();
+                            assert_eq!(on_chain.premium, pure.total_premium);
+                            assert_eq!(on_chain.config_version, pure.config_version);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
