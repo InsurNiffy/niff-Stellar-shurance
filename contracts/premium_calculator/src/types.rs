@@ -5,6 +5,10 @@ pub const MIN_MULTIPLIER: i128 = 5_000;
 pub const MAX_MULTIPLIER: i128 = 50_000;
 pub const MAX_SAFETY_DISCOUNT: i128 = 5_000;
 
+/// ABI version for the standalone premium calculator contract.
+/// Bump only when `CalcInput` or `CalcResult` change shape.
+pub const ABI_VERSION: u32 = 1;
+
 /// Geographic risk tier.
 #[contracttype]
 #[derive(Clone, PartialEq, Eq, Debug)]

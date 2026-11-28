@@ -8,6 +8,7 @@
  * Precision: premiumStroops is a string — never parse to JS number before display.
  */
 import { Injectable, BadRequestException, Optional } from '@nestjs/common';
+import { trace, SpanStatusCode, type Span } from '@opentelemetry/api';
 import { SorobanService } from '../rpc/soroban.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { QuoteSimulationCacheService } from './quote-simulation-cache.service';
@@ -16,7 +17,11 @@ import type { GeneratePremiumDto } from './dto/generate-premium.dto';
 export interface GetQuoteOptions {
   /** When true, skip Redis read/write (e.g. Cache-Control: no-cache). */
   bypassCache?: boolean;
+  /** Correlation id propagated as a span attribute (x-request-id). */
+  requestId?: string;
 }
+
+const tracer = trace.getTracer('quote-service');
 
 @Injectable()
 export class QuoteService {
@@ -40,7 +45,15 @@ export class QuoteService {
       if (bypass) {
         this.metrics?.recordQuoteSimulationCache('bypass');
       } else {
-        const cached = await this.quoteSimulationCache.get(dto);
+        const cached = await this.withSpan(
+          'quote.cache.check',
+          options?.requestId,
+          async (span) => {
+            const result = await this.quoteSimulationCache.get(dto);
+            span.setAttribute('cache.hit', result != null);
+            return result;
+          },
+        );
         if (cached) {
           this.metrics?.recordQuoteSimulationCache('hit');
           return { ...cached, inputs };
@@ -49,13 +62,23 @@ export class QuoteService {
       }
 
       try {
-        const sim = await this.soroban.simulateGeneratePremium({
-          policyType: dto.policy_type,
-          region: dto.region,
-          age: dto.age,
-          riskScore: dto.risk_score,
-          sourceAccount: dto.source_account,
-        });
+        const sim = await this.withSpan(
+          'soroban.rpc.simulate_generate_premium',
+          options?.requestId,
+          async (span) => {
+            span.setAttribute('rpc.method', 'simulateTransaction');
+            span.setAttribute('rpc.system', 'soroban');
+            const result = await this.soroban.simulateGeneratePremium({
+              policyType: dto.policy_type,
+              region: dto.region,
+              age: dto.age,
+              riskScore: dto.risk_score,
+              sourceAccount: dto.source_account,
+            });
+            span.setAttribute('rpc.source', result.source);
+            return result;
+          },
+        );
 
         if (sim.source === 'simulation' && !bypass) {
           await this.quoteSimulationCache.set(dto, {
@@ -95,5 +118,31 @@ export class QuoteService {
       source: 'local_fallback',
       inputs,
     };
+  }
+
+  /**
+   * Runs `fn` inside a named span, tagging it with the request id so trace IDs
+   * correlate with structured log `requestId` fields. No-op when tracing is
+   * disabled (the OTel API returns a non-recording span).
+   */
+  private async withSpan<T>(
+    name: string,
+    requestId: string | undefined,
+    fn: (span: Span) => Promise<T>,
+  ): Promise<T> {
+    return tracer.startActiveSpan(name, async (span) => {
+      if (requestId) {
+        span.setAttribute('x-request-id', requestId);
+      }
+      try {
+        return await fn(span);
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
   }
 }

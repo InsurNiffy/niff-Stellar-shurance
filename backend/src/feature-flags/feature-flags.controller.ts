@@ -1,6 +1,10 @@
-import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Patch, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { AuditLog } from '../audit/audit-log.decorator';
 import { ALLOWED_FLAG_KEYS, FeatureFlagsService } from './feature-flags.service';
+import { UpdateFeatureFlagDto } from './dto/update-feature-flag.dto';
 
 /**
  * Public, read-only view of a single feature flag.
@@ -26,5 +30,32 @@ export class FeatureFlagsController {
       throw new NotFoundException(`Unknown feature flag: ${key}`);
     }
     return { key, enabled: this.featureFlagsService.isEnabled(key) };
+  }
+}
+
+/**
+ * Admin write surface for feature flags.
+ *
+ * Guarded by role and audit-logged; the service refreshes its in-memory cache
+ * on update so toggles take effect without a restart.
+ */
+@ApiTags('admin-feature-flags')
+@Controller('admin/feature-flags')
+@UseGuards(RolesGuard)
+@Roles('admin')
+export class AdminFeatureFlagsController {
+  constructor(private readonly featureFlagsService: FeatureFlagsService) {}
+
+  @Patch(':key')
+  @AuditLog('feature-flag.update')
+  @ApiOperation({ summary: 'Update the enabled state of a feature flag' })
+  @ApiResponse({ status: 200, description: 'Updated flag key and its enabled state' })
+  @ApiResponse({ status: 404, description: 'Unknown feature flag key' })
+  async updateFlag(
+    @Param('key') key: string,
+    @Body() dto: UpdateFeatureFlagDto,
+  ): Promise<{ key: string; enabled: boolean }> {
+    const flag = await this.featureFlagsService.setEnabled(key, dto.enabled);
+    return { key: flag.key, enabled: flag.enabled };
   }
 }

@@ -84,6 +84,23 @@ export class FeatureFlagsService implements OnModuleInit {
     }
   }
 
+  /**
+   * Persist a flag toggle to the DB and refresh the in-memory cache so the
+   * change takes effect without a restart. Used by the admin PATCH endpoint.
+   */
+  async setFlag(key: string, enabled: boolean): Promise<boolean> {
+    this.assertAllowlisted(key);
+    await this.prisma.featureFlag.upsert({
+      where: { key },
+      update: { enabled },
+      create: { key, enabled },
+    });
+    // Update the in-memory cache immediately so subsequent reads reflect the change.
+    this.featureMap = { ...this.featureMap, [key]: enabled };
+    this.logger.log(`Feature flag "${key}" set to ${enabled} and cache refreshed`);
+    return enabled;
+  }
+
   private parseFlags(json: string | undefined): FeatureMap {
     if (!json) return {};
     try {
