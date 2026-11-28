@@ -8,6 +8,7 @@ import { RedisHealthIndicator } from './redis.health';
 import { SorobanRpcHealthIndicator } from './soroban-rpc.health';
 import { HorizonHealthIndicator } from './horizon.health';
 import { IndexerHealthIndicator } from './indexer.health';
+import { HealthMetricsService } from './health-metrics.service';
 
 @Module({
   imports: [TerminusModule, RpcModule, PrismaModule],
@@ -18,6 +19,8 @@ import { IndexerHealthIndicator } from './indexer.health';
     SorobanRpcHealthIndicator,
     HorizonHealthIndicator,
     IndexerHealthIndicator,
+    HealthMetricsService,
   ],
+  exports: [HealthMetricsService],
 })
 export class HealthModule {}

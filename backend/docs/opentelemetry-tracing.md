@@ -10,7 +10,7 @@ Distributed tracing is implemented via `@opentelemetry/sdk-node` with auto-instr
 | `OTEL_SERVICE_NAME` | `niffyinsure-backend` | Service name in traces |
 | `OTEL_SAMPLING_RATE` | `1.0` (dev) / `0.1` (prod) | Head-sampling rate 0.0–1.0 |
 
-When `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, the SDK runs with a no-op exporter — no traces are exported and there is no performance overhead.
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, the SDK runs with a no-op exporter — no traces are exported and there is no performance overhead. This is the default in development, so tracing is opt-in locally.
 
 ## Auto-Instrumentation
 

@@ -115,3 +115,21 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1619 -->
 - #1619: Backend: SSE real-time updates — Redis pub/sub for multi-instance claim status
+
+<!-- handsoff-issue-1784 -->
+- #1784: C-16 Contract — initiate_policy: bind a policy and collect premium
+
+<!-- handsoff-issue-1785 -->
+- #1785: C-17 Contract — Policy read APIs with bounded pagination
+
+<!-- handsoff-issue-1786 -->
+- #1786: C-18 Contract — Policy lifecycle: renewal, grace period, termination, expiry
+
+<!-- handsoff-issue-1855 -->
+- #1855: F-07 Frontend — Design system: Button, Input, Badge, Card, Dialog primitives
+
+<!-- handsoff-issue-1835 -->
+- #1835: B-32 Backend — Support ticket module: contact form and staff reply flow
+
+<!-- handsoff-issue-1837 -->
+- #1837: B-34 Backend — Asset allowlist sync: AllowedAsset table from chain events

@@ -29,6 +29,10 @@ import { createNotificationDeliveryProcessor } from "./notifications/notificatio
 import { resolveUnsubscribeSecret } from "./notifications/unsubscribe";
 import { startNotificationWorker } from "./notifications/notification-jobs.worker";
 import { EnvironmentVariables } from "./config/env.definitions";
+import { DeprecationHeadersInterceptor } from "./common/interceptors/deprecation-headers.interceptor";
+import { V1SunsetInterceptor } from "./common/interceptors/v1-sunset.interceptor";
+import { RejectUnversionedApiMiddleware } from "./common/middleware/reject-unversioned-api.middleware";
+import { trace, context, SpanStatusCode } from "@opentelemetry/api";
 
 export function parseOrigins(raw: string): string[] {
   return raw
@@ -86,6 +90,39 @@ async function assertRpcPassphrase(networkConfig: ReturnType<typeof loadNetworkC
   }
 }
 
+/**
+ * Wraps a Soroban RPC simulation call in a custom span so latency can be
+ * attributed precisely in traces. The active context (and therefore the
+ * trace ID) is inherited from the inbound HTTP request.
+ */
+export async function withSorobanSimulationSpan<T>(
+  operation: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const tracer = trace.getTracer('niffyinsure-soroban-rpc');
+  return tracer.startActiveSpan(
+    `soroban.rpc.simulateTransaction`,
+    { attributes: { 'rpc.system': 'soroban', 'rpc.method': operation } },
+    context.active(),
+    async (span) => {
+      try {
+        const result = await fn();
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      } finally {
+        span.end();
+      }
+    },
+  );
+}
+
 async function bootstrap() {
   validateEnvironment(process.env);
 
@@ -114,6 +151,10 @@ async function bootstrap() {
     type: VersioningType.URI,
     defaultVersion: "1",
   });
+
+  // Reject unversioned API requests with 400 before routing.
+  const rejectUnversioned = new RejectUnversionedApiMiddleware();
+  app.use(rejectUnversioned.use.bind(rejectUnversioned));
 
   // Security — Helmet tuned for a JSON-only API (no HTML served)
   app.use(
@@ -189,6 +230,12 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
       transform: true,
     }),
+  );
+
+  // Deprecation headers — announce sunset dates on deprecated routes.
+  app.useGlobalInterceptors(
+    new DeprecationHeadersInterceptor(),
+    new V1SunsetInterceptor(),
   );
 
   // Exception filter + response transform interceptor
