@@ -1,0 +1,42 @@
+{
+  "VALIDATION_ERROR": {
+    "httpStatus": 400,
+    "i18nKey": "errors.validation",
+    "description": "Request payload failed validation."
+  },
+  "UNAUTHORIZED": {
+    "httpStatus": 401,
+    "i18nKey": "errors.unauthorized",
+    "description": "Authentication is required or credentials are invalid."
+  },
+  "FORBIDDEN": {
+    "httpStatus": 403,
+    "i18nKey": "errors.forbidden",
+    "description": "The caller is not permitted to perform this action."
+  },
+  "NOT_FOUND": {
+    "httpStatus": 404,
+    "i18nKey": "errors.notFound",
+    "description": "The requested resource does not exist."
+  },
+  "CONFLICT": {
+    "httpStatus": 409,
+    "i18nKey": "errors.conflict",
+    "description": "The request conflicts with the current state of the resource."
+  },
+  "RATE_LIMITED": {
+    "httpStatus": 429,
+    "i18nKey": "errors.rateLimited",
+    "description": "Too many requests; retry after the indicated delay."
+  },
+  "INTERNAL_ERROR": {
+    "httpStatus": 500,
+    "i18nKey": "errors.internal",
+    "description": "An unexpected internal error occurred."
+  },
+  "SERVICE_UNAVAILABLE": {
+    "httpStatus": 503,
+    "i18nKey": "errors.serviceUnavailable",
+    "description": "The service is temporarily unavailable."
+  }
+}

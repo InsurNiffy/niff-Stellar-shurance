@@ -27,11 +27,9 @@ export class AuditService {
     await this.prisma.adminAuditLog.create({ data: meta });
   }
 
-  async findAll(filters: AuditFilters) {
-    const { cursor, limit = 20, action, actor, from, to } = filters;
-    const take = Math.min(limit, 100);
-
-    const where: Prisma.AdminAuditLogWhereInput = {
+  private buildWhere(filters: Omit<AuditFilters, 'cursor' | 'limit'>): Prisma.AdminAuditLogWhereInput {
+    const { action, actor, from, to } = filters;
+    return {
       ...(action && { action }),
       ...(actor && { actor }),
       ...(from || to
@@ -43,6 +41,13 @@ export class AuditService {
           }
         : {}),
     };
+  }
+
+  async findAll(filters: AuditFilters) {
+    const { cursor, limit = 20, action, actor, from, to } = filters;
+    const take = Math.min(limit, 100);
+
+    const where = this.buildWhere({ action, actor, from, to });
 
     const items = await this.prisma.adminAuditLog.findMany({
       where,
@@ -59,20 +64,7 @@ export class AuditService {
   }
 
   async streamCsv(filters: Omit<AuditFilters, 'cursor' | 'limit'>, res: Response): Promise<void> {
-    const { action, actor, from, to } = filters;
-
-    const where: Prisma.AdminAuditLogWhereInput = {
-      ...(action && { action }),
-      ...(actor && { actor }),
-      ...(from || to
-        ? {
-            createdAt: {
-              ...(from && { gte: new Date(from) }),
-              ...(to && { lte: new Date(to) }),
-            },
-          }
-        : {}),
-    };
+    const where = this.buildWhere(filters);
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="audit-log.csv"');
