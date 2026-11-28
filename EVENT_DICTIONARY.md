@@ -24,7 +24,7 @@ tables below, CI fails and prints a diff of the undocumented events.
 | `PolicyIssued` | `policy` | `issue_policy` | A new policy has been issued for a holder. |
 | `PolicyRenewed` | `policy` | `renew_policy` | An existing policy has been renewed for a new term. |
 | `PolicyCancelled` | `policy` | `cancel_policy` | A policy has been cancelled by the holder or admin. |
-| `ClaimFiled` | `claim` | `file_claim` | A claim has been filed against a policy. |
+| `ClaimFiled` | `claim` | `file_claim` | A claim has been filed against a policy. Payload carries the claim id, policy id, amount, deductible, and the SHA-256 hashes of the submitted evidence entries. |
 | `ClaimApproved` | `claim` | `approve_claim` | A filed claim has been approved for payout. |
 | `ClaimRejected` | `claim` | `reject_claim` | A filed claim has been rejected. |
 | `ClaimPaid` | `claim` | `pay_claim` | An approved claim has been paid out. |
