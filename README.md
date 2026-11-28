@@ -116,6 +116,9 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 <!-- handsoff-issue-1619 -->
 - #1619: Backend: SSE real-time updates — Redis pub/sub for multi-instance claim status
 
+<!-- handsoff-issue-1794 -->
+- #1794: C-26 Contract — Claim payout: process_claim and PayoutTimeout handling
+
 <!-- handsoff-issue-1784 -->
 - #1784: C-16 Contract — initiate_policy: bind a policy and collect premium
 
