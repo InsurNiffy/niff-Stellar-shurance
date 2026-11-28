@@ -121,3 +121,12 @@ for status, owners, and acceptance criteria. **Priority: Critical — Layer: All
 
 <!-- handsoff-issue-1786 -->
 - #1786: C-18 Contract — Policy lifecycle: renewal, grace period, termination, expiry
+
+<!-- handsoff-issue-1855 -->
+- #1855: F-07 Frontend — Design system: Button, Input, Badge, Card, Dialog primitives
+
+<!-- handsoff-issue-1835 -->
+- #1835: B-32 Backend — Support ticket module: contact form and staff reply flow
+
+<!-- handsoff-issue-1837 -->
+- #1837: B-34 Backend — Asset allowlist sync: AllowedAsset table from chain events

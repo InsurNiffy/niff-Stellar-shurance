@@ -11,6 +11,11 @@ const preview: Preview = {
       ],
     },
     controls: { matchers: { color: /(background|color)$/i, date: /Date$/i } },
+    a11y: {
+      // Fail axe checks on any violation so the test-runner enforces accessibility.
+      config: {},
+      options: {},
+    },
   },
 }
 
