@@ -113,6 +113,16 @@ export class PrismaReplicaService
     }
   }
 
+  /**
+   * Run a read-only query against the replica when configured, otherwise fall
+   * back to the primary client. Callers pass a function that receives the
+   * Prisma client to query with, so read-only operations are routed correctly
+   * without leaking raw PrismaClient usage into feature code.
+   */
+  async read<T>(fn: (client: PrismaClient) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
+
   /** Get replica lag in milliseconds. Returns 0 if replica is not configured. */
   getReplicaLagMs(): number {
     if (!this.isConfigured) return 0;

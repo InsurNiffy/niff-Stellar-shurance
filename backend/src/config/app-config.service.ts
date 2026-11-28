@@ -35,3 +35,32 @@ export class AppConfigService {
   get ipfsProvider() { return this.get('IPFS_PROVIDER'); }
   get simulateTimeoutMs() { return this.get('SOROBAN_SIMULATE_TIMEOUT_MS'); }
 }
+
+/**
+ * Typed application config, injected by NestJS ConfigService.
+ * Exposes the validated environment as a strongly typed object so consumers
+ * never touch process.env directly.
+ */
+export class AppConfig {
+  constructor(private readonly config: AppConfigService) {}
+
+  get nodeEnv(): AppEnv['NODE_ENV'] { return this.config.nodeEnv; }
+  get port(): AppEnv['PORT'] { return this.config.port; }
+  get databaseUrl(): AppEnv['DATABASE_URL'] { return this.config.databaseUrl; }
+  get redisUrl(): AppEnv['REDIS_URL'] { return this.config.redisUrl; }
+  get stellarNetwork(): AppEnv['STELLAR_NETWORK'] { return this.config.stellarNetwork; }
+  get sorobanRpcUrl(): AppEnv['SOROBAN_RPC_URL'] { return this.config.sorobanRpcUrl; }
+  get horizonUrl(): AppEnv['HORIZON_URL'] { return this.config.horizonUrl; }
+  get networkPassphrase(): AppEnv['STELLAR_NETWORK_PASSPHRASE'] { return this.config.networkPassphrase; }
+  get contractId(): AppEnv['CONTRACT_ID'] { return this.config.contractId; }
+  get jwtSecret(): AppEnv['JWT_SECRET'] { return this.config.jwtSecret; }
+  get jwtExpiresIn(): AppEnv['JWT_EXPIRES_IN'] { return this.config.jwtExpiresIn; }
+  get jwtRefreshExpiresIn(): AppEnv['JWT_REFRESH_EXPIRES_IN'] { return this.config.jwtRefreshExpiresIn; }
+  get jwtIssuer(): AppEnv['JWT_ISSUER'] { return this.config.jwtIssuer; }
+  get jwtAudience(): AppEnv['JWT_AUDIENCE'] { return this.config.jwtAudience; }
+  get authDomain(): AppEnv['AUTH_DOMAIN'] { return this.config.authDomain; }
+  get nonceTtlSeconds(): AppEnv['NONCE_TTL_SECONDS'] { return this.config.nonceTtlSeconds; }
+  get logLevel(): AppEnv['LOG_LEVEL'] { return this.config.logLevel; }
+  get ipfsProvider(): AppEnv['IPFS_PROVIDER'] { return this.config.ipfsProvider; }
+  get simulateTimeoutMs(): AppEnv['SOROBAN_SIMULATE_TIMEOUT_MS'] { return this.config.simulateTimeoutMs; }
+}

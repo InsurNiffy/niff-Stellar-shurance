@@ -7,6 +7,7 @@ import { ValidationPipe, Logger, VersioningType } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
+import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
 import helmet from "helmet";
 import { ConfigService } from "@nestjs/config";
 import { RequestContextMiddleware } from "./common/middleware/request-context.middleware";
@@ -237,8 +238,12 @@ async function bootstrap() {
     new V1SunsetInterceptor(),
   );
 
-  // Exception filter
+  // Exception filter + response transform interceptor
   app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalInterceptors(new TransformInterceptor());
+
+  // Graceful shutdown — let Nest close DB/Redis/workers on SIGTERM/SIGINT
+  app.enableShutdownHooks();
 
   // Swagger — UI is disabled in production (spec is still generated for tooling).
   const document = buildOpenApiDocument(app);
@@ -261,4 +266,10 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  Logger.error(
+    `Fatal error during bootstrap: ${err instanceof Error ? err.stack : String(err)}`,
+    "Bootstrap",
+  );
+  process.exit(1);
+});
