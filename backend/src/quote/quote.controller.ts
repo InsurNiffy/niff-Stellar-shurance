@@ -23,6 +23,10 @@ export class QuoteController {
    * Returns the annual premium for the given risk profile.
    * Invalid payloads are rejected before any RPC call is made.
    * source="local_fallback" when contract is not deployed or source_account is omitted.
+   *
+   * Results are cached in Redis for a short TTL (default 30s). Send
+   * `Cache-Control: no-cache` to bypass the cache and force a fresh
+   * Soroban simulation.
    */
   @Post('generate-premium')
   @HttpCode(HttpStatus.OK)

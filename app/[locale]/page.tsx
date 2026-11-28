@@ -9,10 +9,53 @@ export default async function HomePage({
   const { locale } = await params;
   const t = await getTranslations('landing');
 
-  const features = [
+  const steps = [
     {
-      title: t('features.governance.title'),
-      description: t('features.governance.description'),
+      title: t('howItWorks.steps.buy.title'),
+      description: t('howItWorks.steps.buy.description'),
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <path d="M4 7h16l-1.5 10.5a2 2 0 0 1-2 1.5H7.5a2 2 0 0 1-2-1.5L4 7Z" strokeLinejoin="round" />
+          <path d="M8 7a4 4 0 0 1 8 0" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+    {
+      title: t('howItWorks.steps.claim.title'),
+      description: t('howItWorks.steps.claim.description'),
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <path d="M7 3h7l4 4v14H7V3Z" strokeLinejoin="round" />
+          <path d="M14 3v4h4M10 12h5M10 16h5" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+    {
+      title: t('howItWorks.steps.vote.title'),
+      description: t('howItWorks.steps.vote.description'),
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <path d="M9 12.5 11 14.5 15.5 10" strokeLinecap="round" strokeLinejoin="round" />
+          <rect x="4" y="4" width="16" height="16" rx="3" />
+        </svg>
+      ),
+    },
+  ];
+
+  const securityBadges = [
+    {
+      title: t('security.badges.soroban.title'),
+      description: t('security.badges.soroban.description'),
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6l-7-3Z" strokeLinejoin="round" />
+          <path d="M9 12l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ),
+    },
+    {
+      title: t('security.badges.governance.title'),
+      description: t('security.badges.governance.description'),
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
           <path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" strokeLinejoin="round" />
@@ -21,22 +64,12 @@ export default async function HomePage({
       ),
     },
     {
-      title: t('features.voting.title'),
-      description: t('features.voting.description'),
+      title: t('security.badges.ipfs.title'),
+      description: t('security.badges.ipfs.description'),
       icon: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-          <path d="M9 12.5 11 14.5 15.5 10" strokeLinecap="round" strokeLinejoin="round" />
-          <rect x="4" y="4" width="16" height="16" rx="3" />
-        </svg>
-      ),
-    },
-    {
-      title: t('features.claims.title'),
-      description: t('features.claims.description'),
-      icon: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-          <path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6l-7-3Z" strokeLinejoin="round" />
-          <path d="M9 12l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z" strokeLinejoin="round" />
+          <path d="M4 7.5 12 12l8-4.5M12 12v9" strokeLinejoin="round" />
         </svg>
       ),
     },
@@ -90,16 +123,36 @@ export default async function HomePage({
         </div>
       </section>
 
-      <section className="features" aria-labelledby="features-heading">
-        <h2 id="features-heading" className="section__title">
-          {t('features.heading')}
+      <section className="how-it-works" aria-labelledby="how-it-works-heading">
+        <h2 id="how-it-works-heading" className="section__title">
+          {t('howItWorks.heading')}
         </h2>
-        <ul className="features__grid">
-          {features.map((feature) => (
-            <li key={feature.title} className="feature-card">
-              <span className="feature-card__icon">{feature.icon}</span>
-              <h3 className="feature-card__title">{feature.title}</h3>
-              <p className="feature-card__description">{feature.description}</p>
+        <p className="section__description">{t('howItWorks.description')}</p>
+        <ol className="how-it-works__steps">
+          {steps.map((step, index) => (
+            <li key={step.title} className="step-card">
+              <span className="step-card__index" aria-hidden="true">
+                {index + 1}
+              </span>
+              <span className="step-card__icon">{step.icon}</span>
+              <h3 className="step-card__title">{step.title}</h3>
+              <p className="step-card__description">{step.description}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="security" aria-labelledby="security-heading">
+        <h2 id="security-heading" className="section__title">
+          {t('security.heading')}
+        </h2>
+        <p className="section__description">{t('security.description')}</p>
+        <ul className="security__badges">
+          {securityBadges.map((badge) => (
+            <li key={badge.title} className="security-badge">
+              <span className="security-badge__icon">{badge.icon}</span>
+              <h3 className="security-badge__title">{badge.title}</h3>
+              <p className="security-badge__description">{badge.description}</p>
             </li>
           ))}
         </ul>

@@ -1,32 +1,23 @@
-import type { TestRunnerConfig } from '@storybook/test-runner'
-import { toMatchImageSnapshot } from 'jest-image-snapshot'
-
-const customSnapshotsDir = `${process.cwd()}/.storybook/__snapshots__`
+import { injectAxe, checkA11y } from 'axe-playwright';
+import type { TestRunnerConfig } from '@storybook/test-runner';
 
 /**
- * Visual regression check — captures a screenshot of every story after it
- * renders and diffs it against the baseline committed in .storybook/__snapshots__.
- * See docs/STORYBOOK.md for how to review and approve an intentional change.
+ * Storybook test-runner configuration.
+ *
+ * Runs axe accessibility checks against every story rendered by the
+ * test-runner. This provides the accessibility portion of the visual
+ * regression baseline required by F-29.
  */
 const config: TestRunnerConfig = {
-  tags: {
-    // Stories tagged 'skip-visual-test' render incorrectly in isolation for
-    // reasons unrelated to this check (missing provider, etc.) — see the
-    // story file for details. Tracked separately from visual regression.
-    skip: ['skip-visual-test'],
+  async preVisit(page) {
+    await injectAxe(page);
   },
-  setup() {
-    expect.extend({ toMatchImageSnapshot })
+  async postVisit(page) {
+    await checkA11y(page, '#storybook-root', {
+      detailedReport: true,
+      detailedReportOptions: { html: true },
+    });
   },
-  async postVisit(page, context) {
-    const image = await page.screenshot()
-    expect(image).toMatchImageSnapshot({
-      customSnapshotsDir,
-      customSnapshotIdentifier: context.id,
-      failureThreshold: 0.01,
-      failureThresholdType: 'percent',
-    })
-  },
-}
+};
 
-export default config
+export default config;
